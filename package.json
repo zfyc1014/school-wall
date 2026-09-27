@@ -1,0 +1,32 @@
+{
+  "name": "confession-wall",
+  "version": "2.0.0",
+  "private": true,
+  "description": "校园表白墙 · React 前端（Vite）+ Node/SQLite 后端（server/）",
+  "type": "module",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "dev": "vite --config web/vite.config.js",
+    "build": "vite build --config web/vite.config.js",
+    "preview": "vite preview --config web/vite.config.js",
+    "smoke": "node scripts/smoke.mjs",
+    "smoke:api": "node scripts/api-smoke.mjs",
+    "e2e": "node scripts/prod-e2e.mjs",
+    "tokens": "python scripts/check-tokens.py",
+    "server": "npm --prefix server start",
+    "server:dev": "npm --prefix server run dev",
+    "server:install": "npm --prefix server install",
+    "server:test": "npm --prefix server test",
+    "verify": "python scripts/check-tokens.py && npm run build && npm run smoke && npm run smoke:api && npm --prefix server test && npm run e2e"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^5.4.11"
+  }
+}

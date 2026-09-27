@@ -1,0 +1,32 @@
+# 统一换行符：仓库内一律存 LF，检出到 Windows 时按需要转换。
+# 不加这个的话，git 会在每次 add 时刷一屏 "LF will be replaced by CRLF" 警告，
+# 而且协作者之间会因为行尾差异产生无意义的 diff。
+* text=auto eol=lf
+
+# 二进制文件不要做任何换行转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.avif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.db binary
+*.sqlite binary
+
+# Windows 批处理必须保留 CRLF，否则可能无法执行
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 让 git diff / git log 正确识别语言，便于 review
+*.md text diff=markdown
+*.sql text
+*.js text
+*.jsx text
+*.mjs text
+*.cjs text
+*.css text
+*.html text
+*.json text

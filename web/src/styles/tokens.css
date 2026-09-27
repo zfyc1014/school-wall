@@ -1,0 +1,96 @@
+/* ─────────────────────────────────────────────────────────────────────────
+ * 设计系统令牌 · Apple（contract，逐字粘贴自 school-confession-wall.html）
+ * 这是唯一允许出现颜色字面量的地方；其余样式一律 var()/color-mix() 派生。
+ * ───────────────────────────────────────────────────────────────────── */
+:root {
+  --bg: #ffffff;
+  --surface: #f5f5f7;
+  --surface-warm: #fbfbfd;
+
+  --fg: #1d1d1f;
+  --fg-2: #424245;
+  --muted: #6e6e73;
+  --meta: #86868b;
+
+  --border: #d2d2d7;
+  --border-soft: #e8e8ed;
+
+  --accent: #0071e3;
+  --accent-on: #ffffff;
+
+  --accent-hover: #0077ed;
+  --accent-active: #0066cc;
+
+  --success: #16a34a;
+  --warn:    #eab308;
+  --danger:  #dc2626;
+
+  --font-display:
+    "SF Pro Display", "SF Pro Icons", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-body:
+    "SF Pro Text", "SF Pro Icons", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono:
+    "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
+
+  --text-xs:   12px;
+  --text-sm:   14px;
+  --text-base: 17px;
+  --text-lg:   21px;
+  --text-xl:   28px;
+  --text-2xl:  40px;
+  --text-3xl:  56px;
+  --text-4xl:  80px;
+
+  --leading-body:  1.47;
+  --leading-tight: 1.05;
+
+  --tracking-display: -0.015em;
+
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-12: 48px;
+
+  --section-y-desktop: 100px;
+  --section-y-tablet:  64px;
+  --section-y-phone:   40px;
+
+  --radius-sm:   8px;
+  --radius-md:   12px;
+  --radius-lg:   18px;
+  --radius-pill: 980px;
+
+  --elev-flat:   none;
+  --elev-ring:   0 0 0 1px var(--border);
+  --elev-raised: 0 12px 32px rgba(0, 0, 0, 0.08);
+
+  --focus-ring: 0 0 0 4px color-mix(in oklab, var(--accent), transparent 65%);
+
+  --motion-fast:   150ms;
+  --motion-base:   220ms;
+  --ease-standard: cubic-bezier(0.28, 0, 0.22, 1);
+
+  --container-max:            1024px;
+  --container-gutter-desktop: 22px;
+  --container-gutter-tablet:  18px;
+  --container-gutter-phone:   16px;
+}
+
+/* 派生辅助变量：仅复用上方令牌，不引入任何新颜色 */
+:root {
+  --container: var(--container-max);
+  --gutter: var(--container-gutter-desktop);
+  --accent-soft:   color-mix(in oklab, var(--accent) 12%, transparent);
+  --accent-tint:   color-mix(in oklab, var(--accent) 6%, transparent);
+  --fg-soft:       color-mix(in oklab, var(--fg) 5%, transparent);
+  --fg-hair:       color-mix(in oklab, var(--fg) 9%, transparent);
+  --overlay:       color-mix(in oklab, var(--fg) 42%, transparent);
+  --shadow-card:   0 1px 2px color-mix(in oklab, var(--fg) 6%, transparent);
+  --shadow-lift:   0 16px 40px color-mix(in oklab, var(--fg) 12%, transparent);
+  --fs-h1: clamp(38px, 5.2vw, 66px);
+  --fs-h2: clamp(26px, 3vw, 38px);
+}

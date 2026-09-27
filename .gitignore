@@ -1,0 +1,31 @@
+# 依赖
+node_modules/
+
+# 构建产物（Vite 输出到 web/dist）
+web/dist/
+# 冒烟测试截图
+web/screenshots/
+assets/
+*.local
+
+# 环境与数据
+.env
+server/.env
+server/data/*.db
+server/data/*.db-wal
+server/data/*.db-shm
+server/data/banned.txt
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
+
+# OpenDesign 设计工具的内部目录（不属于本项目源码）：
+#   .file-versions/  工具生成的历史版本快照
+#   .od-skills/      工具的 web-prototype 技能包（脚手架代码，非本项目代码）
+# 如需一并入库，用 git add -f .file-versions .od-skills 强制添加。
+.file-versions/
+.od-skills/

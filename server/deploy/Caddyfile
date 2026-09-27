@@ -1,0 +1,35 @@
+# ─────────────────────────────────────────────────────────────────────────
+# Caddy 反向代理：自动 HTTPS，让最低配置 VPS 不必自己处理 TLS 握手
+# 安装：cp deploy/Caddyfile /etc/caddy/Caddyfile && systemctl reload caddy
+# 把 wall.example.edu 换成你的域名（DNS A 记录指向 VPS）
+# ─────────────────────────────────────────────────────────────────────────
+
+wall.example.edu {
+	encode zstd gzip
+
+	# 反代到只监听回环的后端
+	reverse_proxy 127.0.0.1:8080 {
+		header_up X-Real-IP {remote_host}
+	}
+
+	# 静态资源由 Caddy 直接分发，省掉一次 Node 往返。
+	# root 指向 React 构建产物；若仍在用单文件原型，改成 /srv/confession-wall 即可。
+	root * /srv/confession-wall/web/dist
+	@static path *.css *.js *.png *.jpg *.jpeg *.webp *.svg *.woff2 *.ico
+	file_server @static
+
+	# 基础安全头（后端也会补一套，双保险）
+	header {
+		Strict-Transport-Security "max-age=15552000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/confession-wall.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}

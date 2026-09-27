@@ -1,0 +1,100 @@
+/* ─── 移动端专属适配（≤720px：手机为主） ─────────────────────────────────── */
+.tabbar { display: none; }
+
+@media (max-width: 720px) {
+  /* 顶栏：只留品牌与排序；主操作下沉到标签栏 */
+  .nav-actions { display: none; }
+  .brand-tag { display: none; }
+  .topnav-inner { min-height: 54px; padding-block: 0; }
+  .navseg { padding: 4px; }
+  .navseg button { padding: 12px 16px; }
+
+  /* 首屏 */
+  .hero { padding-block: var(--space-8) var(--space-6); }
+  .hero h1 { font-size: clamp(32px, 9.4vw, 40px); }
+  .lead { font-size: var(--text-base); }
+
+  /* 工具条：筛选一行通栏滚动，搜索另一行 */
+  .toolbar { top: 55px; padding-block: var(--space-2) var(--space-3); }
+  .toolbar-inner { flex-wrap: wrap; gap: var(--space-2); }
+  .chips {
+    flex: 1 1 100%; min-width: 0;
+    margin-inline: calc(-1 * var(--gutter)); padding-inline: var(--gutter);
+  }
+  .toolbar .right { flex: 1 1 100%; }
+  .search { flex: 1; }
+  .search input, .search input:focus { width: 100%; }
+
+  /* 信息流 */
+  .feed { padding-block: var(--space-4) var(--space-8); }
+  .wall { columns: 1; }
+  .post { padding: var(--space-4); }
+  .post-body { font-size: var(--text-base); }
+
+  /* 触摸目标 ≥44px */
+  .btn { min-height: 44px; }
+  .chip, .cat-select button { min-height: 44px; display: inline-flex; align-items: center; }
+  .act { min-height: 44px; padding: 8px 10px; }
+  .icon-btn { width: 44px; height: 44px; }
+  .navseg button { min-height: 44px; }
+  .search input { min-height: 44px; }
+  .comment-form input { min-height: 44px; }
+  .comment-form button { min-height: 44px; padding-inline: 18px; }
+  .textlink { min-height: 44px; display: inline-flex; align-items: center; }
+
+  /* 页脚为底部标签栏让位 */
+  .foot-grid { gap: var(--space-6); }
+  .pagefoot { padding-bottom: calc(var(--space-8) + 76px + env(safe-area-inset-bottom)); }
+
+  /* 弹层改为底部抽屉 */
+  .modal { align-items: end; padding: 0; }
+  .sheet {
+    max-width: 100%; max-height: 92vh;
+    border-radius: 20px 20px 0 0;
+    padding: var(--space-4) var(--space-4) calc(var(--space-5) + env(safe-area-inset-bottom));
+    transform: translateY(100%);
+  }
+  .sheet::before {
+    content: ""; display: block; width: 38px; height: 5px; border-radius: 999px;
+    background: var(--border); margin: 0 auto var(--space-4);
+  }
+  .modal.open .sheet { transform: none; }
+  .sheet-head h2 { font-size: 21px; }
+  .textarea { min-height: 118px; }
+  .sheet-actions { position: sticky; bottom: 0; background: var(--bg); padding-top: var(--space-3); }
+  .sheet-actions .btn { flex: 1; justify-content: center; }
+
+  /* 提示条浮在标签栏之上 */
+  .toast { bottom: calc(76px + env(safe-area-inset-bottom)); }
+
+  /* 底部标签栏 */
+  .tabbar {
+    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+    background: color-mix(in oklab, var(--bg) 86%, transparent);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    backdrop-filter: saturate(180%) blur(20px);
+    border-top: 1px solid var(--border-soft);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .tab {
+    position: relative; flex: 1;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+    min-height: 58px; padding: 6px 4px 8px;
+    font-size: 11px; color: var(--muted);
+    transition: color var(--motion-fast) var(--ease-standard);
+  }
+  .tab svg { width: 22px; height: 22px; }
+  .tab[aria-current="page"] { color: var(--accent); }
+  .tab-primary { justify-content: flex-end; }
+  .tab-primary .fab {
+    width: 50px; height: 50px; margin-top: -24px;
+    border-radius: 50%; background: var(--accent); color: var(--accent-on);
+    display: grid; place-items: center;
+    border: 4px solid var(--bg);
+    box-shadow: 0 8px 22px color-mix(in oklab, var(--accent) 38%, transparent);
+    transition: transform var(--motion-fast) var(--ease-standard), background var(--motion-base) var(--ease-standard);
+  }
+  .tab-primary .fab svg { width: 24px; height: 24px; }
+  .tab-primary:active .fab { transform: scale(0.93); background: var(--accent-active); }
+  .tab-primary span { color: var(--accent); }
+}

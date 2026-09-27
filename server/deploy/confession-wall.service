@@ -1,0 +1,40 @@
+# ─────────────────────────────────────────────────────────────────────────
+# systemd 单元：最低配置 VPS 常驻运行
+# 安装：
+#   sudo cp deploy/confession-wall.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now confession-wall
+# ─────────────────────────────────────────────────────────────────────────
+[Unit]
+Description=校园表白墙后端 (Node + SQLite)
+After=network.target
+# Turnstile 校验需要出网访问 challenges.cloudflare.com，
+# 若网络短暂不可用，验证会按 CHALLENGE_FAIL_OPEN 策略处理（默认 fail-closed）
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/srv/confession-wall/server
+# 环境变量放在仅 root 可读的文件里，避免令牌出现在 systemctl status
+EnvironmentFile=/etc/confession-wall.env
+ExecStart=/usr/bin/node src/server.js
+Restart=always
+RestartSec=2
+# 收到 SIGTERM 后，服务需要刷新点赞计数、PRAGMA optimize 并截断 WAL，
+# 给足时间再强杀（这也保证下次启动不会误判为「非优雅退出」而做全量校准）
+TimeoutStopSec=15
+KillSignal=SIGTERM
+
+# 最低配置机器的资源护栏（可按内存调整）
+MemoryMax=256M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/confession-wall/server/data
+# 只允许绑定/连接本机回环与外网 HTTPS（Turnstile 校验）
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

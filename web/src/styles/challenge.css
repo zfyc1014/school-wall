@@ -1,0 +1,62 @@
+/* ─── 人机验证（Cloudflare Turnstile） ─────────────────────────────────── */
+
+/* 首屏的轻提示：浏览不受影响，只有写操作需要验证 */
+.verify-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: var(--space-6);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-pill);
+  background: var(--bg);
+  font-size: var(--text-sm);
+  color: var(--fg-2);
+  text-align: left;
+  box-shadow: var(--shadow-card);
+}
+.verify-note .verify-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+  flex-shrink: 0;
+}
+.btn-sm { padding: 7px 14px; font-size: var(--text-sm); }
+
+/* 验证弹层 */
+.challenge-sheet { max-width: 460px; }
+.turnstile-box {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 74px;
+  padding: var(--space-4);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  margin-bottom: var(--space-4);
+}
+.turnstile-slot { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); width: 100%; }
+.turnstile-slot > div { display: flex; justify-content: center; width: 100%; }
+.turnstile-hint { text-align: center; }
+.challenge-sheet .stamp {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--meta);
+  line-height: 1.6;
+  margin-bottom: var(--space-2);
+}
+
+/* 发布抽屉里的内联验证 */
+.composer-verify { margin-bottom: var(--space-5); }
+.composer-verify .turnstile-box { margin-bottom: var(--space-2); }
+.composer-verify .err { margin-top: var(--space-1); }
+
+@media (max-width: 720px) {
+  .verify-note { border-radius: var(--radius-lg); }
+  .verify-note .btn { width: 100%; justify-content: center; }
+  .challenge-sheet { max-width: 100%; }
+}
