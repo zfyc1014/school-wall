@@ -90,6 +90,40 @@ db.pragma("auto_analyze = 0");
 
 db.exec(fs.readFileSync(path.join(__dirname, "..", "schema.sql"), "utf8"));
 
+/* ───────────────────── 列级迁移（幂等）───────────────────── */
+
+/**
+ * SQLite 的 ALTER TABLE ADD COLUMN 没有 IF NOT EXISTS，重复执行会报错。
+ * 这里用 PRAGMA table_info 先看列是否存在，再决定是否加 —— 比 catch 掉报错更明确，
+ * 也不会掩盖真正的失败原因。
+ *
+ * 为什么要有这一步：实名制上线后，posts / comments 需要记录发布者身份
+ * （identity_id）。既有数据库里已经积累了内容，不能靠重建表来加列。
+ */
+function ensureColumn(table, column, definition) {
+  const exists = db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+  if (exists) return false;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  console.log(`[db] 迁移：${table}.${column} 已添加`);
+  return true;
+}
+
+// 发布者身份（后台实名，前台匿名）。旧数据为 NULL —— 那批内容是在实名制之前发布的，
+// 审核后台会把它标成「无身份记录」，便于运营方决定是留是清。
+ensureColumn("posts", "identity_id", "INTEGER REFERENCES identities(id)");
+ensureColumn("comments", "identity_id", "INTEGER REFERENCES identities(id)");
+// 举报人也实名：恶意举报同样要能追溯到人
+ensureColumn("reports", "identity_id", "INTEGER REFERENCES identities(id)");
+// 审核动作留痕：谁在什么时候审的（管理端目前是单一令牌，记录时间与结论即可）
+ensureColumn("posts", "review_note", "TEXT");
+ensureColumn("comments", "reviewed_at", "INTEGER");
+ensureColumn("reports", "resolved_by", "TEXT");
+
+// 按身份查内容：出事时要能从手机号一路查到它发过的所有内容
+db.exec("CREATE INDEX IF NOT EXISTS idx_posts_identity ON posts(identity_id, id DESC)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_comments_identity ON comments(identity_id, id DESC)");
+db.exec("CREATE INDEX IF NOT EXISTS idx_reports_identity ON reports(identity_id, id DESC)");
+
 /* ───────────────────── 上次是否干净退出 ───────────────────── */
 
 const DIRTY_KEY = "clean_shutdown";
@@ -255,9 +289,14 @@ if (db.pragma("auto_vacuum", { simple: true }) === 0) {
   }
 }
 
-// 上次是否优雅退出：非优雅退出说明进程可能死在写事务中间，需要校准计数
-dirtyAtBoot = !getStat(DIRTY_KEY);
-setStat(DIRTY_KEY, "open");
+// 上次是否优雅退出：非优雅退出说明进程可能死在写事务中间，需要校准计数。
+//
+// 「干净启动」也要保留标记：如果只是有人开库看一眼（体检脚本、一次性查询），
+// 不应该把 clean 抹成 open —— 否则下次真正启动会误判为崩溃恢复，
+// 白做一次全量校准（帖量大时要几秒）。只有真的开始服务时才标记为运行中。
+const previousState = getStat(DIRTY_KEY);
+dirtyAtBoot = previousState !== "clean";
+if (dirtyAtBoot) setStat(DIRTY_KEY, "open");
 
 maybeRecountLikeCounts("启动检测");
 

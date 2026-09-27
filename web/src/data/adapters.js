@@ -28,6 +28,16 @@ export function setChallengeResolver(fn) {
 }
 
 /**
+ * 实名验证的挂载点。与 challenge 同理：写请求收到 403 identity_required 时，
+ * 交给 Provider 拉起实名弹层，完成后自动重试原请求。
+ */
+let ensureIdentityReady = null;
+
+export function setIdentityResolver(fn) {
+  ensureIdentityReady = typeof fn === 'function' ? fn : null;
+}
+
+/**
  * 待用的一次性 Turnstile token 暂存位。
  *
  * 为什么放这里而不是逐层传参：页面上可能有多个 widget（入口弹层、发布抽屉），
@@ -147,6 +157,13 @@ function createHttpAdapter() {
         const ready = await ensureChallengeReady();
         if (ready) return request(path, { method, body, signal, timeout, retried: true });
         throw new ApiError('需要完成人机验证后才能继续', { status: 403, code: 'challenge_cancelled' });
+      }
+      // 服务端要求先实名：同样拉起弹层后重试一次。
+      // 顺序上放在人机验证之后 —— 服务端也是先查机器人再查身份。
+      if (res.status === 403 && code === 'identity_required' && !retried && ensureIdentityReady) {
+        const ready = await ensureIdentityReady();
+        if (ready) return request(path, { method, body, signal, timeout, retried: true });
+        throw new ApiError('需要完成实名验证后才能发布', { status: 403, code: 'identity_cancelled' });
       }
       throw new ApiError(describeError(res.status, payload), {
         status: res.status,

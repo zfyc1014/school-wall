@@ -6,8 +6,9 @@ import { ComposerSheet, ReportSheet } from './components/ComposerSheet.jsx';
 import { LegalSheet } from './components/LegalSheet.jsx';
 import { ToastProvider, useToast } from './context/ToastContext.jsx';
 import { ChallengeProvider, useChallenge } from './context/ChallengeContext.jsx';
+import { IdentityProvider, useIdentity } from './context/IdentityContext.jsx';
 import { useWall } from './hooks/useWall.js';
-import { createAdapter, setChallengeResolver } from './data/adapters.js';
+import { createAdapter, setChallengeResolver, setIdentityResolver } from './data/adapters.js';
 import { loadLikedIds, saveLikedIds } from './lib/storage.js';
 
 const SITE_NAME = import.meta.env.VITE_SITE_NAME || '表白墙';
@@ -23,6 +24,7 @@ const SOURCE_NOTES = {
 function WallApp() {
   const toast = useToast();
   const challenge = useChallenge();
+  const identity = useIdentity();
 
   const [adapter, setAdapter] = useState(null);
   const [source, setSource] = useState('local');
@@ -45,6 +47,13 @@ function WallApp() {
     setChallengeResolver(challenge.ensureVerified);
     return () => setChallengeResolver(null);
   }, [challenge.ensureVerified]);
+
+  // 实名同理：403 identity_required → 拉起实名弹层 → 通过后重试。
+  // 服务端是「先机器人、后身份」的顺序，前端两个 resolver 也按这个顺序触发。
+  useEffect(() => {
+    setIdentityResolver(identity.ensureVerified);
+    return () => setIdentityResolver(null);
+  }, [identity.ensureVerified]);
 
   // 探测数据源：auto 模式下后端不可用就静默回落本地演示数据
   useEffect(() => {
@@ -157,10 +166,19 @@ function WallApp() {
         siteKey: challenge.siteKey ? `${challenge.siteKey.slice(0, 6)}…` : '',
         loading: challenge.loading,
       },
+      identity: {
+        required: identity.required,
+        verified: identity.verified,
+        // 只暴露脱敏号码，便于端到端断言；绝不暴露完整号码
+        phoneMasked: identity.phoneMasked,
+        open: identity.open,
+        step: identity.step,
+        provider: identity.config.provider,
+      },
     };
   }, [
     mode, source, ready, adapter, wall.items.length, wall.loading, wall.error,
-    likedIds.size, bootError, composerOpen, legalOpen, reportTarget, challenge,
+    likedIds.size, bootError, composerOpen, legalOpen, reportTarget, challenge, identity,
   ]);
 
   return (
@@ -192,16 +210,33 @@ function WallApp() {
               </button>
             </p>
 
-            {challenge.required && !challenge.verified && (
+            {identity.required && !identity.verified && (
               <div className="verify-note" role="status">
                 <span className="verify-dot" aria-hidden="true" />
                 <span>
-                  浏览无需验证；发布、评论、举报前需先完成一次人机验证。
+                  浏览无需验证；<strong>发布、评论、举报</strong>前需先完成手机号实名验证
+                  （前台仍以匿名展示）。
                 </span>
+                <button className="btn btn-secondary btn-sm" type="button" onClick={identity.openSheet}>
+                  去验证
+                </button>
+              </div>
+            )}
+
+            {challenge.required && !challenge.verified && (
+              <div className="verify-note" role="status">
+                <span className="verify-dot" aria-hidden="true" />
+                <span>还需完成一次人机验证，以确认操作由真人发起。</span>
                 <button className="btn btn-secondary btn-sm" type="button" onClick={() => challenge.requestVerification()}>
                   立即验证
                 </button>
               </div>
+            )}
+
+            {identity.required && identity.verified && (
+              <p className="meta verified-note">
+                已完成实名验证（{identity.phoneMasked}）· 墙上仍以匿名展示
+              </p>
             )}
           </div>
         </section>
@@ -271,11 +306,23 @@ function WallApp() {
 }
 
 export default function App() {
+  // Provider 嵌套：IdentityProvider 需要 challenge 的 ensureVerified（发短信前人机验证），
+  // 因此必须在 ChallengeProvider 内层。
   return (
     <ToastProvider>
       <ChallengeProvider>
-        <WallApp />
+        <IdentityBridge />
       </ChallengeProvider>
     </ToastProvider>
+  );
+}
+
+/** 把 challenge 的 ensureVerified 桥接给 IdentityProvider */
+function IdentityBridge() {
+  const challenge = useChallenge();
+  return (
+    <IdentityProvider ensureChallenge={challenge.ensureVerified}>
+      <WallApp />
+    </IdentityProvider>
   );
 }

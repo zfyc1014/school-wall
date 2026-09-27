@@ -44,6 +44,8 @@ const env = {
   INDEX_FILE: "school-confession-wall.html",
   LIKE_FLUSH_MS: "60",
   FEED_CACHE_MS: "0", // 测试里关掉短时缓存，避免掩盖数据变化
+  ADMIN_RATE_LIMIT: "1000", // 测试会高频调管理接口，放宽鉴权限流
+  DEBUG_EXIT: "1", // 打开退出追踪，便于定位异常退出
   DB_CHECKPOINT_MS: "600000",
   DB_CLEANUP_MS: "600000",
   TURNSTILE_SITE_KEY: "",
@@ -74,10 +76,13 @@ function startServer(extraEnv = {}) {
     };
     child.stdout.on("data", onData);
     child.stderr.on("data", onData);
-    child.on("exit", (code) => {
+    child.on("exit", (code, signal) => {
       alive = false;
       serverAlive = () => false;
-      reject(new Error(`服务退出 code=${code}\n${out}`));
+      // 把退出码/信号一并报出来：原生断言失败会是 134 或 signal=SIGABRT，
+      // 与「被测试脚本主动 kill」是完全不同的两件事，必须能区分。
+      process.stderr.write(`\n[服务进程退出] pid=${child.pid} code=${code} signal=${signal}\n`);
+      reject(new Error(`服务退出 code=${code} signal=${signal}\n${out}`));
     });
     setTimeout(() => reject(new Error(`启动超时\n${out}`)), 20000);
   });
@@ -100,7 +105,9 @@ async function api(pathname, options = {}) {
   // 问题，不是服务的问题，重试一次即可；同时把 socket 层错误码打出来便于判断。
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
+      process.stderr.write(`      → ${init.method || "GET"} ${pathname}\n`);
       res = await fetch(BASE + pathname, init);
+      process.stderr.write(`      ← ${res.status}\n`);
       break;
     } catch (err) {
       lastErr = err;

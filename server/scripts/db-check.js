@@ -54,10 +54,13 @@ check("核心表齐全", ["audit_log", "comments", "likes", "posts", "reports", 
 
 const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND sql IS NOT NULL").pluck().all();
 const expectedIndexes = [
+  // 内容与工单
   "idx_posts_feed", "idx_posts_hot", "idx_posts_cat",
   "idx_comments_post", "idx_comments_queue",
-  "idx_reports_status", "idx_reports_post",
-  "idx_audit_time"
+  "idx_reports_status", "idx_reports_post", "idx_audit_time",
+  // 后台实名（实名制上线新增）
+  "idx_identities_recent", "idx_posts_identity", "idx_comments_identity",
+  "idx_reports_identity", "idx_codes_lookup"
 ];
 const missing = expectedIndexes.filter((i) => !indexes.includes(i));
 check("索引齐全（含 pending 部分索引）", missing.length === 0, missing.length ? `缺少 ${missing.join(", ")}` : `${indexes.length} 个`);
@@ -134,6 +137,10 @@ const SQL_QUEUE_COMMENTS = "SELECT id FROM comments WHERE status='pending' ORDER
 const SQL_COMMENTS = "SELECT id, body, created_at FROM comments WHERE post_id=1 AND status='approved' ORDER BY id ASC LIMIT 200";
 const SQL_LIKES = "SELECT COUNT(*) FROM likes WHERE post_id = 1";
 const SQL_REPORTS = "SELECT * FROM reports WHERE status='open' ORDER BY id DESC LIMIT 100";
+/** 实名相关热查询：取某号码最近一条未消费的验证码、从身份反查内容、最近身份列表 */
+const SQL_CODE_LOOKUP = "SELECT id, code_hash FROM identity_codes WHERE phone_hash = ? AND consumed_at IS NULL ORDER BY id DESC LIMIT 1";
+const SQL_IDENTITY_POSTS = "SELECT id, cat, body FROM posts WHERE identity_id = ? ORDER BY id DESC LIMIT 200";
+const SQL_RECENT_IDENTITIES = "SELECT id FROM identities ORDER BY verified_at DESC, id DESC LIMIT 50";
 
 /** 一次跑完所有关键查询并返回计划文本 */
 function snapPlans() {
@@ -147,7 +154,10 @@ function snapPlans() {
     queueComments: plan(SQL_QUEUE_COMMENTS),
     comments: plan(SQL_COMMENTS),
     likes: plan(SQL_LIKES),
-    reports: plan(SQL_REPORTS)
+    reports: plan(SQL_REPORTS),
+    codeLookup: plan(SQL_CODE_LOOKUP, "h"),
+    identityPosts: plan(SQL_IDENTITY_POSTS, 1),
+    recentIdentities: plan(SQL_RECENT_IDENTITIES)
   };
 }
 
@@ -177,6 +187,12 @@ function assertPlans(tag) {
     /PRIMARY KEY/.test(p.likes) && noScan(p.likes), p.likes);
   check(`[${tag}] 待处理工单走 idx_reports_status`,
     /idx_reports_status/.test(p.reports) && noScan(p.reports), p.reports);
+  check(`[${tag}] 实名：取最近验证码走 idx_codes_lookup（含未消费条件）`,
+    /idx_codes_lookup/.test(p.codeLookup), p.codeLookup);
+  check(`[${tag}] 实名：从身份反查内容走 idx_posts_identity`,
+    /idx_posts_identity/.test(p.identityPosts) && noScan(p.identityPosts), p.identityPosts);
+  check(`[${tag}] 实名：最近身份列表走 idx_identities_recent`,
+    /idx_identities_recent/.test(p.recentIdentities), p.recentIdentities);
 
   return p;
 }
@@ -187,7 +203,7 @@ const after = assertPlans("ANALYZE 后");
 
 // 索引预算：索引不是越多越好，这里把「预期数量」写死，避免以后被随手加回来
 const allIndexes = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND sql IS NOT NULL").pluck().all();
-check("索引数量在预算内（无冗余索引）", allIndexes.length === 8, `${allIndexes.length} 个：${allIndexes.sort().join(", ")}`);
+check("索引数量在预算内（无冗余索引）", allIndexes.length === 13, `${allIndexes.length} 个：${allIndexes.sort().join(", ")}`);
 
 /* ── 3. 写入与计数一致性 ─────────────────────────────────────────── */
 

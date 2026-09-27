@@ -75,6 +75,30 @@ node --env-file=.env src/server.js   # Node 20+；Node 18 用 dotenv 或直接 e
 **生产启动守卫**：`NODE_ENV=production` 且未配置 Turnstile 时，
 服务会打印原因并以退出码 1 退出（而不是裸奔运行）。
 
+### 后台实名（手机号验证）
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `IDENTITY_ENFORCE` | 生产默认 1 | `1` 强制 / `0` 关闭（仅建议本地开发） |
+| `IDENTITY_SECRET` | 复用 `IP_HASH_SECRET` | 手机号哈希密钥。**上线后不可更改**（改了历史身份全部错位）；建议单独生成 |
+| `IDENTITY_CONSENT_VERSION` | `v1.0` | 同意条款版本号，写入每条身份记录（留痕） |
+| `IDENTITY_CODE_TTL_MS` | 600000 | 验证码有效期（10 分钟） |
+| `IDENTITY_RESEND_INTERVAL_MS` | 60000 | 同号码重发间隔 |
+| `IDENTITY_MAX_PER_DAY` | 8 | 同号码每日发码上限（防轰炸与费用失控） |
+| `IDENTITY_MAX_PER_HOUR_IP` | 10 | 同 IP 每小时发码上限 |
+| `IDENTITY_MAX_ATTEMPTS` | 5 | 单个验证码可试错次数，超过即作废 |
+| `IDENTITY_SESSION_TTL_MS` | 180 天 | 实名会话有效期（实名是低频动作） |
+| `IDENTITY_REQUIRE_FOR_READS` | 0 | 是否要求实名后才能阅读（默认不拦阅读） |
+| `SMS_PROVIDER` | `log` | `log` / `webhook` / `twilio`；生产用 `log` 会拒绝启动 |
+| `SMS_WEBHOOK_URL` / `SMS_WEBHOOK_TOKEN` | — | webhook 模式的网关地址与可选鉴权 |
+| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM` | — | twilio 模式必填 |
+| `SMS_ALLOW_LOG_IN_PROD` | — | 逃生开关：允许生产用 log 通道（等于没有实名） |
+| `ADMIN_RATE_LIMIT` | 10 | 管理鉴权限流（15 分钟窗口，按 IP 哈希） |
+
+⚠️ **+86 短信的现实约束**：境内通道普遍要求企业资质 + 模板报备，且常需域名/服务器
+**ICP 备案**。香港服务器 + 未备案域名通常拿不到 +86 发送权限 —— 上线前务必实测到达率，
+备选方案见根目录 `DEPLOY.md` 第 0 节。
+
 ### 数据库调优与维护
 
 | 变量 | 默认 | 说明 |
@@ -99,25 +123,37 @@ node --env-file=.env src/server.js   # Node 20+；Node 18 用 dotenv 或直接 e
 
 ```
 GET  /api/health
-GET  /api/challenge/config           人机验证配置 + 当前会话是否已验证
-POST /api/challenge/session          用一次性 token 换会话 cookie  { "token": "…" }
-POST /api/challenge/logout           结束会话
+GET  /api/challenge/config           人机验证 + 实名配置，以及当前会话状态
+POST /api/challenge/session          用一次性 Turnstile token 换会话 cookie
+POST /api/challenge/logout           结束人机会话
+
+POST /api/identity/request-code      申请短信验证码 { "phone": "138…" }   ← 需人机验证
+POST /api/identity/verify            校验验证码 { phone, code, consent }  → 下发实名会话
+POST /api/identity/logout            结束实名会话
+
 GET  /api/posts?cat=表白&sort=new|hot&q=关键词&cursor=<游标>&limit=20
-POST /api/posts                      { "cat": "表白", "body": "…" }        ← 需验证
-POST /api/posts/:id/like             幂等切换，同一 IP 再点即取消            ← 需验证
+POST /api/posts                      { "cat": "表白", "body": "…" }     ← 需人机 + 实名
+POST /api/posts/:id/like             幂等切换，同一 IP 再点即取消          ← 需人机
 GET  /api/posts/:id/comments
-POST /api/posts/:id/comments         { "body": "…" }                       ← 需验证
-POST /api/reports                     { "postId": 12, "reason": "…" }       ← 需验证
+POST /api/posts/:id/comments         { "body": "…" }                    ← 需人机 + 实名
+POST /api/reports                     { "postId": 12, "reason": "…" }    ← 需人机 + 实名
 ```
 
-**所有写接口都要求人机验证**（服务端强制，不依赖前端）：
+**两道人机/实名闸门回答的是两个不同问题**，写操作两者都要过：
 
-- 带上会话 cookie（`POST /api/challenge/session` 签发，默认 30 分钟），或
-- 直接带一次性 token：请求头 `CF-Turnstile-Response: <token>`
+| 闸门 | 回答的问题 | 凭据 | 失败响应 |
+| --- | --- | --- | --- |
+| Turnstile | 你是不是脚本 | 会话 cookie 或 `CF-Turnstile-Response` 一次性 token | `403 challenge_required` |
+| 后台实名 | 出事时能不能找到你 | `od_identity` 会话 cookie（短信验证后签发） | `403 identity_required` |
 
-缺少凭据时返回 `403 {"error":"challenge_required"}`；
-token 无效/过期返回 `403 {"error":"verify_failed"|"token_expired"}`；
-Cloudflare 不可达时按 `CHALLENGE_FAIL_OPEN` 决定返回 `503`（默认，拒绝）或放行。
+校验顺序是「先机器人、后身份」；`POST /api/identity/request-code` 本身也要求先过人机验证，
+否则这个接口就是一个现成的短信轰炸器。
+
+**发送验证码的响应刻意不透露该号码此前是否验证过**，避免被用于枚举哪些号码已注册。
+数据库里只存手机号的 HMAC 哈希与脱敏形式（`86 13****00`），**不存明文号码**。
+
+先审后发：`POST /api/posts` 与 `POST /api/posts/:id/comments` 一律写入 `pending`，
+人工审核通过后才公开（评论通过时才计入 `comment_count`）。
 
 列表响应带 `ETag`，客户端可用 `If-None-Match` 拿到 `304`（省掉一次查询与 gzip）。
 
@@ -127,12 +163,22 @@ Cloudflare 不可达时按 `CHALLENGE_FAIL_OPEN` 决定返回 `503`（默认，�
 
 ```bash
 curl -s 'http://127.0.0.1:8080/api/posts?sort=hot&limit=20'
-# 带一次性 token 发帖（token 从 Turnstile widget 拿到）
+# 带一次性 token 发帖（token 从 Turnstile widget 拿到；实名会话用 cookie 带上）
 curl -s -X POST http://127.0.0.1:8080/api/posts \
   -H 'content-type: application/json' \
   -H 'CF-Turnstile-Response: <token>' \
+  -b 'od_identity=<实名会话>' \
   -d '{"cat":"表白","body":"想对图书馆三楼的你说句话…"}'
 ```
+
+### 审核后台（不经过 API 也可以）
+
+浏览器打开 **`/admin`**（由本服务直接提供的单文件页面，`public/admin.html`）。
+用 `ADMIN_TOKEN` 登录后可以：审核帖子与评论、处理举报工单、
+查看实名身份并**追溯某个身份发过的全部内容**（含待审与已下架）。
+
+> 页面本身不设登录墙（它用令牌调管理接口），因此**必须在反代层限制来源**，
+> 或干脆只在 SSH 隧道内访问。详见根目录 `DEPLOY.md` 第 6 节。
 
 发布后 `status` 为 `pending`，**先审后发**；审核通过才会出现在 `GET /api/posts`。
 
@@ -296,6 +342,9 @@ const api = {
 - [x] 全站安全头（CSP、`X-Content-Type-Options`、`X-Frame-Options`、`Referrer-Policy`、HSTS）
 - [x] CSP 精确放行 Turnstile 的两个来源（`script-src` / `frame-src`），不多开
 - [x] **写接口服务端强制人机验证**（不依赖前端按钮），token 单次有效 + 会话绑定 IP 哈希
+- [x] **写接口服务端强制后台实名**：未验证身份的发布/评论/举报一律 403，手机号只存哈希
+- [x] 发码接口先过人机验证；同号码/同 IP 双重限流，验证码一次性、错次上限，防短信轰炸与枚举
+- [x] 审核后台 `/admin` 由后端直供（提示在反代层限制来源，推荐 SSH 隧道）
 - [x] 生产环境未配置人机验证时拒绝启动（退出码 1），避免裸奔
 - [x] 管理接口常量时间比对令牌（`timingSafeEqual`）
 - [x] 写接口按 IP 哈希限流；管理鉴权失败单独限流；验证校验接口单独限流
@@ -349,16 +398,21 @@ npm run db:recount    # 手动全量校准点赞计数
    ├─ package.json
    ├─ .env.example
    ├─ schema.sql              数据库结构（幂等，含索引迁移说明）
+   ├─ public/admin.html        审核后台（单文件，访问 /admin）
    ├─ data/                   SQLite 数据与 banned.txt（勿提交）
    ├─ scripts/
    │  ├─ api-test.js          接口测试（真实起服务）
-   │  └─ db-check.js          数据库自检
+   │  ├─ db-check.js          数据库自检（含查询计划）
+   │  └─ identity-test.js     后台实名 + 先审后发测试
    ├─ deploy/
    │  ├─ confession-wall.service   systemd 单元
    │  └─ Caddyfile                 反代 + 自动 HTTPS
    └─ src/
       ├─ server.js             HTTP 服务 / 路由 / 静态
-      ├─ db.js                 SQLite 连接与调优
+      ├─ db.js                 SQLite 连接、调优与数据维护
+      ├─ challenge.js          Turnstile 人机验证（服务端校验 + 会话）
+      ├─ identity.js           后台实名（手机号验证、哈希存储、身份追溯）
+      ├─ sms.js                短信通道（log / webhook / twilio 可插拔）
       ├─ moderation.js         内容合规预筛
       └─ rate-limit.js         进程内限流
 ```

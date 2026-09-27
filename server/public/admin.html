@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>审核后台 · 校园表白墙</title>
+<meta name="robots" content="noindex, nofollow" />
+<style>
+  /* 与前台共用同一套设计令牌，保持观感一致（此处内联，避免后台依赖前端构建产物） */
+  :root {
+    --bg: #ffffff; --surface: #f5f5f7; --fg: #1d1d1f; --fg-2: #424245;
+    --muted: #6e6e73; --meta: #86868b; --border: #d2d2d7; --border-soft: #e8e8ed;
+    --accent: #0071e3; --accent-on: #ffffff; --success: #16a34a; --warn: #eab308; --danger: #dc2626;
+    --font: "SF Pro Text", "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+    --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    --r-sm: 8px; --r-md: 12px; --r-lg: 18px; --r-pill: 980px;
+    --ring: 0 0 0 4px color-mix(in oklab, var(--accent), transparent 65%);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--surface); color: var(--fg);
+    font-family: var(--font); font-size: 15px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3 { margin: 0; letter-spacing: -0.01em; }
+  p { margin: 0; }
+  button { font: inherit; cursor: pointer; border: 0; background: none; color: inherit; }
+  :focus-visible { outline: none; box-shadow: var(--ring); border-radius: var(--r-sm); }
+  [hidden] { display: none !important; }
+
+  .wrap { max-width: 1080px; margin-inline: auto; padding: 24px 20px 64px; }
+  header.top {
+    position: sticky; top: 0; z-index: 10; background: color-mix(in oklab, #fff 88%, transparent);
+    backdrop-filter: saturate(180%) blur(16px); border-bottom: 1px solid var(--border-soft);
+  }
+  .top-inner { max-width: 1080px; margin-inline: auto; padding: 12px 20px; display: flex; align-items: center; gap: 14px; }
+  .mark { width: 30px; height: 30px; border-radius: var(--r-sm); background: var(--fg); color: var(--bg);
+          display: grid; place-items: center; font-weight: 600; }
+  .brand { font-weight: 600; font-size: 17px; }
+  .grow { flex: 1; }
+  .tag { font-family: var(--mono); font-size: 12px; color: var(--meta); }
+  .pill { padding: 4px 10px; border-radius: var(--r-pill); background: color-mix(in oklab, var(--fg) 6%, transparent);
+          font-family: var(--mono); font-size: 12px; color: var(--fg-2); }
+
+  .card { background: var(--bg); border: 1px solid var(--border-soft); border-radius: var(--r-lg); padding: 18px; }
+  .card + .card { margin-top: 14px; }
+
+  .field { margin-bottom: 14px; }
+  .label { display: block; font-size: 14px; color: var(--fg-2); margin-bottom: 6px; }
+  input[type=password], input[type=text], textarea, select {
+    width: 100%; padding: 11px 13px; border: 1px solid var(--border-soft); border-radius: var(--r-md);
+    background: var(--surface); color: var(--fg); font: inherit;
+  }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); background: #fff; }
+
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border-radius: var(--r-pill);
+         font-size: 14px; font-weight: 500; border: 1px solid transparent; transition: background .18s, border-color .18s, color .18s; }
+  .btn-primary { background: var(--accent); color: var(--accent-on); }
+  .btn-primary:hover { background: #0077ed; }
+  .btn-secondary { background: var(--bg); border-color: var(--border); }
+  .btn-secondary:hover { border-color: var(--fg); }
+  .btn-ok { background: var(--success); color: #fff; }
+  .btn-ok:hover { filter: brightness(1.06); }
+  .btn-danger { background: var(--danger); color: #fff; }
+  .btn-danger:hover { filter: brightness(1.06); }
+  .btn-ghost { color: var(--fg-2); }
+  .btn-ghost:hover { color: var(--fg); background: color-mix(in oklab, var(--fg) 5%, transparent); }
+  .btn[disabled] { opacity: .5; cursor: not-allowed; }
+  .btn-sm { padding: 6px 12px; font-size: 13px; }
+
+  .tabs { display: flex; gap: 4px; padding: 4px; background: color-mix(in oklab, var(--fg) 6%, transparent);
+          border-radius: var(--r-pill); margin-bottom: 16px; flex-wrap: wrap; }
+  .tabs button { padding: 8px 14px; border-radius: var(--r-pill); font-size: 14px; color: var(--muted); }
+  .tabs button:hover { color: var(--fg); }
+  .tabs button[aria-selected=true] { background: var(--bg); color: var(--fg); font-weight: 500; }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .stat { background: var(--bg); border: 1px solid var(--border-soft); border-radius: var(--r-md); padding: 14px; }
+  .stat .n { font-family: var(--mono); font-size: 24px; }
+  .stat .k { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .stat.alert .n { color: var(--warn); }
+
+  .item { border: 1px solid var(--border-soft); border-radius: var(--r-md); padding: 14px; background: var(--bg); }
+  .item + .item { margin-top: 10px; }
+  .item-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+  .cat { font-family: var(--mono); font-size: 12px; padding: 3px 9px; border-radius: var(--r-pill);
+         background: color-mix(in oklab, var(--fg) 6%, transparent); color: var(--fg-2); }
+  .flag { font-family: var(--mono); font-size: 11px; padding: 3px 8px; border-radius: var(--r-pill);
+          background: color-mix(in oklab, var(--warn) 22%, transparent); color: #7a5b00; }
+  .who { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .who.missing { color: var(--danger); }
+  .body { white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0 12px; }
+  .excerpt { font-size: 13px; color: var(--muted); border-left: 2px solid var(--border-soft); padding-left: 10px; margin-bottom: 10px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .actions input { flex: 1 1 200px; min-width: 160px; }
+  .empty { text-align: center; color: var(--muted); padding: 40px 12px; }
+  .todo { font-family: var(--mono); font-size: 12px; color: var(--meta); }
+
+  .toast { position: fixed; left: 50%; bottom: 26px; transform: translate(-50%, 16px); background: var(--fg); color: var(--bg);
+           padding: 11px 18px; border-radius: var(--r-pill); font-size: 14px; opacity: 0; pointer-events: none;
+           transition: opacity .2s, transform .2s; max-width: calc(100vw - 32px); }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+  .err { color: var(--danger); font-size: 13px; font-family: var(--mono); margin-top: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--border-soft); }
+  th { font-size: 12px; color: var(--muted); font-weight: 500; }
+  td.mono { font-family: var(--mono); font-size: 13px; }
+  .login-wrap { max-width: 420px; margin: 8vh auto 0; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="top-inner">
+    <span class="mark" aria-hidden="true">墙</span>
+    <span class="brand">审核后台</span>
+    <span class="pill" id="mode-pill">未登录</span>
+    <span class="grow"></span>
+    <button class="btn btn-ghost btn-sm" id="logout" hidden>退出</button>
+  </div>
+</header>
+
+<!-- ── 登录 ─────────────────────────────────────────────── -->
+<section class="wrap login-wrap" id="view-login">
+  <div class="card">
+    <h2>管理令牌</h2>
+    <p class="tag" style="margin:8px 0 16px">
+      与服务端 ADMIN_TOKEN 一致。令牌只保存在本机 localStorage，不会发给除本站以外的任何地方。
+    </p>
+    <div class="field">
+      <label class="label" for="token">ADMIN_TOKEN</label>
+      <input type="password" id="token" autocomplete="current-password" placeholder="粘贴管理令牌" />
+    </div>
+    <p class="err" id="login-err" hidden></p>
+    <button class="btn btn-primary" id="login">登录</button>
+  </div>
+  <p class="tag" style="margin-top:14px">
+    提示：本页默认不对公网暴露 —— 反代层请限制 /admin 的访问来源，或改为内网访问。
+  </p>
+</section>
+
+<!-- ── 主体 ─────────────────────────────────────────────── -->
+<main class="wrap" id="view-main" hidden>
+  <div class="stats" id="stats"></div>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" data-tab="posts" aria-selected="true">待审帖子</button>
+    <button role="tab" data-tab="comments" aria-selected="false">待审评论</button>
+    <button role="tab" data-tab="reports" aria-selected="false">举报工单</button>
+    <button role="tab" data-tab="identities" aria-selected="false">实名身份</button>
+  </div>
+
+  <div id="panel"></div>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+  "use strict";
+  const TOKEN_KEY = "od_admin_token";
+  let token = "";
+  let tab = "posts";
+  let reportsStatus = "open";
+
+  const $ = (sel, root) => (root || document).querySelector(sel);
+  /**
+   * 极简建节点助手。
+   * 注意：children 里允许出现 null / undefined（常见于 `cond ? node : null` 这种条件渲染），
+   * 必须过滤掉 —— 直接 appendChild(null) 会抛 TypeError，整个渲染就断了。
+   */
+  const el = (tag, attrs, children) => {
+    const node = document.createElement(tag);
+    if (attrs) for (const [k, v] of Object.entries(attrs)) {
+      if (v == null || v === false) continue;
+      if (k === "text") node.textContent = v;
+      else if (k === "html") node.innerHTML = v;
+      else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+      else node.setAttribute(k, v);
+    }
+    (children || []).forEach((c) => { if (c) node.appendChild(c); });
+    return node;
+  };
+
+  let toastTimer = null;
+  function toast(msg) {
+    const t = $("#toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
+  }
+
+  async function api(path, options = {}) {
+    const res = await fetch(path, Object.assign({}, options, {
+      headers: Object.assign(
+        { authorization: "Bearer " + token },
+        options.body ? { "content-type": "application/json" } : {}
+      )
+    }));
+    if (res.status === 401) {
+      logout();
+      throw new Error("令牌无效或已失效，请重新登录");
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || data.error || ("请求失败 " + res.status));
+    return data;
+  }
+
+  /* ── 登录 ─────────────────────────────────────────── */
+  function showMain() {
+    $("#view-login").hidden = true;
+    $("#view-main").hidden = false;
+    $("#logout").hidden = false;
+    $("#mode-pill").textContent = "已登录";
+    refresh();
+  }
+  function logout() {
+    token = "";
+    try { localStorage.removeItem(TOKEN_KEY); } catch (e) {}
+    $("#view-login").hidden = false;
+    $("#view-main").hidden = true;
+    $("#logout").hidden = true;
+    $("#mode-pill").textContent = "未登录";
+  }
+  async function login() {
+    const value = $("#token").value.trim();
+    if (!value) return;
+    token = value;
+    try {
+      await api("/api/admin/stats");
+      try { localStorage.setItem(TOKEN_KEY, token); } catch (e) {}
+      $("#login-err").hidden = true;
+      showMain();
+    } catch (err) {
+      $("#login-err").textContent = err.message;
+      $("#login-err").hidden = false;
+      token = "";
+    }
+  }
+
+  /* ── 统计 ─────────────────────────────────────────── */
+  async function refreshStats() {
+    const s = await api("/api/admin/stats");
+    const box = $("#stats");
+    box.textContent = "";
+    const cells = [
+      { k: "待审帖子", n: s.pendingPosts, alert: s.pendingPosts > 0 },
+      { k: "待审评论", n: s.pendingComments, alert: s.pendingComments > 0 },
+      { k: "待处理举报", n: s.openReports, alert: s.openReports > 0 },
+      { k: "已公开帖子", n: s.approvedPosts },
+      { k: "已验证身份", n: s.verifiedIdentities },
+      { k: "无身份记录", n: (s.postsWithoutIdentity || 0) + (s.commentsWithoutIdentity || 0), alert: s.postsWithoutIdentity > 0 },
+      { k: "数据库", n: Math.round((s.db && s.db.fileBytes || 0) / 1024) + "KB" }
+    ];
+    cells.forEach((c) => {
+      box.appendChild(el("div", { class: "stat" + (c.alert ? " alert" : "") }, [
+        el("div", { class: "n", text: String(c.n == null ? "-" : c.n) }),
+        el("div", { class: "k", text: c.k })
+      ]));
+    });
+    const idNote = s.identityRequired
+      ? "实名：" + (s.smsProvider === "log" ? "已启用（log 通道，不真发短信）" : "已启用（" + s.smsProvider + "）")
+      : "实名：未启用";
+    $("#mode-pill").textContent = idNote;
+  }
+
+  /* ── 审核动作 ─────────────────────────────────────── */
+  async function moderatePost(id, action, note, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      await api("/api/admin/posts/" + id + "/" + action, {
+        method: "POST",
+        body: JSON.stringify({ note: note || "" })
+      });
+      toast(action === "approve" ? "已通过 #" + id : action === "reject" ? "已驳回 #" + id : "已下架 #" + id);
+      await render();
+    } catch (err) {
+      toast(err.message);
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function moderateComment(id, action, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      await api("/api/admin/comments/" + id + "/" + action, { method: "POST" });
+      toast(action === "approve" ? "评论 #" + id + " 已通过" : "评论 #" + id + " 已驳回");
+      await render();
+    } catch (err) {
+      toast(err.message);
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function resolveReport(id, action, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      await api("/api/admin/reports/" + id + "/resolve", {
+        method: "POST",
+        body: JSON.stringify({ action })
+      });
+      toast(action === "takedown" ? "已下架相关内容" : "已驳回该举报");
+      await render();
+    } catch (err) {
+      toast(err.message);
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  /* ── 渲染 ─────────────────────────────────────────── */
+  function identityLine(phoneMasked, identityMissing, extra) {
+    if (identityMissing) {
+      return el("span", { class: "who missing", text: "无身份记录（实名制上线前的旧内容）" });
+    }
+    return el("span", { class: "who", text: "发布者 " + (phoneMasked || "—") + (extra ? " · " + extra : "") });
+  }
+
+  function relTime(ts) {
+    const d = Date.now() - Number(ts || 0);
+    if (!ts) return "—";
+    if (d < 60000) return "刚刚";
+    if (d < 3600000) return Math.floor(d / 60000) + " 分钟前";
+    if (d < 86400000) return Math.floor(d / 3600000) + " 小时前";
+    return Math.floor(d / 86400000) + " 天前";
+  }
+
+  async function renderPosts() {
+    const data = await api("/api/admin/queue?type=posts&limit=50");
+    const panel = $("#panel");
+    panel.textContent = "";
+    if (!data.items.length) {
+      panel.appendChild(el("div", { class: "empty", text: "队列已清空 —— 没有待审帖子。" }));
+      return;
+    }
+    data.items.forEach((it) => {
+      const noteInput = el("input", { type: "text", placeholder: "审核意见（选填，会记入留痕）", maxlength: "200" });
+      panel.appendChild(el("div", { class: "item" }, [
+        el("div", { class: "item-head" }, [
+          el("span", { class: "cat", text: it.cat }),
+          el("span", { class: "todo", text: "#" + it.id + " · " + relTime(it.created_at) }),
+          it.flag ? el("span", { class: "flag", text: "规则命中：" + it.flag }) : null,
+          identityLine(it.phone_masked, it.identityMissing, it.post_count ? "累计发布 " + it.post_count + " 条" : null)
+        ]),
+        el("div", { class: "body", text: it.body }),
+        el("div", { class: "actions" }, [
+          noteInput,
+          el("button", { class: "btn btn-ok btn-sm", text: "通过", onclick: (e) => moderatePost(it.id, "approve", noteInput.value, e.target) }),
+          el("button", { class: "btn btn-danger btn-sm", text: "驳回", onclick: (e) => moderatePost(it.id, "reject", noteInput.value, e.target) })
+        ])
+      ]));
+    });
+  }
+
+  async function renderComments() {
+    const data = await api("/api/admin/queue?type=comments&limit=50");
+    const panel = $("#panel");
+    panel.textContent = "";
+    if (!data.items.length) {
+      panel.appendChild(el("div", { class: "empty", text: "队列已清空 —— 没有待审评论。" }));
+      return;
+    }
+    data.items.forEach((it) => {
+      panel.appendChild(el("div", { class: "item" }, [
+        el("div", { class: "item-head" }, [
+          el("span", { class: "cat", text: "评论 #" + it.id }),
+          el("span", { class: "todo", text: "针对帖子 #" + it.post_id + " · " + relTime(it.created_at) }),
+          it.flag ? el("span", { class: "flag", text: "规则命中：" + it.flag }) : null,
+          identityLine(it.phone_masked, it.identityMissing)
+        ]),
+        it.postExcerpt ? el("div", { class: "excerpt", text: "原帖：" + it.postExcerpt + (it.postExcerpt.length >= 60 ? "…" : "") }) : null,
+        el("div", { class: "body", text: it.body }),
+        el("div", { class: "actions" }, [
+          el("button", { class: "btn btn-ok btn-sm", text: "通过", onclick: (e) => moderateComment(it.id, "approve", e.target) }),
+          el("button", { class: "btn btn-danger btn-sm", text: "驳回", onclick: (e) => moderateComment(it.id, "reject", e.target) })
+        ])
+      ]));
+    });
+  }
+
+  async function renderReports() {
+    const data = await api("/api/admin/reports?status=" + encodeURIComponent(reportsStatus));
+    const panel = $("#panel");
+    panel.textContent = "";
+    const filter = el("div", { class: "actions", style: "margin-bottom:12px" }, [
+      el("span", { class: "tag", text: "状态：" }),
+      ...["open", "actioned", "dismissed", "all"].map((s) => el("button", {
+        class: "btn btn-sm " + (s === reportsStatus ? "btn-primary" : "btn-secondary"),
+        text: { open: "待处理", actioned: "已下架", dismissed: "已驳回", all: "全部" }[s],
+        onclick: () => { reportsStatus = s; renderReports(); }
+      }))
+    ]);
+    panel.appendChild(filter);
+    if (!data.items.length) {
+      panel.appendChild(el("div", { class: "empty", text: "没有该状态的工单。" }));
+      return;
+    }
+    data.items.forEach((it) => {
+      panel.appendChild(el("div", { class: "item" }, [
+        el("div", { class: "item-head" }, [
+          el("span", { class: "cat", text: "工单 #" + it.id }),
+          el("span", { class: "todo", text: "帖子 #" + it.post_id + " · " + relTime(it.created_at) }),
+          el("span", { class: "who", text: "状态 " + it.status })
+        ]),
+        el("div", { class: "body", text: it.reason || "（举报人未填写理由）" }),
+        it.status === "open" ? el("div", { class: "actions" }, [
+          el("button", { class: "btn btn-danger btn-sm", text: "下架该内容", onclick: (e) => resolveReport(it.id, "takedown", e.target) }),
+          el("button", { class: "btn btn-secondary btn-sm", text: "驳回举报", onclick: (e) => resolveReport(it.id, "dismiss", e.target) })
+        ]) : null
+      ]));
+    });
+  }
+
+  async function renderIdentities() {
+    const data = await api("/api/admin/identities?limit=100");
+    const panel = $("#panel");
+    panel.textContent = "";
+    if (!data.items.length) {
+      panel.appendChild(el("div", { class: "empty", text: "还没有已验证的身份。" }));
+      return;
+    }
+    panel.appendChild(el("p", {
+      class: "tag", style: "margin-bottom:12px",
+      text: "只显示脱敏号码。需要追溯某个身份发过的全部内容时，点「追溯」；该操作会写入审计日志。"
+    }));
+    const table = el("table", null, [
+      el("thead", null, [el("tr", null, ["ID", "手机号（脱敏）", "地区", "验证时间", "已发帖", "已评论", "同意版本", "操作"]
+        .map((h) => el("th", { text: h })))]),
+      el("tbody", null, data.items.map((it) => el("tr", null, [
+        el("td", { class: "mono", text: "#" + it.id }),
+        el("td", { class: "mono", text: it.phone_masked }),
+        el("td", { class: "mono", text: it.country_code || "—" }),
+        el("td", { class: "mono", text: relTime(it.verified_at) }),
+        el("td", { class: "mono", text: String(it.post_count) }),
+        el("td", { class: "mono", text: String(it.comment_count) }),
+        el("td", { class: "mono", text: it.consent_version }),
+        el("td", null, [el("button", {
+          class: "btn btn-secondary btn-sm", text: "追溯",
+          onclick: () => traceIdentity(it.id)
+        })])
+      ])))
+    ]);
+    panel.appendChild(table);
+  }
+
+  async function traceIdentity(id) {
+    try {
+      const data = await api("/api/admin/identity/" + id);
+      const panel = $("#panel");
+      panel.textContent = "";
+      panel.appendChild(el("div", { class: "actions", style: "margin-bottom:12px" }, [
+        el("button", { class: "btn btn-secondary btn-sm", text: "← 返回列表", onclick: render }),
+        el("span", { class: "tag", text: "身份 #" + data.identity.id + " · " + data.identity.phone_masked })
+      ]));
+      panel.appendChild(el("p", {
+        class: "tag", style: "margin-bottom:12px",
+        text: "首次验证 " + relTime(data.identity.created_at) + " · 最近活跃 " + relTime(data.identity.last_seen_at)
+          + " · 同意版本 " + data.identity.consent_version
+      }));
+      panel.appendChild(el("h3", { text: "发布的帖子（含待审/已下架）", style: "margin:14px 0 8px" }));
+      if (!data.posts.length) panel.appendChild(el("div", { class: "empty", text: "没有帖子。" }));
+      data.posts.forEach((p) => panel.appendChild(el("div", { class: "item" }, [
+        el("div", { class: "item-head" }, [
+          el("span", { class: "cat", text: p.cat }),
+          el("span", { class: "todo", text: "#" + p.id + " · " + p.status + " · " + relTime(p.created_at) })
+        ]),
+        el("div", { class: "body", text: p.body })
+      ])));
+      panel.appendChild(el("h3", { text: "发布的评论", style: "margin:14px 0 8px" }));
+      if (!data.comments.length) panel.appendChild(el("div", { class: "empty", text: "没有评论。" }));
+      data.comments.forEach((c) => panel.appendChild(el("div", { class: "item" }, [
+        el("div", { class: "item-head" }, [
+          el("span", { class: "cat", text: "评论 #" + c.id }),
+          el("span", { class: "todo", text: "帖子 #" + c.post_id + " · " + c.status + " · " + relTime(c.created_at) })
+        ]),
+        el("div", { class: "body", text: c.body })
+      ])));
+    } catch (err) {
+      toast(err.message);
+    }
+  }
+
+  async function render() {
+    try {
+      await refreshStats();
+      $("#panel").setAttribute("aria-busy", "true");
+      if (tab === "posts") await renderPosts();
+      else if (tab === "comments") await renderComments();
+      else if (tab === "reports") await renderReports();
+      else await renderIdentities();
+    } catch (err) {
+      toast(err.message);
+    } finally {
+      $("#panel").removeAttribute("aria-busy");
+    }
+  }
+
+  async function refresh() { await render(); }
+
+  /* ── 事件绑定 ─────────────────────────────────────── */
+  $("#login").addEventListener("click", login);
+  $("#token").addEventListener("keydown", (e) => { if (e.key === "Enter") login(); });
+  $("#logout").addEventListener("click", logout);
+  document.querySelectorAll(".tabs button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      tab = btn.dataset.tab;
+      document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-selected", String(b === btn)));
+      render();
+    });
+  });
+
+  // 自动登录（令牌只在本机）
+  try {
+    const saved = localStorage.getItem(TOKEN_KEY);
+    if (saved) { token = saved; showMain(); }
+  } catch (e) { /* 隐私模式下忽略 */ }
+})();
+</script>
+</body>
+</html>

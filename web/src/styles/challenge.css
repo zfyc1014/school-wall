@@ -55,6 +55,68 @@
 .composer-verify .turnstile-box { margin-bottom: var(--space-2); }
 .composer-verify .err { margin-top: var(--space-1); }
 
+/* ─── 实名验证（手机号） ───────────────────────────────────────────────── */
+
+.identity-sheet { max-width: 480px; }
+
+/* 表单输入：与 .textarea 同一套视觉语言 */
+.input {
+  width: 100%;
+  padding: 13px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-soft);
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-base);
+  letter-spacing: 0.01em;
+  transition: border-color var(--motion-fast) var(--ease-standard);
+}
+.input::placeholder { color: var(--meta); }
+.input:hover { border-color: var(--border); }
+.input:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); background: var(--bg); }
+.input:disabled { opacity: 0.6; }
+
+/* 验证码输入：等宽、加大字距，便于逐位核对 */
+.code-input {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  letter-spacing: 0.32em;
+  text-align: center;
+  padding-block: 14px;
+}
+
+/* 告知区块：实名会收集个人信息，必须把用途和范围讲清楚 */
+.notice {
+  padding: var(--space-4);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  margin-bottom: var(--space-5);
+}
+.notice strong {
+  display: block;
+  font-size: var(--text-sm);
+  color: var(--fg);
+  margin-bottom: var(--space-2);
+}
+.notice p {
+  font-size: var(--text-sm);
+  line-height: 1.65;
+  color: var(--fg-2);
+}
+.notice p + p { margin-top: var(--space-2); }
+.notice strong:not(:first-child) { display: inline; margin: 0; }
+
+.verified-note { margin-top: var(--space-5); }
+
+@media (max-width: 720px) {
+  .identity-sheet { max-width: 100%; }
+  /* 手机上按钮会换行，让主操作占满一行更好点 */
+  .identity-sheet .sheet-actions { flex-wrap: wrap; }
+  .identity-sheet .sheet-actions .btn { flex: 1 1 100%; justify-content: center; }
+}
+
 @media (max-width: 720px) {
   .verify-note { border-radius: var(--radius-lg); }
   .verify-note .btn { width: 100%; justify-content: center; }

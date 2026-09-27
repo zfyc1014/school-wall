@@ -16,6 +16,47 @@ DROP INDEX IF EXISTS idx_posts_queue;  -- 旧版是全表索引，改为 pending
 DROP INDEX IF EXISTS idx_comments_queue;
 DROP INDEX IF EXISTS idx_reports_open; -- 与 idx_reports_status 前缀重复，属多余索引
 
+-- ─────────────────────────────────────────────────────────────────────────
+-- 实名身份（后台实名，前台匿名）
+--
+-- 合规需求：前台展示匿名，但平台必须能追溯到发布者。这不是「用户账号」——
+-- 没有密码、没有昵称、没有个人主页，只有一个已验证的手机号标识 + 同意记录。
+-- 数据最小化原则：
+--   * 存 HMAC 哈希（phone_hash），不存明文号码；哈希密钥独立于 IP 哈希密钥；
+--   * 明文只在「提交验证码的那一次请求」的内存里存在，不落盘、不写日志；
+--   * 需要联系发布者时，运营方凭哈希去短信网关/工单系统反查，
+--     而不是让数据库里躺着一份可直接泄露的手机号清单。
+-- ─────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS identities (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  phone_hash     TEXT    NOT NULL UNIQUE,  -- HMAC-SHA256(归一化手机号, IDENTITY_SECRET)
+  phone_masked   TEXT    NOT NULL,         -- 138****8000，仅供后台人工核对
+  country_code   TEXT,                     -- 86 / 852 …
+  method         TEXT    NOT NULL DEFAULT 'phone',
+  verified_at    INTEGER NOT NULL,
+  consent_version TEXT   NOT NULL,         -- 同意条款版本，留痕用
+  consent_at     INTEGER NOT NULL,
+  post_count     INTEGER NOT NULL DEFAULT 0,
+  comment_count  INTEGER NOT NULL DEFAULT 0,
+  last_seen_at   INTEGER NOT NULL,
+  created_at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_identities_recent ON identities(verified_at DESC);
+
+-- 短信验证码。只存哈希，明文码只在内存里比对。
+CREATE TABLE IF NOT EXISTS identity_codes (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  phone_hash  TEXT    NOT NULL,
+  code_hash   TEXT    NOT NULL,            -- HMAC-SHA256(code, IDENTITY_SECRET)
+  attempts    INTEGER NOT NULL DEFAULT 0,  -- 校验失败次数，超过上限即作废
+  consumed_at INTEGER,                     -- 用过/作废的时间
+  expires_at  INTEGER NOT NULL,
+  ip_hash     TEXT,
+  created_at  INTEGER NOT NULL
+);
+-- 取「某个号码最近一条未消费的码」是热查询，走这个索引
+CREATE INDEX IF NOT EXISTS idx_codes_lookup ON identity_codes(phone_hash, consumed_at, id DESC);
+
 -- 帖子。默认 status='pending'：先审后发。
 CREATE TABLE IF NOT EXISTS posts (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
