@@ -374,12 +374,18 @@ async function main() {
     await new Promise(r => setTimeout(r, 300));
     const legal = document.querySelector('#legal');
     const openNow = legal.classList.contains('open');
-    const hasHK = legal.textContent.includes('个人资料（隐私）条例');
+    const text = legal.textContent;
+    // 公约讲的是这个站真正会做的事
+    const hasRules = text.includes('别发这些') && text.includes('发出去之后') && text.includes('内测期间');
+    // 与站点不符的模板内容必须已经清掉（香港法例 / UGC / 律师审阅）
+    const banned = /香港|UGC|用户生成内容|执业律师|个人资料（隐私）条例/.test(document.body.innerText);
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     await new Promise(r => setTimeout(r, 400));
-    return { openNow, hasHK, closedAfterEsc: !legal.classList.contains('open'), title: legal.querySelector('h2').textContent };
+    return { openNow, hasRules, banned, closedAfterEsc: !legal.classList.contains('open'), title: legal.querySelector('h2').textContent };
   })()`);
-  check('公约弹层包含香港法例免责声明', escClosed.openNow && escClosed.hasHK, escClosed.title);
+  check('发布公约讲的是本站规则（无香港法例/UGC 模板残留）',
+    escClosed.openNow && escClosed.hasRules && !escClosed.banned,
+    `${escClosed.title} · 含本站规则=${escClosed.hasRules} · 含不符模板=${escClosed.banned}`);
   check('Esc 可关闭弹层', escClosed.closedAfterEsc);
 
   /* ── 9. 移动端 + 无横向滚动 + reduced motion ───────────────────── */

@@ -29,7 +29,7 @@
  *   GATE_CHALLENGE_ITEMS 挑战题目数，默认 2（1–4）
  *   GATE_MAX_ATTEMPTS   单次挑战最大答错次数，默认 5
  *   GATE_COOKIE         cookie 名，默认 od_gate
- *   GATE_COOKIE_SECURE  1 = 仅 HTTPS；生产默认 1
+ *   GATE_COOKIE_SECURE  1 = 强制 Secure / 0 = 强制不带 / 留空 = 跟着请求协议走（推荐）
  *   GATE_SECRET         会话签名密钥，默认复用 IP_HASH_SECRET
  *   GATE_ALLOW_DISABLED 生产环境未配置邀请码时的逃生开关（明确承担风险）
  */
@@ -46,18 +46,32 @@ const CHALLENGE_ITEMS = clamp(Number(process.env.GATE_CHALLENGE_ITEMS || 2), 1, 
 const MAX_ATTEMPTS = clamp(Number(process.env.GATE_MAX_ATTEMPTS || 5), 1, 20);
 const COOKIE_NAME = process.env.GATE_COOKIE || "od_gate";
 /**
- * 会话 cookie 的 Secure 属性：显式配置优先，否则生产默认开启。
+ * 会话 cookie 的 Secure 属性。
  *
- * `GATE_COOKIE_SECURE=0` 必须能在生产下生效（而不是被 IS_PROD 一票否决）：
- * 内测很可能部署在学校内网的纯 HTTP 地址上，浏览器会直接丢弃带 Secure 的
- * cookie —— 用户表现为「验证通过后又立刻要求验证」的死循环，而且只有在
- * 非 localhost 的 HTTP 环境下才暴露（localhost 被浏览器视为可信来源，
- * 所以本机验收永远看起来是好的）。这是一个显式逃生开关，设置时会打警告。
+ * 默认是 **auto：跟着这次请求的实际协议走** —— HTTPS 访问就打 Secure，HTTP 就不打。
+ *
+ * 为什么不写死「生产必须有 Secure」（这是踩过的坑）：
+ *   部署在 http://IP:端口 上时（内网、面板、还没上证书的测试机），带 Secure 的
+ *   cookie 会被浏览器直接丢掉，用户看到的是「输完邀请码，下一个请求又没有凭据，
+ *   于是再弹一次验证」的死循环。更麻烦的是它**只在非 localhost 的 HTTP 地址上出现**，
+ *   本机验收永远看起来正常，只有真机上才复现。
+ *   反过来，HTTPS 时自动带上 Secure，也不会因为忘了配而裸奔。
+ *
+ * `GATE_COOKIE_SECURE=1` 强制开启、`=0` 强制关闭，两种都仍然可用（后者会在启动时告警）。
  */
-const COOKIE_SECURE = process.env.GATE_COOKIE_SECURE === "1"
-  || (process.env.GATE_COOKIE_SECURE !== "0" && IS_PROD);
-if (IS_PROD && process.env.GATE_COOKIE_SECURE === "0") {
-  console.warn("[gate] GATE_COOKIE_SECURE=0：生产环境下会话 cookie 不带 Secure，"
+const COOKIE_SECURE_MODE = process.env.GATE_COOKIE_SECURE === "1" ? "always"
+  : process.env.GATE_COOKIE_SECURE === "0" ? "never"
+  : "auto";
+
+/** @param {boolean} secureRequest 本次请求是否走 HTTPS（由 server.js 判断后传入） */
+function cookieSecure(secureRequest) {
+  if (COOKIE_SECURE_MODE === "always") return true;
+  if (COOKIE_SECURE_MODE === "never") return false;
+  return Boolean(secureRequest);
+}
+
+if (IS_PROD && COOKIE_SECURE_MODE === "never") {
+  console.warn("[gate] GATE_COOKIE_SECURE=0：会话 cookie 不带 Secure，"
     + "仅应在无法启用 HTTPS 的内网部署中使用（cookie 可能被中间人窃取）");
 }
 /** 待答挑战的条目上限：正常流量下远达不到，超过即按最旧淘汰，内存占用恒定 */
@@ -267,7 +281,7 @@ function sign(ipHash, exp) {
 }
 
 /** 会话值绑定 IP 哈希：cookie 被复制到别的网络环境即失效 */
-function issueCookie(ipHash) {
+function issueCookie(ipHash, secureRequest) {
   const exp = Date.now() + TTL_SECONDS * 1000;
   const attrs = [
     `${COOKIE_NAME}=${exp}.${sign(ipHash, exp)}`,
@@ -276,13 +290,13 @@ function issueCookie(ipHash) {
     "SameSite=Lax",
     `Max-Age=${TTL_SECONDS}`
   ];
-  if (COOKIE_SECURE) attrs.push("Secure");
+  if (cookieSecure(secureRequest)) attrs.push("Secure");
   return attrs.join("; ");
 }
 
-function clearCookie() {
+function clearCookie(secureRequest) {
   const attrs = [`${COOKIE_NAME}=`, "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=0"];
-  if (COOKIE_SECURE) attrs.push("Secure");
+  if (cookieSecure(secureRequest)) attrs.push("Secure");
   return attrs.join("; ");
 }
 
@@ -325,9 +339,10 @@ function hasSession(req, ipHash) {
 
 /**
  * 校验「邀请码 + 挑战答案」，成功则签发会话。
+ * @param {boolean} [secureRequest] 本次请求是否 HTTPS —— 决定 cookie 是否带 Secure（见 cookieSecure）
  * @returns {{ok: true, cookie?: string, expiresIn: number} | {ok: false, status: number, code: string, message: string, remaining?: number}}
  */
-function verify({ inviteCode, challengeId, answers, ipHash }) {
+function verify({ inviteCode, challengeId, answers, ipHash, secureRequest }) {
   if (!ENABLED) return { ok: true, expiresIn: 0 };
 
   if (!matchInvite(inviteCode)) {
@@ -346,7 +361,7 @@ function verify({ inviteCode, challengeId, answers, ipHash }) {
     };
   }
 
-  return { ok: true, cookie: issueCookie(ipHash), expiresIn: TTL_SECONDS };
+  return { ok: true, cookie: issueCookie(ipHash, secureRequest), expiresIn: TTL_SECONDS };
 }
 
 /**
@@ -370,7 +385,10 @@ function guardWrite(req, ctx) {
  */
 function logConfig({ fatal } = {}) {
   if (ENABLED) {
-    console.log(`[gate] 内测门禁已启用（会话 ${TTL_SECONDS}s，`
+    const secureNote = COOKIE_SECURE_MODE === "auto"
+      ? "cookie Secure 跟随协议"
+      : COOKIE_SECURE_MODE === "always" ? "cookie 强制 Secure" : "cookie 不带 Secure";
+    console.log(`[gate] 内测门禁已启用（会话 ${TTL_SECONDS}s，${secureNote}，`
       + `邀请码 ${INVITE_REQUIRED ? INVITE_HASHES.length + " 个" : "未配置（仅本地挑战）"}）`);
     if (!INVITE_REQUIRED) {
       console.warn("[gate] 未配置 GATE_INVITE_CODES：门禁退化为「只答题」，建议配置邀请码把站点关在小范围内");

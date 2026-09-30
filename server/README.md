@@ -10,8 +10,9 @@ Node 内置 `http` + SQLite(WAL)，**自托管内测门禁**（邀请码 + 一�
 > **内测阶段不收集手机号、没有账号体系。** 实名与短信相关代码（`identity.js` / `sms.js`）
 > 已从仓库删除，需要时从 git 历史取回：`git log --oneline -- server/src/identity.js`。
 >
-> 本文件是工程与部署说明，**不构成法律意见**。上线前请由具备香港执业资格的律师审阅免责声明、
-> 隐私政策与内容处置流程。
+> 本文件是工程与部署说明，**不构成法律意见**。前端给用户看的只有一份**发布公约**
+> （`web/src/components/LegalSheet.jsx`），内容是本站实际怎么做（不能发什么、留了什么记录、
+> 被举报会怎样），不是法律模板；合规口径见第 9 节。
 
 ---
 
@@ -93,7 +94,7 @@ npm run dev      # node --watch src/server.js（改完自动重启）
 | `GATE_CHALLENGE_ITEMS` | `2` | 每次挑战题目数，范围 1–4 |
 | `GATE_MAX_ATTEMPTS` | `5` | 单份挑战允许答错次数，范围 1–20 |
 | `GATE_COOKIE` | `od_gate` | 会话 cookie 名 |
-| `GATE_COOKIE_SECURE` | 生产默认开 | `1` = 仅 HTTPS；纯 HTTP 内网部署需显式设 `0`（否则 cookie 被浏览器丢弃，出现验完又要验的死循环） |
+| `GATE_COOKIE_SECURE` | 跟随协议（auto） | 留空 = **auto**：HTTPS 请求带 `Secure`、HTTP 请求不带；`1` = 强制带、`0` = 强制不带（生产下启动会打警告）。纯 HTTP 部署不需要再手工设 `0`；HTTP 下 cookie 仍是明文传输 |
 | `GATE_SECRET` | 复用 `IP_HASH_SECRET` | 会话签名密钥；更换会让所有在线会话失效 |
 | `GATE_ALLOW_DISABLED` | — | 逃生开关：生产未配邀请码时显式放行启动 |
 
@@ -175,7 +176,7 @@ npm run dev      # node --watch src/server.js（改完自动重启）
 | --- | --- | --- | --- |
 | `GET` | `/api/gate/config` | — | `{enabled, required, inviteRequired, sessionTtl, challengeTtl, challengeItems, verified, beta, error}`，公开、不含机密 |
 | `POST` | `/api/gate/challenge` | 30 / 10 分钟 | 取一份一次性挑战 `{enabled, id, items:[{q}], expiresAt, ttlSeconds}`；**答案只存在服务端内存**；门禁关闭时返回 `{enabled:false}` |
-| `POST` | `/api/gate/verify` | 20 / 10 分钟 | `{code, challengeId, answers[]}` → 成功 `200 {verified:true, expiresIn}` + `Set-Cookie: od_gate=…`（HMAC 签名、绑定 IP 哈希、HttpOnly、SameSite=Lax、生产带 Secure） |
+| `POST` | `/api/gate/verify` | 20 / 10 分钟 | `{code, challengeId, answers[]}` → 成功 `200 {verified:true, expiresIn}` + `Set-Cookie: od_gate=…`（HMAC 签名、绑定 IP 哈希、HttpOnly、SameSite=Lax；`Secure` 跟随请求协议，HTTPS 带、HTTP 不带） |
 | `POST` | `/api/gate/logout` | — | 清 cookie，返回 `{verified:false}` |
 
 失败码：`invalid_code`（403，邀请码错误；刻意不区分「空」与「错」以免辅助枚举）、
@@ -222,10 +223,15 @@ curl -s -X POST http://127.0.0.1:8080/api/admin/bulk -H "Authorization: Bearer $
 
 ### 审核后台（不经过 API 也可以）
 
-浏览器打开 **`/admin`**（由本服务直接提供的单文件页面 `public/admin.html`，
-始终从 `server/public/` 读取，**不受 `WEB_ROOT` 影响**）。导航为五个工作区：
-概览 / 待审队列 / 举报工单 / 审核日志 / 内测反馈；支持关键词搜索、批量通过/驳回/下架、
-帖子详情、以及**无后端演示模式**（连不上 `/api` 时自动进入，操作只在本页生效）。
+浏览器打开 **`/houtai/`**（`GET /houtai`、`/houtai/`、`/houtai/index.html` 都指向由本服务
+直接提供的单文件页面 `public/admin.html`，始终从 `server/public/` 读取，**不受 `WEB_ROOT` 影响**）。
+导航为五个工作区：概览 / 待审队列 / 举报工单 / 审核日志 / 内测反馈；支持关键词搜索、
+批量通过/驳回/下架、帖子详情、以及**无后端演示模式**（连不上 `/api` 时自动进入，操作只在本页生效）。
+
+**老地址 `/admin` 是钓鱼页**：`GET /admin`、`/admin/`、`/admin.html` 统一返回一张静态页面
+（HTTP 200，正文只有一句「你以为我会傻到这种程度？」），不含控制台结构、也不含 `ADMIN_TOKEN`
+（实现见 `src/server.js` 的 `DECOY_HTML`）。这是**降噪**，把扫描器、旧书签和顺手猜路径的流量
+挡在后台入口之外，**不是安全措施** —— `/api/admin/*` 接口路径没有变。
 
 > 页面本身不设登录墙（它用令牌调管理接口，令牌存在浏览器 localStorage），因此
 > **必须在反代层限制来源**，或干脆只在 SSH 隧道内访问。详见根目录 `DEPLOY.md` 第 6 节。
@@ -246,7 +252,7 @@ curl -s -X POST http://127.0.0.1:8080/api/admin/bulk -H "Authorization: Bearer $
 | 前端 | 入口 | 说明 |
 | --- | --- | --- |
 | React 版（推荐） | `web/dist/index.html` | `web/` 的 Vite 产物，内置数据源探测与回落 |
-| 单文件原型 | `school-confession-wall.html` | 保留未改动的视觉基线，`localStorage` 演示数据 |
+| 单文件原型 | `school-confession-wall.html` | 保留未改动的视觉基线（历史原型），`localStorage` 演示数据；其中的法律文案不代表线上站点 |
 
 ```bash
 npm run build                                  # 仓库根执行，产物落在 web/dist/
@@ -433,6 +439,7 @@ node scripts/db-check.js --recount            # 额外做一次全量点赞校�
 | 词表改了没生效 | 热重载间隔 | 默认 30 秒内生效（`BANNED_RELOAD_MS`）；设 `0` 会关闭热重载 |
 | 审核日志看不到 IP | 设计如此 | `GET /api/admin/audit` 刻意不返回 `ip_hash`（留痕只需「谁在何时做了什么」） |
 | 跨设备会话失效 | cookie 绑定 IP 哈希 | 预期行为：换网络 / 换设备需要重新过门禁 |
+| 验证通过后又立刻要求验证 | cookie 被浏览器丢弃 | 看启动日志的 cookie 模式：`cookie 强制 Secure` 说明 `GATE_COOKIE_SECURE=1`，纯 HTTP 站点下浏览器会丢 cookie → 改成留空（auto）或 `0`。若日志本来就是「跟随协议」，再查是不是换了域名/端口访问 |
 
 ### 低配 VPS 调优清单
 
@@ -472,8 +479,9 @@ node scripts/db-check.js --recount            # 额外做一次全量点赞校�
   需评估 PDPO 跨境转移要求。
 - **处置留痕**：`audit_log` 记录管理员动作，便于在争议或执法查询时说明处置过程。
 
-**上线前必做**：把免责声明中的 `report@example.edu`、示例校名、版本日期替换为真实信息；
-隐私政策与免责声明交由律师审阅；`data/banned.txt` 换成经审阅的词库。
+**上线前必做**：把页脚的举报邮箱占位符 `report@example.edu`（硬编码在 `web/src/components/Footer.jsx`）
+换成真实邮箱；把发布公约（`web/src/components/LegalSheet.jsx`）通读一遍并按本站实际情况补齐；
+`data/banned.txt` 换成经审阅的词库。法例清单与合规口径留在本文档第 9 节，不要写进用户可见的公约。
 
 ---
 
@@ -489,14 +497,15 @@ node scripts/db-check.js --recount            # 额外做一次全量点赞校�
 - [x] 生产环境未配置邀请码时**拒绝启动**（退出码 1），而不是让写接口裸奔
 - [x] 管理接口常量时间比对令牌（`timingSafeEqual`）；管理鉴权与门禁校验单独限流
 - [x] 写接口按 IP 哈希限流；请求体上限 + JSON 解析失败返回 400
-- [x] 静态服务路径穿越防护（`filePath.startsWith(WEB_ROOT + sep)`）；`/admin` 固定在 `server/public`
+- [x] 静态服务路径穿越防护（`filePath.startsWith(WEB_ROOT + sep)`）；`/houtai/` 固定在 `server/public`，
+      老路径 `/admin` 只返回不回显任何结构的钓鱼页（降噪，非安全措施）
 - [x] SQL 全部参数化；搜索用 `LIKE ... ESCAPE` 转义 `% _ \`
 - [x] 审核接口不返回 `ip_hash`；后台不把任何哈希写入 DOM
 - [x] 优雅退出：回写点赞计数、`PRAGMA optimize`、`wal_checkpoint(TRUNCATE)`、写干净退出标记
 - [x] 同一 IP 对同一帖的重复举报去重（防止刷爆工单队列）
 - [x] 旧库升级时幂等清理实名时代的表与列（删不掉就保留空列，不影响启动）
 - [ ] CSP 仍为内联样式放行 `'unsafe-inline'`；进一步加固可提取样式并改用 nonce
-- [ ] 生产环境建议在反代层再加一层请求速率与 WAF 规则，并限制 `/admin` 来源
+- [ ] 生产环境建议在反代层再加一层请求速率与 WAF 规则，并限制 `/houtai/` 来源
 
 ---
 
@@ -507,7 +516,7 @@ server/
 ├─ package.json
 ├─ .env.example                环境变量的权威清单（含默认值与范围）
 ├─ schema.sql                  数据库结构（幂等，含索引预算与迁移说明）
-├─ public/admin.html           审核后台（单文件零构建，访问 /admin）
+├─ public/admin.html           审核后台（单文件零构建，访问 /houtai/；老路径 /admin 只回钓鱼页）
 ├─ data/                       SQLite 数据与 banned.txt（勿提交；有 banned.txt.example 占位）
 ├─ deploy/
 │  ├─ confession-wall.service  systemd 单元（含资源护栏）

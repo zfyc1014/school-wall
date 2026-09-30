@@ -25,7 +25,7 @@ Node 后端（单进程，server/src/server.js）
   ├─ /api/*            业务 API：先审后发 · 进程内限流 · 合规预筛
   ├─ /api/gate/*       内测门禁：邀请码 + 一次性本地挑战 + HMAC 会话（全程不出网）
   ├─ /api/feedback     内测反馈（只进后台队列，不公开）
-  ├─ /admin            审核后台（单文件 server/public/admin.html，后端直出）
+  ├─ /houtai/          审核后台（单文件 server/public/admin.html，后端直出；老地址 /admin 是钓鱼页）
   └─ SQLite（WAL）      server/data/wall.db（无独立数据库进程）
 ```
 
@@ -44,10 +44,10 @@ Node 后端（单进程，server/src/server.js）
 | `web/` | React 源码（Vite 工程）；`web/src/styles/tokens.css` 是唯一设计令牌来源 |
 | `index.html` | Vite 入口（必须位于 Vite root，即仓库根） |
 | `server/` | Node 后端：API、`schema.sql`、限流、合规预筛、内测门禁、审核后台 |
-| `server/public/admin.html` | 审核后台（单文件零构建，访问 `/admin`） |
+| `server/public/admin.html` | 审核后台（单文件零构建，访问 `/houtai/`；老路径 `/admin` 只返回钓鱼页） |
 | `server/.env.example` | **后端环境变量的权威清单**（含默认值与取值范围） |
 | `.env.example` / `.env.production.example` | 前端构建期变量（`VITE_*`，会打进产物，禁止放密钥） |
-| `school-confession-wall.html` | 原始单文件原型，保留未改动（视觉基线） |
+| `school-confession-wall.html` | 原始单文件原型，保留未改动（视觉基线，令牌契约由 `npm run tokens` 校验）；里面的法律文案是**历史原型**，不代表线上站点 |
 | `DESIGN.md` | 设计系统契约与组件映射 |
 | `docs/design/` | 审核后台的**设计交付件**（`DESIGN-HANDOFF.md` 视觉契约、`DESIGN-MANIFEST.json` 机器可读清单）；改后台界面前先读，别把定稿的排版与状态改回通用卡片 |
 | `CHANGELOG.md` | 更新日志（Keep a Changelog 结构；内测阶段版本回到 `0.x`，不承诺 API 与数据稳定） |
@@ -117,7 +117,7 @@ GATE_ENFORCE=1 GATE_INVITE_CODES=dev-beta-2026 node --env-file=.env src/server.j
 | --- | --- | --- |
 | 内测邀请码 | 人手一份的共享口令；服务端只保存 `HMAC-SHA256`，比较用 `timingSafeEqual`，过短的码（< 8 位）会被忽略并打警告 | `GATE_INVITE_CODES`（逗号或空格分隔，可配多个） |
 | 一次性本地挑战 | 服务端出题（两位数加减，默认 2 题），**答案只存在服务端内存**，默认 10 分钟过期、答对即作废、最多错 5 次；挑战与访客 IP 哈希绑定 | `GATE_CHALLENGE_TTL=600`、`GATE_CHALLENGE_ITEMS=2`、`GATE_MAX_ATTEMPTS=5` |
-| 短期会话 cookie | HMAC-SHA256 签名、绑定 IP 哈希、`HttpOnly` + `SameSite=Lax`，默认 12 小时 | `GATE_COOKIE=od_gate`、`GATE_TTL=43200` |
+| 短期会话 cookie | HMAC-SHA256 签名、绑定 IP 哈希、`HttpOnly` + `SameSite=Lax`，默认 12 小时；`Secure` **跟随请求协议**（HTTPS 请求带、HTTP 请求不带） | `GATE_COOKIE=od_gate`、`GATE_TTL=43200`、`GATE_COOKIE_SECURE`（留空 = auto；`1` 强制带、`0` 强制不带） |
 
 接口（全部在本进程内完成，无任何出网请求）：
 
@@ -177,7 +177,7 @@ v2.1.0 用的是 Cloudflare Turnstile，这一版把它**整体删除**，换成
 
 ---
 
-## 6. 审核后台 `/admin`
+## 6. 审核后台 `/houtai/`
 
 由后端直接提供的**单文件零构建**后台（`server/public/admin.html`），导航为五个工作区
 （以文件为准）：
@@ -194,11 +194,26 @@ v2.1.0 用的是 Cloudflare Turnstile，这一版把它**整体删除**，换成
 **页面不设登录墙 —— 因此必须在反代层限制来源**，推荐 SSH 隧道：
 
 ```bash
-ssh -L 8080:127.0.0.1:8080 user@your-vps   # 然后本机打开 http://127.0.0.1:8080/admin
+ssh -L 8080:127.0.0.1:8080 user@your-vps   # 然后本机打开 http://127.0.0.1:8080/houtai/
 ```
 
 另有**无后端演示模式**：打不开后端时自动进入演示数据（连接状态会显示「演示模式」），
 所有操作只在本页生效，可直接用来演示审核流程或做前端联调。
+
+### 老地址 `/admin` 现在是钓鱼页（降噪，不是安全措施）
+
+`GET /admin`、`/admin/`、`/admin.html` 一律返回一张静态页面（HTTP 200），正文只有一句
+「你以为我会傻到这种程度？」，**不含控制台的任何结构，也不含 `ADMIN_TOKEN` 字样**
+（实现见 `server/src/server.js` 的 `DECOY_HTML`）。扫描器、好奇的路人和拿着旧书签的人
+都只会看到这句话。
+
+这个定位要说清楚：它**只是降噪**，把无关流量从后台入口引开，让日志与注意力干净一点，
+**不是安全措施** —— 换个路径并不会让后台变安全。真正的防线是两条，缺一不可：
+
+1. 所有 `/api/admin/*` 都强制 `ADMIN_TOKEN` 校验（常量时间比较 + 单独限流）；
+2. **反代层限制来源**（推荐 SSH 隧道，别把后台暴露在公网）。
+
+`/api/admin/*` 这些**接口路径没有变**，改的只是后台页面地址与运维约定。
 
 ---
 
@@ -278,10 +293,13 @@ ssh -L 8080:127.0.0.1:8080 user@your-vps   # 然后本机打开 http://127.0.0.1
 
 1. 按 **`DEPLOY.md`** 逐条配置：`GATE_INVITE_CODES`（≥8 位随机串）、`ADMIN_TOKEN`、
    `IP_HASH_SECRET`、`WEB_ROOT` 指向 `web/dist`、Caddy + systemd。
-2. **限制 `/admin` 的访问来源**（推荐 SSH 隧道，不暴露公网）。
+2. **限制 `/houtai/` 的访问来源**（推荐 SSH 隧道，不暴露公网）；老地址 `/admin` 只是钓鱼页，别把它当成防护。
 3. `server/data/banned.txt` 换成经审阅的词库（从 `banned.txt.example` 复制）。
-4. 免责声明里的 `report@example.edu`、示例校名、版本日期换成真实信息；隐私政策需覆盖 UGC、
-   哈希后的 IP / UA 与保留期、「匿名不等于无资料」、查阅/更正渠道；**交香港执业律师审阅**。
+4. 页脚的「举报邮箱」还是占位符 `report@example.edu`（硬编码在 `web/src/components/Footer.jsx`），
+   换成真实可用的邮箱；发布公约（`web/src/components/LegalSheet.jsx`）通读一遍，按本站实际情况补充 ——
+   它现在只说本站真正做的事（不能发什么、平台留了什么记录、被举报了会怎样），
+   法律条款清单与律师审阅意见不写进这份用户可见的文案。
+   若另出隐私政策，需覆盖哈希后的 IP / UA 与保留期、「匿名不等于无资料」、查阅/更正渠道。
 5. 考虑开启 `RETENTION_DAYS=90`（合规上通常需要明确的保留期限）。
 6. 配好备份：`sqlite3 wall.db ".backup"`，或先 checkpoint 再打包 `server/data/`。
 7. 邀请码的发放要有名单意识：内测站点的边界就是这枚口令，**别把它贴进公开群**。
@@ -308,4 +326,4 @@ git show ebb0c36:server/src/challenge.js > server/src/challenge.js
 `identities` / `identity_codes` 两张表，并尝试 `DROP COLUMN` 三处 `identity_id`；
 **删不掉就保留为空列、代码不再读写**，绝不让一次清理失败导致服务起不来。
 
-> 本文件、`DEPLOY.md`、`DESIGN.md` 与前端免责声明均为工程模板，**不构成法律意见**。
+> 本文件、`DEPLOY.md`、`DESIGN.md` 与前端发布公约均为工程说明，**不构成法律意见**。

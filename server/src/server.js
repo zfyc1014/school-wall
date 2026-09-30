@@ -594,7 +594,9 @@ route("POST", "/api/gate/verify", async (ctx) => {
     inviteCode: payload.code,
     challengeId: payload.challengeId,
     answers: payload.answers,
-    ipHash: ctx.ipHash
+    ipHash: ctx.ipHash,
+    // 让 cookie 的 Secure 跟着本次请求的实际协议走：HTTP 部署下也能正常保存会话
+    secureRequest: ctx.secure
   });
 
   if (!result.ok) {
@@ -613,7 +615,7 @@ route("POST", "/api/gate/verify", async (ctx) => {
 // POST /api/gate/logout —— 主动结束会话（换人使用同一设备时用）
 route("POST", "/api/gate/logout", (ctx) => {
   sendJson(ctx.req, ctx.res, 200, { verified: false }, {
-    "Set-Cookie": gate.clearCookie(),
+    "Set-Cookie": gate.clearCookie(ctx.secure),
     "Cache-Control": "no-store"
   });
 });
@@ -1341,15 +1343,59 @@ const MIME = {
   ".woff2": "font/woff2"
 };
 
+/* ───────────────────────────── 假的 /admin ───────────────────────────── */
+
+/**
+ * `/admin` 上的钓鱼页。
+ *
+ * 真后台挪到了 `/houtai/`，这里放一个"看起来像被识破"的一行页面：
+ * 扫描器、好奇的路人、拿着旧书签的人都只会看到这句话，不会看到控制台的任何结构。
+ *
+ * 顺带说清楚定位：这**不是安全措施**，只是降噪。真正的防线永远是
+ *   1) `ADMIN_TOKEN` 校验（所有 /api/admin/* 都强制）、
+ *   2) 反代层限制来源（推荐 SSH 隧道，别把后台暴露在公网）。
+ */
+const DECOY_HTML = [
+  "<!doctype html>",
+  '<html lang="zh-CN">',
+  "<head>",
+  '<meta charset="utf-8">',
+  '<meta name="viewport" content="width=device-width,initial-scale=1">',
+  "<title>404</title>",
+  '<meta name="robots" content="noindex,nofollow">',
+  "<style>",
+  "html,body{height:100%;margin:0}",
+  "body{display:grid;place-items:center;background:#fff;color:#1d1d1f;",
+  'font-family:"SF Pro Text","Helvetica Neue",Helvetica,Arial,"PingFang SC","Microsoft YaHei",sans-serif}',
+  "p{margin:0;padding:24px;text-align:center;font-size:clamp(22px,5vw,46px);",
+  "font-weight:600;letter-spacing:-.01em;line-height:1.3}",
+  "</style>",
+  "</head>",
+  "<body><p>你以为我会傻到这种程度？</p></body>",
+  "</html>",
+  ""
+].join("\n");
+
+function serveDecoy(req, res) {
+  finish(req, res, 200, Buffer.from(DECOY_HTML), {
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-cache"
+  });
+}
+
 async function serveStatic(ctx) {
   const { req, res } = ctx;
   let rel = decodeURIComponent(ctx.pathname);
   if (rel === "/") rel = "/" + INDEX_FILE;
 
-  // 审核后台：单文件、无构建依赖，固定从 server/public 提供（不受 WEB_ROOT 影响，
-  // 因为 WEB_ROOT 生产上指向 web/dist）。页面自身用 ADMIN_TOKEN 调管理接口，
-  // 真正的防线是「反代层限制 /admin 来源」+「管理接口令牌校验」。
-  const isAdminPage = rel === "/admin" || rel === "/admin/" || rel === "/admin.html";
+  // 后台的真实地址是 /houtai/（单文件、无构建依赖，固定从 server/public 提供，
+  // 不受 WEB_ROOT 影响 —— 因为 WEB_ROOT 生产上指向 web/dist）。
+  // 老路径 /admin 一律给钓鱼页；页面自身仍靠 ADMIN_TOKEN 调管理接口，
+  // 真正的防线是「反代层限制来源」+「管理接口令牌校验」。
+  const isDecoy = rel === "/admin" || rel === "/admin/" || rel === "/admin.html";
+  if (isDecoy) return serveDecoy(req, res);
+
+  const isAdminPage = rel === "/houtai" || rel === "/houtai/" || rel === "/houtai/index.html";
   let filePath;
   if (isAdminPage) {
     filePath = path.join(SERVER_ROOT, "public", "admin.html");
@@ -1411,6 +1457,13 @@ const server = http.createServer(async (req, res) => {
     ip: clientIp(req),
     ipHash: hashIp(clientIp(req)),
     uaHash: crypto.createHash("sha256").update(String(req.headers["user-agent"] || "")).digest("hex").slice(0, 16),
+    /**
+     * 本次请求是否走 HTTPS —— 决定门禁会话 cookie 要不要带 Secure。
+     * 直接 TLS 看 socket；经过反代时看 X-Forwarded-Proto（仅在 TRUST_PROXY=1 时采信，
+     * 与 clientIp 的信任边界保持一致）。
+     */
+    secure: Boolean(req.socket && req.socket.encrypted)
+      || (TRUST_PROXY && String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() === "https"),
     params: {}
   };
 

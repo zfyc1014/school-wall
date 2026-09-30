@@ -253,11 +253,11 @@ function WallApp() {
               写在这里。
             </h1>
             <p className="lead">
-              匿名发布你的表白、树洞、寻人与致谢。所有内容经审核后公开，请先阅读平台公约。
+              表白、树洞、寻人、致谢，都能匿名发。帖子会先人工看一遍，通过了才公开。
             </p>
             <p className="hero-note">
               <button className="textlink" type="button" onClick={openLegal}>
-                阅读发布公约与免责声明
+                看看发布公约
               </button>
             </p>
 
@@ -295,7 +295,7 @@ function WallApp() {
         <section className="section cta" data-od-id="cta-strip">
           <div className="container cta-inner">
             <h2>想说的话，别让它过夜。</h2>
-            <p className="lead">匿名、免费，提交后由管理员审核。</p>
+            <p className="lead">匿名、免费。发出来先过一遍人工审核，通过就挂上去。</p>
             <button className="btn btn-primary" type="button" onClick={openComposer}>
               <svg
                 viewBox="0 0 24 24"

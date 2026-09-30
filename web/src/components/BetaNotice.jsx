@@ -24,7 +24,7 @@ export function BetaNotice({ beta, visible, onOpenFeedback, onDismiss }) {
 
       <div className="beta-notice-foot">
         <span className="meta">
-          内测期间不收集手机号，也没有账号体系；内容仍然先审后发。
+          内测期间不收手机号，也没有账号。发帖仍然是先审后发。
         </span>
         {beta.feedback && (
           <button className="btn btn-secondary btn-sm" type="button" onClick={onOpenFeedback}>

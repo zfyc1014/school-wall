@@ -20,9 +20,9 @@ const VERSION = String(process.env.BETA_VERSION || "0.9.0-beta.1").trim();
 const NAME = String(process.env.BETA_NAME || "内测版").trim();
 
 const DEFAULT_NOTICE = [
-  "本站处于内测阶段：功能、界面与数据都可能随时调整，历史内容可能被定期重置。",
-  "请勿发布真实姓名、联系方式等隐私信息，也不要发布无法承受丢失的重要内容。",
-  "遇到问题或有建议，欢迎通过页脚「内测反馈」告诉我们。"
+  "现在是内测，功能和界面随时会改，数据也可能被清空。",
+  "别发真实姓名、联系方式这类隐私信息，也别把丢了会心疼的东西只存在这儿。",
+  "遇到问题或者有想法，点页脚的「内测反馈」告诉我们。"
 ].join("");
 
 const NOTICE = String(process.env.BETA_NOTICE || "").trim() || DEFAULT_NOTICE;

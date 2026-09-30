@@ -24,7 +24,7 @@ export function Footer({
               <span className="brand-name">{siteName}</span>
               <span className="beta-tag">{beta.name} {beta.version}</span>
             </div>
-            <p>校园匿名分享空间。内容均由用户发布，不代表平台或学校立场。</p>
+            <p>校园里的匿名公告板。帖子只代表发布者本人，不代表平台或学校。</p>
           </div>
 
           <div className="foot-col">
@@ -43,9 +43,9 @@ export function Footer({
           <div className="foot-col">
             <div className="foot-title">规则与法律</div>
             <div className="foot-links">
-              <button type="button" onClick={onOpenLegal}>免责声明与发布公约</button>
-              <button type="button" onClick={onOpenLegal}>举报与下架流程</button>
-              <button type="button" onClick={onOpenLegal}>隐私与资料处理说明</button>
+              <button type="button" onClick={onOpenLegal}>发布公约</button>
+              <button type="button" onClick={onOpenLegal}>举报与处理</button>
+              <button type="button" onClick={onOpenLegal}>隐私说明</button>
             </div>
           </div>
         </div>
@@ -58,7 +58,7 @@ export function Footer({
         <div className="foot-bottom">
           <span>© 2026 校园表白墙 · {beta.name} {beta.version}</span>
           <span>
-            内容为用户生成内容（UGC）· 举报邮箱 report@example.edu
+            举报邮箱 report@example.edu
             {beta.feedbackEmail ? ` · 反馈邮箱 ${beta.feedbackEmail}` : ''}
           </span>
         </div>

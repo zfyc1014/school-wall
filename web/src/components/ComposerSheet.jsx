@@ -85,7 +85,7 @@ export function ComposerSheet({ open, onClose, onSubmit }) {
         <div className="sheet-head">
           <div>
             <h2 id={titleId}>发布一条告白</h2>
-            <p className="meta" style={{ marginTop: 4 }}>提交后进入审核队列</p>
+            <p className="meta" style={{ marginTop: 4 }}>发出去之前会先人工看一遍</p>
           </div>
           <button className="icon-btn" type="button" onClick={onClose} aria-label="关闭">
             <IconClose />

@@ -7,8 +7,9 @@
 > ① 内测阶段**不收集手机号、没有账号体系**，写操作只过「邀请码 + 本地挑战」这道自托管闸门；
 > ② **整条链路不需要任何出网请求**（旧版为了 Cloudflare Turnstile 必须能访问境外服务，现在完全内网自洽）。
 >
-> 本文是工程与运维说明，**不构成法律意见**。免责声明、隐私政策与内容处置流程请由具备香港执业资格的
-> 律师审阅。
+> 本文是工程与运维说明，**不构成法律意见**；第 12 节的合规口径与内容处置流程请自行确认
+> （涉及香港法例的部分建议由执业律师过一遍）。前端给用户看的只有一份**发布公约**
+> （`web/src/components/LegalSheet.jsx`），讲的是本站实际怎么做，不是法律文件。
 
 ---
 
@@ -22,12 +23,12 @@
 - [ ] **3. 环境文件**：`/etc/confession-wall.env`，权限 `600`、属主 root（令牌不能出现在 `systemctl status`）。
 - [ ] **4. 前端构建**：`VITE_DATA_MODE=api npm run build`，产物在 `web/dist/`。
 - [ ] **5. `WEB_ROOT`** 指向 `web/dist`（不要依赖自动探测）。
-- [ ] **6. 反代**：Caddy 自动 HTTPS + 静态资源直发；**`/admin` 必须限制来源**（推荐 SSH 隧道）。
+- [ ] **6. 反代**：Caddy 自动 HTTPS + 静态资源直发；**`/houtai/` 必须限制来源**（推荐 SSH 隧道）。
 - [ ] **7. systemd**：`MemoryMax=256M`、`TimeoutStopSec=15`、`ReadWritePaths` 指向 `server/data`。
 - [ ] **8. 词表**：`cp server/data/banned.txt.example server/data/banned.txt` 后换成经审阅的词库。
 - [ ] **9. 验收脚本**：跑完第 6 节的上线验收清单（最关键的一条是「直连 API 发帖必须被 403 拦下」）。
 - [ ] **10. 备份**：配好 `sqlite3 .backup` 定时任务，并确认能从备份恢复。
-- [ ] **11. 合规**：免责声明中的示例邮箱 / 校名 / 版本日期换成真实信息，隐私政策交律师审阅。
+- [ ] **11. 合规**：页脚的举报邮箱占位符 `report@example.edu` 换成真实邮箱；发布公约通读一遍并按实际情况补齐。
 - [ ] **12. 观察**：上线后一周按第 9 节的指标盯住待审队列与反馈队列。
 
 ---
@@ -76,7 +77,7 @@ sudo editor /etc/confession-wall.env
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
-| `NODE_ENV` | — | 生产必须 `production`：它同时决定「未配邀请码就拒绝启动」「cookie 带 `Secure`」「`ADMIN_TOKEN` / `IP_HASH_SECRET` 缺失即退出」 |
+| `NODE_ENV` | — | 生产必须 `production`：它同时决定「未配邀请码就拒绝启动」与「`ADMIN_TOKEN` / `IP_HASH_SECRET` 缺失即退出」 |
 | `GATE_INVITE_CODES` | 空 | 内测邀请码，逗号或空格分隔可配多个；**每个至少 8 位**，过短的会被忽略并打警告。生产不配置就起不来 |
 | `ADMIN_TOKEN` | — | 管理接口令牌，**≥24 字符**（建议 `openssl rand -hex 32`）。缺失或过短时生产环境退出码 1 |
 | `IP_HASH_SECRET` | — | 把访客 IP 做不可逆哈希（不落盘原始 IP），**≥16 字符** |
@@ -94,7 +95,7 @@ sudo editor /etc/confession-wall.env
 | `GATE_CHALLENGE_ITEMS` | `2` | 1–4 题。题多机器成本高，人也会烦 |
 | `GATE_MAX_ATTEMPTS` | `5` | 1–20 次，单份挑战允许答错的次数，超过即作废 |
 | `GATE_COOKIE` | `od_gate` | 会话 cookie 名 |
-| `GATE_COOKIE_SECURE` | 生产默认开 | `1` = 仅 HTTPS。**纯 HTTP 内网部署必须显式设 `0`**，否则浏览器丢弃 cookie，用户会陷入「刚验证完又要求验证」；设置后启动会打警告 |
+| `GATE_COOKIE_SECURE` | 跟随协议（auto） | 留空 = **auto**：HTTPS 请求带 `Secure`、HTTP 请求不带；`1` = 强制带 `Secure`；`0` = 强制不带（生产下启动会打警告）。纯 HTTP 部署**不需要**再手工设 `0`，auto 已经够用 —— 但 HTTP 下 cookie 与邀请码都是明文传输（见 §5.5 末尾的提示） |
 | `GATE_SECRET` | 复用 `IP_HASH_SECRET` | 会话签名密钥。建议独立生成；**换掉会让所有在线会话立即失效** |
 | `GATE_ALLOW_DISABLED` | — | 逃生开关：生产未配邀请码时，显式 `1` 才允许启动（等于承认写接口对全网开放） |
 
@@ -175,7 +176,8 @@ sudo systemctl reload caddy
 
 Caddyfile 已包含：静态资源直发（省一次 Node 往返）、HSTS / nosniff / Referrer-Policy、访问日志轮转。
 `root` 指向 `web/dist`；若仍在用单文件原型，改成 `/srv/confession-wall` 并把 `INDEX_FILE` 换成
-`school-confession-wall.html` 即可，两者共用同一套 `/api`。
+`school-confession-wall.html` 即可，两者共用同一套 `/api`。注意这份原型是**保留未改动的历史文件**
+（视觉基线），它里面的法律文案不再代表线上站点 —— 线上那份是 React 版的发布公约。
 
 > **可以在 Caddy 层加 CSP，但不要放宽 `'self'`。** 后端下发的 CSP 是
 > `default-src 'self'`、`script-src 'self' 'unsafe-inline'`、`frame-src 'none'`；
@@ -265,7 +267,8 @@ TRUST_PROXY=0
 FORCE_HTTPS=0
 
 GATE_INVITE_CODES=<openssl rand -hex 8 生成的随机串>
-GATE_COOKIE_SECURE=0        # 面板给的是 http://IP:端口，不设 0 浏览器会丢弃会话 cookie
+# GATE_COOKIE_SECURE 留空即可：面板给的是 http://IP:端口，默认会跟随协议、不带 Secure。
+# 显式写 0 也是同样的效果（只是生产下启动会多一条告警），写 1 会让浏览器丢弃会话 cookie。
 
 ADMIN_TOKEN=<openssl rand -hex 32>
 IP_HASH_SECRET=<openssl rand -hex 16>
@@ -299,7 +302,10 @@ GATE_SECRET=<openssl rand -hex 16>
    并确认 `npm install` 没被加 `--omit=dev`。
 4. 页面 404 或样式全无 → 日志出现 `[warn] 前端产物不存在`：vite 没构建成功（Node 19 上较常见）→ 换 nodejs_22；
    或本机 `npm run build` 后把 `web/dist` 上传。
-5. 一直反复要求验证邀请码 → `GATE_COOKIE_SECURE` 没设成 `0`（面板是 http）。
+5. 一直反复要求验证邀请码 → 先看启动日志里的 cookie 模式：若显示 `cookie 强制 Secure`，说明
+   `GATE_COOKIE_SECURE=1` 被显式设上了 —— 纯 HTTP 的面板下浏览器会直接丢弃这张 cookie，
+   改成留空（auto）或 `0` 后重启即可。若显示的是 `cookie Secure 跟随协议`，再查是不是换了
+   域名 / 端口访问（会话 cookie 绑定 IP 哈希，换网络也要重新验证）。
 6. `EADDRINUSE` 或面板显示端口不通 → 面板注入的端口没被读到，在 `server/.env` 里显式写
    `PORT=<面板分配的端口>`、`HOST=0.0.0.0`。
 7. 面板自动重启且日志出现 `Assertion failed: (env) != nullptr`（退出码 134）→ 已知的 better-sqlite3 原生 teardown 竞态，
@@ -335,7 +341,10 @@ curl -s -X POST $WALL/api/posts -H 'content-type: application/json' \
 curl -s -o /dev/null -w '%{http_code}\n' $WALL/api/admin/stats
 
 # 5) 后台页面由后端直接提供（反代层请另行限制来源！）
-curl -s -o /dev/null -w '%{http_code}\n' $WALL/admin
+curl -s -o /dev/null -w '%{http_code}\n' $WALL/houtai/
+
+# 5b) 老地址 /admin 是钓鱼页：200 + 只有一句话，不含控制台内容
+curl -s $WALL/admin | grep -o '你以为我会傻到这种程度？'
 
 # 6) 安全头
 curl -sI $WALL/ | grep -i -E 'content-security-policy|strict-transport|x-content-type|frame-options'
@@ -362,20 +371,21 @@ sqlite3 /srv/confession-wall/server/data/wall.db \
 1. 首屏出现**内测标识条**与**内测公告**（公告可关闭，关闭状态记在 localStorage，换版本号会重新出现）
 2. 点「发布告白」→ 填内容提交 → 弹出**内测验证**弹层（邀请码 + 本地题目）
 3. 填邀请码、答对题目 → 提交后提示「已提交，等待审核通过后公开」
-4. 打开 `/admin` → 用 `ADMIN_TOKEN` 登录 → 在「待审队列」里看到这条 → 点「通过」
+4. 打开 `/houtai/` → 用 `ADMIN_TOKEN` 登录 → 在「待审队列」里看到这条 → 点「通过」
 5. 回到首页刷新 → 内容出现在墙上；同一浏览器内后续写操作不再要求答题（默认 12 小时）
 6. 在页脚点「内测反馈」提交一条 → 后台「内测反馈」工作区能看到 → 处理后归档
 
 ### 审核后台的访问控制（重要）
 
-`/admin` 是**单文件后台**，由后端直接提供（`server/public/admin.html`）。它自身用 `ADMIN_TOKEN`
-调管理接口（令牌只存在浏览器 localStorage），所以页面本身不设登录墙 —— 但**你必须限制它的来源**，
-否则等于把审核入口暴露在公网：
+后台页面在 **`/houtai/`**（`GET /houtai`、`/houtai/`、`/houtai/index.html` 都指向它），
+是**单文件后台**，由后端直接提供（`server/public/admin.html`，固定从 `server/public/` 读，
+**不受 `WEB_ROOT` 影响**）。它自身用 `ADMIN_TOKEN` 调管理接口（令牌只存在浏览器 localStorage），
+所以页面本身不设登录墙 —— 但**你必须限制它的来源**，否则等于把审核入口暴露在公网：
 
 ```caddy
 # 方案 A：只允许校园网 / 办公网访问
 wall.example.edu {
-    @admin path /admin*
+    @admin path /houtai*
     handle @admin {
         @blocked not remote_ip 10.0.0.0/8 203.0.113.7
         respond @blocked 403
@@ -386,11 +396,21 @@ wall.example.edu {
 
 # 方案 B（更稳）：干脆不在公网暴露，用 SSH 隧道访问
 #   ssh -L 8080:127.0.0.1:8080 user@your-vps
-#   然后本机打开 http://127.0.0.1:8080/admin
+#   然后本机打开 http://127.0.0.1:8080/houtai/
 ```
 
 推荐方案 B：审核是低频操作，走隧道最省心，也不给公网留任何入口。
 另外 `ADMIN_TOKEN` 必须是 ≥32 位随机串，并且定期轮换。
+
+**老地址 `/admin` 为什么还在**：`GET /admin`、`/admin/`、`/admin.html` 现在返回一张静态钓鱼页
+（HTTP 200，正文只有一句「你以为我会傻到这种程度？」），不含控制台结构、也不含 `ADMIN_TOKEN`
+（实现见 `server/src/server.js` 的 `DECOY_HTML`）。这是**降噪**：拿旧书签、扫描器和顺手猜路径的
+流量都停在这一页，不给后台入口添噪声。**它不是安全措施** —— 别把来源限制省掉，
+真正的防线始终是「`ADMIN_TOKEN` 校验 + 反代层限制来源」这两条。
+
+> 注意反代里不要给 `/houtai*` 配 `file_server`：这一页必须由 Node 直出，
+> 它是固定从 `server/public/` 取的，交给 Caddy 的静态目录会 404。
+> `/api/admin/*` 这些接口路径没有变。
 
 ---
 
@@ -583,7 +603,7 @@ sudo systemctl restart confession-wall
 
 | 现象 | 原因 / 处理 |
 | --- | --- |
-| 后台一直显示「演示模式」 | 前端连不上 `/api`（反代没转发、`/admin` 是从别的静态服务打开的）。演示模式下所有操作只在本页生效 |
+| 后台一直显示「演示模式」 | 前端连不上 `/api`（反代没转发、`/houtai/` 是从别的静态服务或本地文件打开的）。演示模式下所有操作只在本页生效 |
 | `401 unauthorized` | `ADMIN_TOKEN` 与 `.env` 不一致（注意令牌两端空格） |
 | `429 rate_limited` | 管理鉴权限流：默认 10 次 / 15 分钟（`ADMIN_RATE_LIMIT`）。批量审核工具可调高 |
 | 点「通过」没反应 | 打开浏览器控制台看请求；若是 404，确认内容 id 仍存在（可能已被清理或下架） |
@@ -593,7 +613,8 @@ sudo systemctl restart confession-wall
 | 现象 | 原因 / 处理 |
 | --- | --- |
 | 首页 404 | `WEB_ROOT` 指错（生产要指向 `web/dist`），或忘了 `npm run build` |
-| `/admin` 404 | 后端没起来，或反代把 `/admin` 当成静态路径交给了 Caddy 的 `file_server` |
+| `/houtai/` 404 | 后端没起来；或反代把 `/houtai` 当成静态路径交给了 Caddy 的 `file_server`（后台由 Node 直出，不能配静态目录） |
+| `/admin` 显示一句莫名其妙的话 | **设计如此**：老地址是钓鱼页（只回一句话、不含控制台），后台在 `/houtai/`；若你确实想彻底关掉，可在反代层把 `/admin*` 直接 404 |
 | 资源缓存不更新 | 带哈希的产物用「一年 immutable」是设计如此；HTML 是 `no-cache`，刷新即可拿到新版本号 |
 | 压缩没生效 | 响应体 <1KB、客户端没发 `Accept-Encoding`，或 Caddy 抢先按自己的 `encode` 压了（见第 8 节） |
 
@@ -633,7 +654,7 @@ curl -s localhost:8080/api/health          # 健康检查（含版本与内测�
 curl -s localhost:8080/api/admin/stats -H "Authorization: Bearer $TOKEN"
 
 # 审核：推荐直接用后台界面（需 SSH 隧道或反代放行）
-#   ssh -L 8080:127.0.0.1:8080 user@your-vps  →  本机打开 http://127.0.0.1:8080/admin
+#   ssh -L 8080:127.0.0.1:8080 user@your-vps  →  本机打开 http://127.0.0.1:8080/houtai/
 # 也可以用 API（便于脚本化批量审核）：
 curl -s 'localhost:8080/api/admin/queue?type=posts&limit=50' -H "Authorization: Bearer $TOKEN"
 curl -s 'localhost:8080/api/admin/queue?type=comments&q=关键词' -H "Authorization: Bearer $TOKEN"
@@ -675,9 +696,12 @@ npm test              # 接口 + 门禁 + 数据库自检（临时库、临时�
 - **起底（doxxing）刑事化**：联系方式与可识别个人资料的规则已在 `server/src/moderation.js` 里覆盖，
   命中即转人工；但真正的兜底是**先审后发要有人真的每天看队列**。
 - **通知—移除**：《诽谤条例》下收到有效通知后应尽快下架，`reports` 表就是这套工单。
-- **未成年人**：涉及未成年人的内容优先级更高，建议在发布公约中加入监护人同意条款。
+- **未成年人**：涉及未成年人的内容优先处理；发布公约里已经写明「请在监护人知情的情况下使用」，
+  是否再加监护人同意条款由运营方决定。
 - **数据出境**：哈希后的 IP、内容与反馈都留在本机 SQLite；若你把备份同步到境外对象存储，
   需要按 PDPO 评估跨境转移要求。
-- **上线前替换**：`report@example.edu`、示例校名、模板版本日期；`data/banned.txt` 换成经审阅的词库。
+- **上线前替换**：页脚的举报邮箱占位符 `report@example.edu`（硬编码在 `web/src/components/Footer.jsx`）；
+  `data/banned.txt` 换成经审阅的词库；发布公约（`web/src/components/LegalSheet.jsx`）通读一遍 ——
+  它是给用户看的说明，法律条款清单与审阅意见留在本文档，不要塞回公约里。
 - **邀请码即边界**：它是内测站点的唯一准入凭据，发放要有名单意识，泄露后立即轮换
   （`GATE_INVITE_CODES` 改完重启即可，已在线的会话不受影响；要立刻踢掉所有人则同时更换 `GATE_SECRET`）。

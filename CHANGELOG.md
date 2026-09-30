@@ -36,7 +36,7 @@
 - **内测版 UI**：顶部内测标识条 `BetaBanner.jsx`（版本徽标 + 内测说明 / 内测反馈 / 输入邀请码三个入口）、
   首屏内测公告 `BetaNotice.jsx`（关闭状态按**版本号**记在 `localStorage`，换版本会重新出现）、
   门禁弹层 `GateSheet`、以及 `web/src/styles/beta.css`。
-- **审核后台升级为 v2.1.0 的控制台版本**（`server/public/admin.html`，单文件零构建，`GET /admin` 由后端直出）：
+- **审核后台升级为 v2.1.0 的控制台版本**（`server/public/admin.html`，单文件零构建，`GET /houtai/` 由后端直出）：
   导航为「概览 / 待审队列 / 举报工单 / 审核日志 / 内测反馈」，支持关键词搜索、批量通过/驳回/下架、
   帖子详情、审核日志，以及**无后端演示模式**。
 - **新增 / 增强的管理接口**：`GET /api/admin/queue`（`type/cursor/q/total/nextCursor`）、
@@ -71,6 +71,12 @@
     同时 `scripts/prepare.mjs` 会在安装后**自检二进制是否存在**，缺失就自己补跑
     `prebuild-install`（下载预编译包），失败再回退 `node-gyp rebuild`（现场编译）。
     这让部署不依赖任何特定 npm 版本的策略。
+- **后台页面迁到 `/houtai/`，老地址 `/admin` 变成钓鱼页**：`GET /houtai`、`/houtai/`、
+  `/houtai/index.html` 由后端直出 `server/public/admin.html`；`GET /admin`、`/admin/`、`/admin.html`
+  返回一张静态页面（HTTP 200，正文只有一句「你以为我会傻到这种程度？」，**不含控制台结构，
+  也不含 `ADMIN_TOKEN`**，实现见 `server/src/server.js` 的 `DECOY_HTML` + `serveStatic`）。
+  这是**降噪**而非安全措施 —— 真正的防线仍是「`ADMIN_TOKEN` 校验 + 反代层限制来源」。
+  `/api/admin/*` 接口路径没有变。
 
 ### Changed
 
@@ -90,6 +96,18 @@
   数据目录通过 `ReadWritePaths` 限定为 `server/data`。
 - **文档重写**：`README.md`、`DEPLOY.md`、`server/README.md`、`DESIGN.md` 按内测版现状更新，
   新增 `CHANGELOG.md`（本文件）。
+- **门禁会话 cookie 的 `Secure` 改为跟随请求协议（auto）**：`GATE_COOKIE_SECURE` 留空时
+  HTTPS 请求带 `Secure`、HTTP 请求不带；`=1` 强制带、`=0` 强制不带（生产下仍会打安全警告）。
+  启动日志会写明当前模式（`cookie Secure 跟随协议` / `cookie 强制 Secure` / `cookie 不带 Secure`），
+  见 `server/src/gate.js` 的 `COOKIE_SECURE_MODE` / `cookieSecure()`。
+- **站点文案按「去 AI 味」重写，并删掉与本站不符的内容**：
+  `web/src/components/LegalSheet.jsx` 从「免责声明与发布公约」重写为**发布公约**，
+  只讲本站真正做的事（别发这些 / 发出去之后 / 被举报了会怎样 / 未满 18 岁 / 内测期间），
+  删掉香港法例清单、UGC、律师审阅与模板版本号；`web/src/components/Footer.jsx` 不再写
+  「内容为用户生成内容（UGC）」，法律链接改为发布公约 / 举报与处理 / 隐私说明；
+  `web/src/App.jsx` 的首屏与 CTA 改成口语化表述。
+  **`school-confession-wall.html`（原始单文件原型）刻意未改** —— 它仍是视觉基线与
+  `scripts/check-tokens.py` 的令牌契约来源，其中的法律文案属于历史原型，不代表线上站点。
 
 ### Removed
 
@@ -123,6 +141,7 @@
   纯 HTTP 内网部署下浏览器会丢弃会话 cookie，用户陷入「刚验证完又要求验证」的死循环
   （只在非 localhost 的 HTTP 地址上暴露，本机验收看不出来）。现在显式 `0` 可以覆盖，
   并在启动时打一条安全警告。实测对照见 `DEPLOY.md`。
+  （后续进一步改成「默认跟随请求协议」，见 Changed 里对应的一条：纯 HTTP 部署不再需要手工设 `0`。）
 - **两个 lockfile 里被误改的依赖版本**：批量改版本号时把 `convert-source-map`（2.0.0）、
   `file-uri-to-path` / `fs-constants`（1.0.0）的 `version` 一起改写成了 `0.9.0-beta.1`。
   `npm install` 已把它们修回真实版本，两个 lockfile 现在与 `resolved` URL 完全一致。
@@ -130,6 +149,11 @@
   Statement 析构会晚于环境拆除（`Assertion failed: (env) != nullptr`）。改为「结果落盘标记文件 +
   硬退出」，父进程按标记文件判定成功，不再看退出码（同款处理见 `server/scripts/db-check.js`）。
 - 旧库升级的兼容性：新增**尽力而为的幂等迁移**（见下）。
+- **纯 HTTP 部署下「刚验证完又要求验证」的死循环不再需要人工干预**：此前必须记得设
+  `GATE_COOKIE_SECURE=0`，漏设就会在非 localhost 的 HTTP 地址上被浏览器丢弃会话 cookie
+  （localhost 被当成可信来源，本机验收永远看不出来）。现在默认 auto 跟随协议，纯 HTTP 部署
+  **不需要**再手工设 0；前面那条「显式 `0` 可覆盖」的修复仍然有效，只是不再是必需操作。
+  HTTP 下的 cookie 与邀请码仍是明文传输，风险提示见 `DEPLOY.md` §5.5。
 
 ### Security
 

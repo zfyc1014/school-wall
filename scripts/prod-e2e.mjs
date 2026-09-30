@@ -608,19 +608,26 @@ try {
   check('旧实名接口 /api/admin/identities 已下线（404）',
     legacyIdentity.status === 404, `status=${legacyIdentity.status}`);
 
-  /* ── 6. 后台控制台（v2.1.0 单文件控制台） ─────────────────────── */
+  /* ── 6. 后台控制台（v2.1.0 单文件控制台，地址 /houtai/） ───────── */
   console.log('\n[6/8] 后台控制台：令牌登录、切视图、点通过');
-  const admin = await fetchFromNode('/admin');
+  const admin = await fetchFromNode('/houtai');
   check('后台页面由后端直接提供（单文件、无需构建）',
     admin.status === 200 && /审核后台/.test(admin.body) && /ADMIN_TOKEN/.test(admin.body),
     `status=${admin.status} · ${Math.round(admin.body.length / 1024)}KB`);
 
+  // 老地址 /admin 已换成钓鱼页：只回一句话，不含控制台任何结构
+  const decoy = await fetchFromNode('/admin');
+  check('老地址 /admin 只返回钓鱼页（不含控制台内容）',
+    decoy.status === 200 && decoy.body.includes('你以为我会傻到这种程度？')
+      && !/审核后台/.test(decoy.body) && !/ADMIN_TOKEN/.test(decoy.body),
+    `status=${decoy.status} · ${decoy.body.length}B`);
+
   const adminPage = await CdpPage.open(browser.wsUrl);
   await adminPage.setup();
-  await adminPage.goto(`${BASE}/admin`, { waitMs: 300 });
+  await adminPage.goto(`${BASE}/houtai`, { waitMs: 300 });
   // 令牌存在 localStorage 的 od_admin_token（后台启动时读取），写入后重载即进入已连接态
   await adminPage.eval(`(() => { localStorage.setItem('od_admin_token', ${JSON.stringify(ADMIN_TOKEN)}); return true; })()`);
-  await adminPage.goto(`${BASE}/admin`, { waitMs: 400 });
+  await adminPage.goto(`${BASE}/houtai`, { waitMs: 400 });
   const connected = await adminPage.waitFor(
     `document.querySelector('#conn') && document.querySelector('#conn').dataset.mode === 'live'`,
     { timeout: 12000 }

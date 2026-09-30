@@ -14,7 +14,7 @@ export function BetaBanner({
     <div className="beta-banner" data-od-id="beta-banner" role="status">
       <div className="container beta-banner-inner">
         <span className="beta-tag">{beta.name} {beta.version}</span>
-        <span className="beta-text">功能与数据可能随时调整，请勿发布隐私信息。</span>
+        <span className="beta-text">功能和数据随时会变，别发隐私信息。</span>
         <span className="beta-actions">
           <button className="textlink" type="button" onClick={onOpenNotice}>内测说明</button>
           {beta.feedback && (
