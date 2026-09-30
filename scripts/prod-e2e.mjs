@@ -19,7 +19,7 @@
  * 用法：node scripts/prod-e2e.mjs
  */
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -65,6 +65,27 @@ function run(cmd, args, options = {}) {
 }
 
 /**
+ * 跑一个「允许非 0 退出」的子进程，返回 `{ code, out }`。
+ *
+ * 用途只有一个：**写种子数据的子进程**。它必须加载 better-sqlite3，而
+ * better-sqlite3 在 Windows + 管道 stdout 下有个绕不开的原生竞态 ——
+ * 进程正常退出时，Node 先拆环境，随后 Statement 析构就会命中
+ * `Assertion failed: (env) != nullptr`（退出码 134）。这不是脚本写错，
+ * 而是「原生语句对象活过了它的环境」这一已知问题（详见 server/scripts/db-check.js
+ * 里的同款处理）。因此写种子的子进程改为「落盘结果 → 硬退出」，
+ * 退出码不再作为成功依据，父进程看标记文件。
+ */
+function runTolerant(cmd, args, options = {}) {
+  return new Promise((resolvePromise) => {
+    const child = spawn(cmd, args, { cwd: repoRoot, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, ...options });
+    let out = '';
+    child.stdout.on('data', (c) => { out += String(c); });
+    child.stderr.on('data', (c) => { out += String(c); });
+    child.on('exit', (code) => resolvePromise({ code, out }));
+  });
+}
+
+/**
  * 内测版的环境变量基线。
  *
  * Turnstile / 实名 / 短信相关的变量已随功能一并删除 —— 这里显式从子进程环境里
@@ -93,6 +114,8 @@ function baseEnv(extra = {}) {
     DEBUG_EXIT: '1',
     DB_CHECKPOINT_MS: '600000',
     DB_CLEANUP_MS: '600000',
+    // 不读 server/.env（见 server/src/env.js）：验收结果只能由这里的变量决定
+    OD_SKIP_ENV_FILE: '1',
     ...extra,
   };
   for (const key of [
@@ -160,22 +183,37 @@ function runStartupGuard() {
 }
 
 async function seedPosts() {
-  // 直接用管理接口无法造公开数据，这里用一次性子进程写库
+  // 直接用管理接口无法造公开数据（发帖一律 pending），这里用一次性子进程写库。
+  // 成功与否以**标记文件**为准：子进程会硬退出，退出码在 Windows + 管道下不可信
+  // （better-sqlite3 的原生 teardown 断言，见 runTolerant 的说明）。
+  const marker = join(TMP, 'seeded.ok');
   const script = `
     process.env.DB_PATH = ${JSON.stringify(join(TMP, 'wall.db'))};
+    // 不读开发机的 server/.env：种子数据必须只由这里声明的连接决定
+    process.env.OD_SKIP_ENV_FILE = '1';
+    const fs = require('node:fs');
     const db = require(${JSON.stringify(join(serverDir, 'src', 'db.js'))});
     const ins = db.prepare("INSERT INTO posts (cat,body,status,like_count,created_at) VALUES (?,?,?,?,?)");
     db.transaction(() => {
       const base = Date.now();
       for (let i = 0; i < 6; i++) ins.run(["表白","树洞","寻人","失物","致谢"][i % 5], "生产验收种子内容 " + i, "approved", 10 - i, base - i * 60000);
     })();
+    db.shutdown(); // 标记干净退出 + WAL 截断，避免下次启动触发全量校准
+    fs.writeFileSync(${JSON.stringify(marker)}, 'ok');
     console.log("seeded");
-    // 干净收尾：带活连接 process.exit 会触发 better-sqlite3 原生断言（SIGABRT）
-    db.shutdown();
-    db.close();
+    // 结果已落盘，直接终止进程，绕开退出阶段的原生断言
+    process.kill(process.pid, 'SIGKILL');
   `;
   writeFileSync(join(TMP, 'seed.cjs'), script, 'utf8');
-  await run(process.execPath, [join(TMP, 'seed.cjs')], { cwd: serverDir });
+  try { rmSync(marker, { force: true }); } catch { /* ignore */ }
+  const res = await runTolerant(process.execPath, [join(TMP, 'seed.cjs')], {
+    cwd: serverDir,
+    env: { ...process.env, OD_SKIP_ENV_FILE: '1' },
+  });
+  if (!existsSync(marker) || !/seeded/.test(res.out)) {
+    throw new Error(`种子数据写入失败（子进程退出码 ${res.code}）\n${res.out}`);
+  }
+  try { rmSync(marker, { force: true }); } catch { /* ignore */ }
 }
 
 /**

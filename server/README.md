@@ -40,9 +40,13 @@ Node 内置 `http` + SQLite(WAL)，**自托管内测门禁**（邀请码 + 一�
 cd server
 npm install
 cp .env.example .env                 # 按需修改；.env.example 是变量的权威清单
-node --env-file=.env src/server.js   # Node 20+；Node 18 用下面的写法
-# Node 18：set -a; . ./.env; set +a; node src/server.js
+node src/server.js                   # 监听 127.0.0.1:8080
 ```
+
+`server/.env` 由服务端**自动读取**（`src/env.js`，零依赖）：已存在的环境变量优先，
+所以临时覆盖直接写在命令前面即可（`PORT=9000 node src/server.js`）。
+Node 20+ 也可以写成 `node --env-file=.env src/server.js`，语义一致。
+面板/容器部署没有 shell，只能靠这个文件配环境（见 `DEPLOY.md` §5.5）。
 
 也可用 npm 脚本：
 

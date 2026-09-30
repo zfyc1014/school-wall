@@ -220,6 +220,82 @@ journalctl -u confession-wall -n 50 --no-pager
 
 ---
 
+## 5.5 面板部署（Pterodactyl / Wispbyte 等，没有 shell）
+
+游戏面板类主机（Wispbyte、Pterodactyl、Pelican 等）的 Node.js 蛋是这样启动的：
+
+```bash
+git pull                          # AUTO_UPDATE=1 时
+npm install                       # 只会跑仓库根目录这一条
+node /home/container/${JS_FILE}   # 启动命令固定，用户改不了，也开不了 shell
+```
+
+三条硬约束决定了怎么配：
+
+| 约束 | 应对 |
+| --- | --- |
+| 启动命令固定为 `node ${JS_FILE}`，**没法 `npm --prefix server install`** | 仓库根的 `prepare` 钩子（`scripts/prepare.mjs`）会在 `npm install` 之后自动装好 `server/node_modules`（better-sqlite3）**并构建前端** → `web/dist` |
+| **没法用 `--env-file`，也不好逐个注入环境变量** | `server/src/env.js` 会自动读 `server/.env`（零依赖，已存在的环境变量优先）。面板的文件管理器上传/编辑这个文件即可 |
+| 面板分配的端口是动态的 | `PORT`/`HOST` 缺省时会读面板注入的 `SERVER_PORT` / `SERVER_IP`，无需手写 |
+
+### 面板里要填/要放的
+
+| 位置 | 值 |
+| --- | --- |
+| Startup → **JS_FILE** | `server/src/server.js` ← **不要填 `index.html`**（会报 `ERR_UNKNOWN_FILE_EXTENSION ".html"`） |
+| Startup → **AUTO_UPDATE** | `1`（每次启动 `git pull`；不要的话就得自己拉代码） |
+| Startup → **NODE_PACKAGES** | 留空（后端依赖由 `prepare` 负责） |
+| Docker Image | **`ghcr.io/parkervcp/yolks:nodejs_22`**（Node 18/20/22 都行；**别用 nodejs_19** —— 它是非 LTS，vite 与 better-sqlite3 的预编译包都不覆盖它） |
+| 文件管理器 | 新建 `server/.env`，内容见下（面板文件树里的路径是 `/home/container/server/.env`） |
+
+`server/.env`（纯 HTTP、面板直连的最简一份）：
+
+```ini
+NODE_ENV=production
+# 面板会注入 SERVER_PORT / SERVER_IP，通常无需写 PORT/HOST；
+# 若面板没注入，就把 PORT 改成面板「Network」里分配的那个端口
+# PORT=25565
+# HOST=0.0.0.0
+
+WEB_ROOT=/home/container/web/dist
+INDEX_FILE=index.html
+TRUST_PROXY=0
+FORCE_HTTPS=0
+
+GATE_INVITE_CODES=<openssl rand -hex 8 生成的随机串>
+GATE_COOKIE_SECURE=0        # 面板给的是 http://IP:端口，不设 0 浏览器会丢弃会话 cookie
+
+ADMIN_TOKEN=<openssl rand -hex 32>
+IP_HASH_SECRET=<openssl rand -hex 16>
+GATE_SECRET=<openssl rand -hex 16>
+```
+
+启动成功的日志长这样（面板 Console 里能看到）：
+
+```
+[prepare] 安装后端依赖 → server/node_modules
+[prepare] 前端已构建 → web/dist
+[env] 已从 /home/container/server/.env 读取 12 项配置
+[up] 表白墙服务（内测版 0.9.0-beta.1）http://0.0.0.0:25565
+[up] 内测门禁 开启（邀请码 已配置）
+```
+
+### 面板部署的排查顺序
+
+1. `ERR_UNKNOWN_FILE_EXTENSION ".html"` → `JS_FILE` 填错了，应为 `server/src/server.js`。
+2. `Cannot find module 'better-sqlite3'` → `prepare` 没跑成功（多半是 `npm install` 被加了 `--omit=dev`，或缺网）。
+   手动补救：把 `web/dist` 与本机 `server/node_modules` 一起上传（面板文件管理器支持压缩包解压）。
+3. 页面 404 或样式全无 → 日志出现 `[warn] 前端产物不存在`：`web/dist` 没构建成功，见上一条。
+4. 一直反复要求验证邀请码 → `GATE_COOKIE_SECURE` 没设成 `0`（面板是 http）。
+5. `EADDRINUSE` 或面板显示端口不通 → 面板注入的端口没被读到，在 `server/.env` 里显式写 `PORT=<面板分配的端口>`、`HOST=0.0.0.0`。
+6. 面板自动重启且日志出现 `Assertion failed: (env) != nullptr`（退出码 134）→ 已知的 better-sqlite3 原生 teardown 竞态，
+   只在**带管道 stdout 的子进程正常退出**时出现；服务进程本身不受影响（服务是被 kill 的）。若真遇到，把 Node 换成 22 LTS 再试。
+
+> 面板主机多数不带 TLS 也不能自定义域名：内测够用，但**会话 cookie 与邀请码都是明文传输**，
+> 同一网络里的人可以抓走。要对外长期用，还是换回 §4/§5 的 Caddy + systemd 那套。
+
+---
+
 ## 6. 上线验收清单
 
 ```bash

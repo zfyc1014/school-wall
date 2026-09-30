@@ -54,6 +54,16 @@
   会话绑定与过期、答错上限、先审后发链路、反馈链路、生产守卫、限流档）；
   `server/package.json` 的 `test` 串跑 `api-test.js && gate-test.js && db-check.js`，
   并新增 `test:api` / `test:gate` / `test:db` / `db:check` / `db:recount`。
+- **面板 / 容器部署支持（没有 shell 的主机）**：
+  - `server/src/env.js`：零依赖读取 `server/.env`（**已存在的环境变量优先**，与 `--env-file` 语义一致），
+    Pterodactyl / Wispbyte 这类「启动命令固定为 `node ${JS_FILE}`、开不了 shell」的主机因此能配环境；
+    `OD_SKIP_ENV_FILE=1` 可关闭，三个测试脚本默认带上它 —— 免得开发机上那份 `.env` 悄悄改变测试结果；
+  - `PORT` / `HOST` 缺省时自动采用面板注入的 `SERVER_PORT` / `SERVER_IP`（面板分配的端口是动态的）；
+  - `scripts/prepare.mjs`（挂在根 `package.json` 的 `prepare` 钩子）：`npm install` 之后自动
+    **安装后端依赖并构建前端** —— 面板只会跑这一条命令，这一步让它能直接跑到可用状态；
+    构建失败、缺 vite、装依赖失败都只警告不阻断，避免「装不上 → 起不来」的死循环；
+  - 服务端启动时若 `WEB_ROOT` 下没有入口文件会明确告警（面板部署最容易漏的一步）。
+    部署步骤见 `DEPLOY.md` §5.5。
 
 ### Changed
 
@@ -97,6 +107,21 @@
   `api-test.js` 加了回归断言。
 - **`comment_count` 单向上漂**：驳回已通过的评论时计数只增不减 → 现在随审核动作增减。
 - **`comments` 表默认状态与写入路径不一致**（`DEFAULT 'approved'`）→ 修正为 `pending`。
+- **示例值里的占位符邀请码会被误当成真码**：`server/.env.example` 的
+  `change-me-at-least-8-chars` 有 26 位、能通过长度校验 —— 照抄的人会拿到一个
+  「写在公开仓库里、人人皆知」的邀请码，而启动日志还显示「邀请码 已配置」。
+  现在常见占位符（`change-me*`、`your-invite-code`、`test-code` 等）一律被拒绝，
+  生产环境因此走到「未配置 → 拒绝启动」，属于大声失败。
+- **`GATE_COOKIE_SECURE=0` 在生产不生效**：原来的 `=== '1' || IS_PROD` 让 `Secure` 恒为真，
+  纯 HTTP 内网部署下浏览器会丢弃会话 cookie，用户陷入「刚验证完又要求验证」的死循环
+  （只在非 localhost 的 HTTP 地址上暴露，本机验收看不出来）。现在显式 `0` 可以覆盖，
+  并在启动时打一条安全警告。实测对照见 `DEPLOY.md`。
+- **两个 lockfile 里被误改的依赖版本**：批量改版本号时把 `convert-source-map`（2.0.0）、
+  `file-uri-to-path` / `fs-constants`（1.0.0）的 `version` 一起改写成了 `0.9.0-beta.1`。
+  `npm install` 已把它们修回真实版本，两个 lockfile 现在与 `resolved` URL 完全一致。
+- **`prod-e2e.mjs` 造数据子进程的偶发 134**：Windows + 管道 stdout 下，better-sqlite3 的
+  Statement 析构会晚于环境拆除（`Assertion failed: (env) != nullptr`）。改为「结果落盘标记文件 +
+  硬退出」，父进程按标记文件判定成功，不再看退出码（同款处理见 `server/scripts/db-check.js`）。
 - 旧库升级的兼容性：新增**尽力而为的幂等迁移**（见下）。
 
 ### Security

@@ -55,7 +55,10 @@ const env = {
   DB_CHECKPOINT_MS: "600000",
   DB_CLEANUP_MS: "600000",
   GATE_ENFORCE: "0", // 基础档：内测门禁关闭
-  GATE_INVITE_CODES: ""
+  GATE_INVITE_CODES: "",
+  // 不读 server/.env：测试结果必须只由下面这些显式变量决定，
+  // 否则开发机上那份 .env 会悄悄改变被测进程的行为（见 src/env.js）。
+  OD_SKIP_ENV_FILE: "1"
 };
 
 let server = null;

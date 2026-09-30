@@ -76,8 +76,11 @@ npm run build        # 生产构建 → web/dist/
 cd server
 npm install
 cp .env.example .env          # 至少改 ADMIN_TOKEN / IP_HASH_SECRET
-node --env-file=.env src/server.js      # Node 20+；监听 127.0.0.1:8080
-# Node 18 没有 --env-file：set -a; . ./.env; set +a; node src/server.js
+node src/server.js            # 监听 127.0.0.1:8080
+# server/.env 会被自动读取（零依赖，见 server/src/env.js）：
+#   - 已经存在的环境变量优先，所以临时覆盖直接写在命令前面即可
+#   - Node 20+ 也可以用 `node --env-file=.env src/server.js`，效果一样
+#   - 面板/容器部署没有 shell：把配置放进 server/.env 就能跑
 
 # 终端 B —— 前端（仓库根）
 npm run dev                            # 5173，/api 自动代理到 8080

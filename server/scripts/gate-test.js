@@ -66,7 +66,9 @@ const env = {
   GATE_INVITE_CODES: CODES.join(","),
   GATE_COOKIE_SECURE: "0",
   GATE_TTL: "120",
-  GATE_CHALLENGE_ITEMS: "3"
+  GATE_CHALLENGE_ITEMS: "3",
+  // 不读 server/.env（见 src/env.js）：各档行为只能由这里显式声明的变量决定
+  OD_SKIP_ENV_FILE: "1"
 };
 
 let server = null;

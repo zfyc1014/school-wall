@@ -34,6 +34,11 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+
+// 先加载 server/.env（面板部署没有 shell，配置只能走文件）——
+// 必须在读取 process.env.DB_PATH 之前引用，见 env.js 的说明。
+require("./env");
+
 const Database = require("better-sqlite3");
 
 const DB_PATH = path.resolve(

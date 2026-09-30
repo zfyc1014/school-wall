@@ -30,6 +30,9 @@ const path = require("path");
 const zlib = require("zlib");
 const crypto = require("crypto");
 
+// 先加载 server/.env（面板部署没有 shell，配置只能写文件）——必须在 db/gate 之前，
+// 因为它们是在 require 时读取 process.env 的。
+const { LOADED: ENV_LOADED, ENV_FILE } = require("./env");
 const db = require("./db");
 const { classify } = require("./moderation");
 const { limit } = require("./rate-limit");
@@ -38,8 +41,13 @@ const beta = require("./beta");
 
 /* ────────────────────────────── 配置 ────────────────────────────── */
 
-const PORT = Number(process.env.PORT || 8080);
-const HOST = process.env.HOST || "127.0.0.1";
+/**
+ * 端口/监听地址：兼容面板（Pterodactyl 系）注入的 SERVER_PORT / SERVER_IP。
+ * 面板给的端口是动态分配的，写死 8080 会连不上（面板只放行它分配的那个端口）。
+ * 优先级：显式 PORT/HOST > 面板变量 > 默认值。
+ */
+const PORT = Number(process.env.PORT || process.env.SERVER_PORT || 8080);
+const HOST = process.env.HOST || process.env.SERVER_IP || "127.0.0.1";
 
 /** 默认静态根：优先用 Vite 构建产物 web/dist，退回仓库根（源码目录） */
 const DEFAULT_WEB_ROOT = fs.existsSync(path.join(__dirname, "..", "..", "web", "dist", "index.html"))
@@ -1422,10 +1430,20 @@ server.requestTimeout = 30_000;
 
 server.listen(PORT, HOST, () => {
   console.log(`[up] 表白墙服务（${beta.NAME} ${beta.VERSION}）http://${HOST}:${PORT}`);
+  if (ENV_LOADED) console.log(`[env] 已从 ${ENV_FILE} 读取 ${ENV_LOADED} 项配置`);
   console.log(`[up] 静态根目录 ${WEB_ROOT}`);
   console.log(`[up] 数据库 ${db.DB_PATH}（页缓存 ${db.CACHE_MB}MB）`);
   console.log(`[up] 内测门禁 ${gate.ENABLED ? "开启" : "关闭"}`
     + `（邀请码 ${gate.INVITE_REQUIRED ? "已配置" : "未配置"}）`);
+
+  // 前端产物缺失时大声提醒：面板部署最容易漏的一步（没有 shell 跑不了 build）。
+  // 没有它页面会是 404 或半成品，而日志里除了这一条没有任何线索。
+  const homeFile = path.join(WEB_ROOT, INDEX_FILE);
+  if (!fs.existsSync(homeFile)) {
+    console.warn(`[warn] 前端产物不存在：${homeFile}`);
+    console.warn("[warn] 本地开发执行 `npm run build`；面板部署重跑一次 `npm install`"
+      + "（package.json 的 prepare 钩子会自动构建），或把 web/dist 一起部署上去");
+  }
 });
 
 /* ─────────────────────────── 优雅退出 ─────────────────────────── */
