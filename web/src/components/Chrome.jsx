@@ -45,7 +45,8 @@ export function TopNav({ sort, onSort, onOpenComposer, onOpenLegal, siteName, sc
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">墙</span>
           <span className="brand-name">{siteName}</span>
-          <span className="brand-tag meta">· {schoolName}</span>
+          {/* 校名留空即不渲染：不留下悬空的「·」 */}
+          {schoolName ? <span className="brand-tag meta">· {schoolName}</span> : null}
         </div>
 
         <div className="navseg" role="tablist" aria-label="浏览方式">

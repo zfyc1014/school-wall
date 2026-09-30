@@ -19,7 +19,15 @@ import {
 } from './lib/storage.js';
 
 const SITE_NAME = import.meta.env.VITE_SITE_NAME || '表白墙';
-const SCHOOL_NAME = import.meta.env.VITE_SCHOOL_NAME || '示例大学';
+/**
+ * 校名：**留空就不渲染**（不写占位、不留悬空的分隔点）。
+ *
+ * 之前这里是 `|| '示例大学'`，于是「清空 VITE_SCHOOL_NAME」这个动作完全无效 ——
+ * 页面照样显示「· 示例大学」。现在按运营方的真实意图处理：
+ * 没填校名就当作「这个站点不属于任何学校」，顶栏与首屏都不出现校名。
+ * 填了真名（例如 `VITE_SCHOOL_NAME=某某大学`）则自动出现在两处。
+ */
+const SCHOOL_NAME = String(import.meta.env.VITE_SCHOOL_NAME || '').trim();
 
 /** 数据源状态文案：让「现在连的是谁」始终可见，避免误以为在发真内容 */
 const SOURCE_NOTES = {
@@ -238,7 +246,7 @@ function WallApp() {
       <main id="content">
         <section className="hero" data-od-id="hero">
           <div className="container hero-inner">
-            <p className="eyebrow">校园匿名社区 · {SCHOOL_NAME}</p>
+            <p className="eyebrow">校园匿名社区{SCHOOL_NAME ? ` · ${SCHOOL_NAME}` : ''}</p>
             <h1>
               把没说出口的话，
               <br />
