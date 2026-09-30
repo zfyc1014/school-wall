@@ -23,7 +23,7 @@
  *
  * 配置（全部可选；生产环境必须配置邀请码，否则拒绝启动）：
  *   GATE_ENFORCE        1 强制 / 0 关闭；默认 = 生产且已配置邀请码时开启
- *   GATE_INVITE_CODES   邀请码，逗号分隔（每个至少 8 位）
+ *   GATE_INVITE_CODES   邀请码，逗号或空格分隔（每个至少 8 位；示例里的占位符会被拒绝）
  *   GATE_TTL            会话有效期秒数，默认 43200（12 小时）
  *   GATE_CHALLENGE_TTL  挑战有效期秒数，默认 600（10 分钟）
  *   GATE_CHALLENGE_ITEMS 挑战题目数，默认 2（1–4）
@@ -72,6 +72,23 @@ function clamp(n, min, max) {
 
 const MIN_CODE_LEN = 8;
 
+/**
+ * 被拒绝的占位符（大小写不敏感）。
+ * 这些值在任何一份公开示例文件里都能查到，绝不能当成真正的邀请码。
+ */
+const PLACEHOLDER_CODES = new Set([
+  "change-me-at-least-8-chars",
+  "change-me",
+  "changeme",
+  "your-invite-code",
+  "your-invite-codes",
+  "invite-code",
+  "example-code",
+  "replace-me",
+  "test-code",
+  "todo"
+]);
+
 /** 邀请码只以 HMAC 形式留在内存里；比较时也不做字符串比较 */
 const SIGN_KEY = process.env.GATE_SECRET
   || process.env.IP_HASH_SECRET
@@ -88,6 +105,20 @@ const INVITE_HASHES = String(process.env.GATE_INVITE_CODES || "")
   .filter((code) => {
     if (code.length >= MIN_CODE_LEN) return true;
     console.warn(`[gate] 忽略过短的邀请码（至少 ${MIN_CODE_LEN} 位）：${code.slice(0, 2)}…`);
+    return false;
+  })
+  .filter((code) => {
+    /**
+     * 占位符必须挡住。
+     *
+     * 为什么单列一条规则：示例文件里的 `change-me-at-least-8-chars` 有 26 位，
+     * **长度校验完全通不过它** —— 照抄示例就等于用一个写在公开仓库里的邀请码开门，
+     * 而启动日志还会显示「邀请码 已配置」，看上去一切正常。
+     * 这里把它当无效值丢掉：生产环境因此会走到「未配置 → 拒绝启动」，
+     * 属于大声失败，而不是安静地裸奔。
+     */
+    if (!PLACEHOLDER_CODES.has(code.toLowerCase())) return true;
+    console.warn(`[gate] 拒绝占位符邀请码「${code}」：请在 server/.env 里换成自己的随机串（openssl rand -hex 8）`);
     return false;
   })
   .map(fingerprint);
