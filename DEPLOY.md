@@ -253,7 +253,9 @@ node /home/container/${JS_FILE}   # 启动命令固定，用户改不了，也�
 ```ini
 NODE_ENV=production
 # 面板会注入 SERVER_PORT / SERVER_IP，通常无需写 PORT/HOST；
-# 若面板没注入，就把 PORT 改成面板「Network」里分配的那个端口
+# 若面板没注入（或你想写死），PORT 只能填**数字**，例如 PORT=25565。
+# 不要写 PORT=$SERVER_PORT / PORT=<端口> 这类「看起来像变量」的值 —— 服务端会把
+# 非法端口忽略并告警（不会崩），然后回退到 SERVER_PORT / 8080。
 # PORT=25565
 # HOST=0.0.0.0
 

@@ -42,12 +42,50 @@ const beta = require("./beta");
 /* ────────────────────────────── 配置 ────────────────────────────── */
 
 /**
- * 端口/监听地址：兼容面板（Pterodactyl 系）注入的 SERVER_PORT / SERVER_IP。
- * 面板给的端口是动态分配的，写死 8080 会连不上（面板只放行它分配的那个端口）。
- * 优先级：显式 PORT/HOST > 面板变量 > 默认值。
+ * 端口 / 监听地址。
+ *
+ * 面板（Pterodactyl / Wispbyte 等）分配的端口是动态的，而且容器**必须**监听在
+ * 那个端口上，否则面板反代回来就是 502。面板会把分配到的端口注入为 SERVER_PORT、
+ * 监听地址注入为 SERVER_IP，因此优先级是：显式 PORT/HOST > 面板变量 > 默认值。
+ *
+ * 为什么要逐个校验而不是直接 `Number(...)`（踩过的坑）：
+ *   `.env` 里写 `PORT=<面板端口>`、`PORT=$SERVER_PORT` 这类「看起来像变量」的值时，
+ *   `Number()` 得到 NaN，Node 会抛
+ *     RangeError [ERR_SOCKET_BAD_PORT]: options.port should be >= 0 and < 65536
+ *   —— 一个配置笔误就变成崩溃重启循环，而且日志里完全看不出是哪一行配置的问题。
+ *   现在的行为：**非法值一律忽略并告警**，继续尝试下一个来源；全都不行才退回 8080。
  */
-const PORT = Number(process.env.PORT || process.env.SERVER_PORT || 8080);
-const HOST = process.env.HOST || process.env.SERVER_IP || "127.0.0.1";
+function parsePort(value) {
+  const raw = String(value == null ? "" : value).trim();
+  if (!raw) return null;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : null;
+}
+
+const PORT_SOURCES = [["PORT", process.env.PORT], ["SERVER_PORT", process.env.SERVER_PORT]];
+let PORT = null;
+let PORT_SOURCE = "";
+for (const [name, raw] of PORT_SOURCES) {
+  const parsed = parsePort(raw);
+  if (parsed) {
+    PORT = parsed;
+    PORT_SOURCE = name;
+    break;
+  }
+  if (String(raw == null ? "" : raw).trim()) {
+    console.warn(`[warn] ${name}=${JSON.stringify(raw)} 不是合法端口（1–65535），已忽略`);
+  }
+}
+if (!PORT) {
+  PORT = 8080;
+  PORT_SOURCE = "默认";
+  console.warn("[warn] 没有可用的端口配置，先监听 8080。"
+    + "面板部署请到 Network/Allocation 页查看分配到的端口，并在 server/.env 写 PORT=那个数字（只写数字，不要写变量引用）");
+}
+
+/** 面板环境：由面板注入的两个变量判断，此时默认监听 0.0.0.0 才对容器外可达 */
+const IS_PANEL = Boolean(process.env.SERVER_PORT || process.env.SERVER_IP);
+const HOST = process.env.HOST || process.env.SERVER_IP || (IS_PANEL ? "0.0.0.0" : "127.0.0.1");
 
 /** 默认静态根：优先用 Vite 构建产物 web/dist，退回仓库根（源码目录） */
 const DEFAULT_WEB_ROOT = fs.existsSync(path.join(__dirname, "..", "..", "web", "dist", "index.html"))
@@ -1429,7 +1467,8 @@ server.headersTimeout = 66_000;
 server.requestTimeout = 30_000;
 
 server.listen(PORT, HOST, () => {
-  console.log(`[up] 表白墙服务（${beta.NAME} ${beta.VERSION}）http://${HOST}:${PORT}`);
+  console.log(`[up] 表白墙服务（${beta.NAME} ${beta.VERSION}）http://${HOST}:${PORT}`
+    + `（端口来自 ${PORT_SOURCE}）`);
   if (ENV_LOADED) console.log(`[env] 已从 ${ENV_FILE} 读取 ${ENV_LOADED} 项配置`);
   console.log(`[up] 静态根目录 ${WEB_ROOT}`);
   console.log(`[up] 数据库 ${db.DB_PATH}（页缓存 ${db.CACHE_MB}MB）`);
