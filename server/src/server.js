@@ -102,6 +102,8 @@ const MAX_BODY = Number(process.env.MAX_BODY || 32768);
 const PAGE_MAX = Number(process.env.PAGE_MAX || 30);
 const LIKE_FLUSH_MS = Number(process.env.LIKE_FLUSH_MS || 1500);
 const ADMIN_RATE_LIMIT = Number(process.env.ADMIN_RATE_LIMIT || 10);
+/** 已鉴权的管理请求上限（5 分钟窗口）。只防脚本刷库，不该掐正常审核操作。 */
+const ADMIN_API_RATE_LIMIT = Number(process.env.ADMIN_API_RATE_LIMIT || 600);
 const IS_PROD = process.env.NODE_ENV === "production";
 
 const CATS = ["表白", "树洞", "寻人", "失物", "致谢"];
@@ -880,15 +882,32 @@ route("POST", "/api/reports", async (ctx) => {
 /* ───────────────────────── 管理接口（需鉴权） ───────────────────────── */
 
 function requireAdmin(ctx) {
-  // 管理鉴权是暴力破解的目标，因此单独限流；默认 15 分钟 10 次。
-  // 内部工具批量审核时可以调高（ADMIN_RATE_LIMIT），但不设关闭开关。
-  const authBucket = limit(`admin:${ctx.ipHash}`, ADMIN_RATE_LIMIT, 15 * 60 * 1000);
-  if (!authBucket.ok) {
-    sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: authBucket.retryAfter });
+  /**
+   * 两个独立的限流桶，别把「已登录的正常使用」当成爆破来掐。
+   *
+   * 老实现只有一个桶（默认 15 分钟 10 次）且对**所有**管理请求计数，结果是后台
+   * 自己把自己挡住：控制台一进页面就打 6 个接口（stats + 帖子队列 + 评论队列 +
+   * 工单 + 审核日志 + 反馈），点几下审核还要各刷新一遍，十几秒就能撞上限流，
+   * 页面开始报 rate_limited。
+   *
+   *   admin-auth —— 只统计**鉴权失败**的请求，防令牌爆破（默认 15 分钟 10 次，
+   *                 可用 ADMIN_RATE_LIMIT 调）
+   *   admin-api  —— 已鉴权的请求，上限宽松得多，只为防止脚本把单核数据库刷爆
+   *                 （默认 5 分钟 600 次，可用 ADMIN_API_RATE_LIMIT 调）
+   */
+  if (!isAdmin(ctx.req)) {
+    const authBucket = limit(`admin-auth:${ctx.ipHash}`, ADMIN_RATE_LIMIT, 15 * 60 * 1000);
+    if (!authBucket.ok) {
+      sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: authBucket.retryAfter });
+      return false;
+    }
+    sendJson(ctx.req, ctx.res, 401, { error: "unauthorized" });
     return false;
   }
-  if (!isAdmin(ctx.req)) {
-    sendJson(ctx.req, ctx.res, 401, { error: "unauthorized" });
+
+  const apiBucket = limit(`admin-api:${ctx.ipHash}`, ADMIN_API_RATE_LIMIT, 5 * 60 * 1000);
+  if (!apiBucket.ok) {
+    sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: apiBucket.retryAfter });
     return false;
   }
   return true;

@@ -116,7 +116,8 @@ npm run dev      # node --watch src/server.js（改完自动重启）
 | --- | --- | --- |
 | `ADMIN_TOKEN` | — | 管理接口令牌，**≥24 字符**（生产缺失即退出） |
 | `IP_HASH_SECRET` | — | IP 哈希密钥，**≥16 字符**（生产缺失即退出）；不落盘原始 IP |
-| `ADMIN_RATE_LIMIT` | `10` | 管理鉴权尝试上限（15 分钟窗口，按 IP 哈希） |
+| `ADMIN_RATE_LIMIT` | `10` | **令牌错误**的鉴权尝试上限（15 分钟窗口，按 IP 哈希），防爆破 |
+| `ADMIN_API_RATE_LIMIT` | `600` | 已鉴权管理请求上限（5 分钟窗口），只防脚本刷库；太小会让后台控制台自己把自己挡住 |
 
 ### 数据与性能
 
@@ -196,7 +197,9 @@ npm run dev      # node --watch src/server.js（改完自动重启）
 ### 管理接口（需鉴权）
 
 鉴权：`Authorization: Bearer <ADMIN_TOKEN>` 或 `X-Admin-Token: <ADMIN_TOKEN>`
-（常量时间比对）。鉴权失败单独限流 `ADMIN_RATE_LIMIT` / 15 分钟。
+（常量时间比对）。限流分两个桶：**令牌错误**的尝试按 `ADMIN_RATE_LIMIT` / 15 分钟掐；
+**已鉴权**的请求按 `ADMIN_API_RATE_LIMIT` / 5 分钟掐（默认 600，宽松，只防脚本刷库）。
+两者混在一个桶里会让后台控制台自己把自己挡住 —— 它一进页面就要打 6 个接口。
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |

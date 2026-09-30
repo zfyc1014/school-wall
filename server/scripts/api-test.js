@@ -51,6 +51,7 @@ const env = {
   LIKE_FLUSH_MS: "60",
   FEED_CACHE_MS: "0", // 测试里关掉短时缓存，避免掩盖数据变化
   ADMIN_RATE_LIMIT: "1000", // 测试会高频调管理接口，放宽鉴权限流
+  ADMIN_API_RATE_LIMIT: "5000", // 已鉴权请求的宽松上限（默认 600/5min），测试里放大避免误伤
   DEBUG_EXIT: "1", // 打开退出追踪，便于定位异常退出
   DB_CHECKPOINT_MS: "600000",
   DB_CLEANUP_MS: "600000",
@@ -485,8 +486,35 @@ function seed(count, extraEnv) {
     /script-src[^;]*'self'/.test(csp) && !/challenges\.cloudflare\.com/.test(csp), csp.slice(0, 120) + "…");
   check("CSP 禁止外部框架嵌入（frame-src 'none'）", /frame-src[^;]*'none'/.test(csp), csp.slice(0, 120) + "…");
 
-  /* ── 7. 生产环境启动守卫 ───────────────────────────────────── */
-  console.log("\n[7/7] 生产环境启动守卫（未配置邀请码时拒绝启动）");
+  /* ── 7. 管理限流只掐「鉴权失败」 ─────────────────────────────── */
+  console.log("\n[7/8] 管理接口限流：已鉴权的正常使用不该被掐");
+  await stopServer(server);
+  server = null;
+  // 故意把防爆破配额压到 3：后台一进页面就要打 6 个接口，旧实现必然立刻 429
+  server = await startServer({ ADMIN_RATE_LIMIT: "3", ADMIN_API_RATE_LIMIT: "500" });
+
+  let adminOk = 0;
+  for (let i = 0; i < 12; i += 1) {
+    const r = await api("/api/admin/stats", { headers: { authorization: `Bearer ${ADMIN_TOKEN}` } });
+    if (r.status === 200) adminOk += 1;
+  }
+  check("连续 12 次已鉴权请求不会被防爆破限流掐掉（旧实现第 4 次起 429）",
+    adminOk === 12, `成功 ${adminOk}/12（ADMIN_RATE_LIMIT=3）`);
+
+  let saw401 = 0;
+  let saw429 = 0;
+  for (let i = 0; i < 6; i += 1) {
+    const r = await api("/api/admin/stats", {
+      headers: { authorization: "Bearer definitely-wrong-token-000000000000" }
+    });
+    if (r.status === 401) saw401 += 1;
+    else if (r.status === 429) saw429 += 1;
+  }
+  check("错误令牌先返回 401、超出配额后才 429（防爆破仍然有效）",
+    saw401 >= 3 && saw429 >= 1, `401×${saw401} · 429×${saw429}`);
+
+  /* ── 8. 生产环境启动守卫 ───────────────────────────────────── */
+  console.log("\n[8/8] 生产环境启动守卫（未配置邀请码时拒绝启动）");
   await stopServer(server);
   server = null;
 

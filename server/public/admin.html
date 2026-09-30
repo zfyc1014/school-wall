@@ -806,6 +806,14 @@ a { color: var(--accent); }
     let data = null;
     if (text) { try { data = JSON.parse(text); } catch (e) { data = text; } }
     if (res.status === 401) { const err = new Error('unauthorized'); err.status = 401; throw err; }
+    if (res.status === 429) {
+      // 说人话：429 有两个来源（防爆破 / 已鉴权请求上限），提示里带上还要等多久
+      const wait = Number(data && data.retryAfter) || 0;
+      const when = wait >= 60 ? Math.ceil(wait / 60) + ' 分钟' : (wait || 1) + ' 秒';
+      const err = new Error('请求太频繁，等 ' + when + '再试');
+      err.status = 429; err.code = 'rate_limited'; err.retryAfter = wait;
+      throw err;
+    }
     if (!res.ok) { const err = new Error((data && data.error) || ('HTTP ' + res.status)); err.status = res.status; throw err; }
     return data;
   }

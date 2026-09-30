@@ -109,7 +109,8 @@ function baseEnv(extra = {}) {
     GATE_COOKIE_SECURE: '0', // 本次验收跑在 http://127.0.0.1 上
     // 本脚本会高频调用管理接口（统计/队列/工单），默认的「15 分钟 10 次」鉴权限流
     // 会把后半段打成 429。那是面向公网的防爆破设置，测试环境放宽即可。
-    ADMIN_RATE_LIMIT: '1000',
+    ADMIN_RATE_LIMIT: '1000', // 本脚本会高频调用管理接口，放宽「防爆破」配额
+    ADMIN_API_RATE_LIMIT: '5000', // 已鉴权请求的上限（默认 600/5min）
     RETENTION_DAYS: '90',
     DEBUG_EXIT: '1',
     DB_CHECKPOINT_MS: '600000',

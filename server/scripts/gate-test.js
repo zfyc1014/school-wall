@@ -58,6 +58,7 @@ const env = {
   LIKE_FLUSH_MS: "60",
   FEED_CACHE_MS: "0", // 关掉短时缓存，避免掩盖审核后的数据变化
   ADMIN_RATE_LIMIT: "1000", // 测试会高频调管理接口，放宽鉴权限流
+  ADMIN_API_RATE_LIMIT: "5000", // 已鉴权请求的宽松上限（默认 600/5min）
   DB_CHECKPOINT_MS: "600000",
   DB_CLEANUP_MS: "600000",
   RETENTION_DAYS: "0",
