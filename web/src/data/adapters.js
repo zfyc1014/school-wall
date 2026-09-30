@@ -15,45 +15,18 @@ import { seedPosts } from '../lib/seed.js';
 import { STORE_KEY, MODE_KEY, readJSON, writeJSON } from '../lib/storage.js';
 
 /**
- * 人机验证挂载点。
+ * 内测门禁的挂载点。
  *
- * Provider 挂载时把「确保已通过验证」的实现注册进来，写操作在收到
- * 403 challenge_required 时会调用它 —— 用户完成验证后自动重试一次，
+ * Provider 挂载时把「确保已通过内测验证」的实现注册进来，写操作在收到
+ * `403 gate_required` 时会调用它 —— 用户完成验证后自动重试一次，
  * 不需要每个调用点都写一遍验证逻辑。
- */
-let ensureChallengeReady = null;
-
-export function setChallengeResolver(fn) {
-  ensureChallengeReady = typeof fn === 'function' ? fn : null;
-}
-
-/**
- * 实名验证的挂载点。与 challenge 同理：写请求收到 403 identity_required 时，
- * 交给 Provider 拉起实名弹层，完成后自动重试原请求。
- */
-let ensureIdentityReady = null;
-
-export function setIdentityResolver(fn) {
-  ensureIdentityReady = typeof fn === 'function' ? fn : null;
-}
-
-/**
- * 待用的一次性 Turnstile token 暂存位。
  *
- * 为什么放这里而不是逐层传参：页面上可能有多个 widget（入口弹层、发布抽屉），
- * 任意一个产出的 token 都可以用于「下一次写请求」。写请求发生时把它取走并清空，
- * 因为 token 是一次性的（5 分钟过期、只能用一次）。
+ * （这里取代了原来的 challenge + identity 两个挂载点：内测版只有一道闸门。）
  */
-let pendingChallengeToken = '';
+let ensureGateReady = null;
 
-export function setPendingChallengeToken(token) {
-  pendingChallengeToken = token || '';
-}
-
-export function takePendingChallengeToken() {
-  const token = pendingChallengeToken;
-  pendingChallengeToken = '';
-  return token;
+export function setGateResolver(fn) {
+  ensureGateReady = typeof fn === 'function' ? fn : null;
 }
 
 /** 生成器对象 → 普通数组（兼容老打包目标，不依赖 Object.fromEntries） */
@@ -91,20 +64,20 @@ function describeError(status, payload) {
     return `操作过于频繁，请 ${mins}后再试`;
   }
   if (status === 400) return '内容不符合发布要求，请检查分类与字数';
-  if (status === 403) return '请先完成人机验证';
+  if (status === 403) return '请先通过内测验证';
   if (status === 404) return '这条内容已不存在或尚未公开';
-  if (status === 503) return '验证服务暂时不可用，请稍后重试';
+  if (status === 503) return '服务暂时不可用，请稍后重试';
   if (status >= 500) return '服务器繁忙，请稍后再试';
   const map = {
     invalid_category: '分类不合法',
     invalid_length: '字数不符合要求',
     rate_limited: '操作过于频繁，请稍后再试',
     not_found: '内容不存在',
-    challenge_required: '请先完成人机验证',
-    verify_failed: '人机验证未通过，请重试',
-    token_expired: '验证已过期，请重新验证',
-    verify_unavailable: '验证服务暂时不可用，请稍后重试',
-    policy_rejected: '验证来源不被允许',
+    gate_required: '请先输入内测邀请码完成验证',
+    invalid_code: '内测邀请码不正确',
+    challenge_failed: '验证答案不正确，请重试',
+    challenge_expired: '验证已过期，请重新获取题目',
+    feedback_disabled: '内测反馈入口已关闭',
   };
   return map[payload?.error] || '请求失败，请稍后再试';
 }
@@ -124,16 +97,13 @@ function createHttpAdapter() {
     const timer = setTimeout(() => controller.abort(), timeout);
     let res;
     try {
-      // 写操作带上待用的一次性 token（服务端同时接受会话 cookie）
       const headers = {};
       if (body) headers['content-type'] = 'application/json';
-      const token = method === 'GET' ? '' : takePendingChallengeToken();
-      if (token) headers['cf-turnstile-response'] = token;
 
       res = await fetch(path, {
         method,
         signal: controller.signal,
-        // 同源部署下带上会话 cookie（人机验证通过后的凭据就存在这里）
+        // 同源部署下带上会话 cookie（内测门禁通过的凭据就存在这里）
         credentials: 'same-origin',
         headers: Object.keys(headers).length ? headers : undefined,
         body: body ? JSON.stringify(body) : undefined,
@@ -152,18 +122,11 @@ function createHttpAdapter() {
     const payload = await readJsonSafe(res);
     if (!res.ok) {
       const code = String(payload?.error || '');
-      // 服务端要求先过人机验证：交给 Provider 处理，通过后精确重试一次
-      if (res.status === 403 && code === 'challenge_required' && !retried && ensureChallengeReady) {
-        const ready = await ensureChallengeReady();
+      // 服务端要求先过内测门禁：交给 Provider 处理，通过后精确重试一次
+      if (res.status === 403 && code === 'gate_required' && !retried && ensureGateReady) {
+        const ready = await ensureGateReady();
         if (ready) return request(path, { method, body, signal, timeout, retried: true });
-        throw new ApiError('需要完成人机验证后才能继续', { status: 403, code: 'challenge_cancelled' });
-      }
-      // 服务端要求先实名：同样拉起弹层后重试一次。
-      // 顺序上放在人机验证之后 —— 服务端也是先查机器人再查身份。
-      if (res.status === 403 && code === 'identity_required' && !retried && ensureIdentityReady) {
-        const ready = await ensureIdentityReady();
-        if (ready) return request(path, { method, body, signal, timeout, retried: true });
-        throw new ApiError('需要完成实名验证后才能发布', { status: 403, code: 'identity_cancelled' });
+        throw new ApiError('需要完成内测验证后才能继续', { status: 403, code: 'gate_cancelled' });
       }
       throw new ApiError(describeError(res.status, payload), {
         status: res.status,
@@ -175,18 +138,18 @@ function createHttpAdapter() {
   }
 
   /**
-   * 写操作包装：命中「需要人机验证」时先走验证，再自动重试一次。
-   * 只重试一次，且只在 challenge_required 时重试 —— 避免验证失败造成请求风暴。
+   * 写操作包装：命中「需要内测验证」时先走验证，再自动重试一次。
+   * 只重试一次，且只在 gate_required 时重试 —— 避免验证失败造成请求风暴。
    */
   async function requestWrite(path, options) {
     try {
       return await request(path, options);
     } catch (err) {
-      if (err?.code !== 'challenge_required' || !ensureChallengeReady) throw err;
+      if (err?.code !== 'gate_required' || !ensureGateReady) throw err;
 
-      const ready = await ensureChallengeReady();
+      const ready = await ensureGateReady();
       if (!ready) {
-        throw new ApiError('需要完成人机验证后才能继续', { status: 403, code: 'challenge_cancelled' });
+        throw new ApiError('需要完成内测验证后才能继续', { status: 403, code: 'gate_cancelled' });
       }
       return request(path, options);
     }
@@ -254,6 +217,15 @@ function createHttpAdapter() {
     async createReport(postId, reason) {
       await requestWrite('/api/reports', { method: 'POST', body: { postId, reason } });
       return { ok: true };
+    },
+
+    /** 内测反馈：只进后台队列，不影响任何公开内容，因此标记为 pending 语义的「已送达」 */
+    async sendFeedback({ cat, body, contact }) {
+      const data = await requestWrite('/api/feedback', {
+        method: 'POST',
+        body: { cat, body, contact },
+      });
+      return { ok: Boolean(data?.ok), id: data?.id ?? null };
     },
   };
 }
@@ -419,6 +391,22 @@ function createLocalAdapter() {
       });
       persist();
       return { ok: true };
+    },
+
+    /** 演示模式下反馈只存在本机，用于验证交互链路（真实环境由后端落库） */
+    async sendFeedback({ cat, body, contact }) {
+      db.feedback = db.feedback || [];
+      const item = {
+        id: `f${Date.now()}`,
+        cat: cat || 'other',
+        body,
+        contact: contact || '',
+        at: Date.now(),
+        status: 'open',
+      };
+      db.feedback.push(item);
+      persist();
+      return { ok: true, id: item.id };
     },
   };
 }

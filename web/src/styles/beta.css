@@ -1,0 +1,164 @@
+/* ─── 内测版标识、公告与自托管门禁 ───────────────────────────────────────
+ * 颜色一律用 tokens.css 的令牌派生（不新增颜色字面量），
+ * 与原型/设计契约保持一致（scripts/check-tokens.py 会校验令牌一致性）。
+ * ─────────────────────────────────────────────────────────────────────── */
+
+/* ─── 顶部内测标识条 ─────────────────────────────────────────────────── */
+.beta-banner {
+  background: var(--fg);
+  color: var(--bg);
+  font-size: var(--text-xs);
+}
+.beta-banner-inner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 34px;
+  padding-block: 6px;
+}
+.beta-tag {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: 0.02em;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in oklab, var(--bg) 18%, transparent);
+  color: var(--bg);
+  white-space: nowrap;
+}
+.beta-text {
+  color: color-mix(in oklab, var(--bg) 78%, transparent);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.beta-actions { display: flex; align-items: center; gap: var(--space-3); flex-shrink: 0; }
+.beta-actions .textlink {
+  color: var(--bg);
+  text-decoration-color: color-mix(in oklab, var(--bg) 45%, transparent);
+}
+.beta-actions .textlink:hover { text-decoration-color: var(--bg); }
+
+/* ─── 首屏内测公告 ───────────────────────────────────────────────────── */
+.beta-notice {
+  max-width: 640px;
+  margin: 0 auto var(--space-8);
+  padding: var(--space-5);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+  background: var(--surface-warm);
+  text-align: left;
+  box-shadow: var(--shadow-card);
+}
+.beta-notice-head { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); }
+.beta-notice-head h2 { font-size: var(--text-lg); letter-spacing: -0.01em; flex: 1 1 auto; }
+.beta-notice-head .beta-tag { background: var(--fg-soft); color: var(--fg-2); }
+.beta-notice-body { font-size: var(--text-sm); line-height: 1.7; color: var(--fg-2); }
+.beta-notice-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-soft);
+}
+
+/* ─── 通用小件 ───────────────────────────────────────────────────────── */
+.btn-sm { padding: 7px 14px; font-size: var(--text-sm); }
+
+/* 首屏轻提示：浏览不受影响，只有写操作需要验证 */
+.verify-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: var(--space-6);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-pill);
+  background: var(--bg);
+  font-size: var(--text-sm);
+  color: var(--fg-2);
+  text-align: left;
+  box-shadow: var(--shadow-card);
+}
+.verify-note .verify-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+  flex-shrink: 0;
+}
+
+/* 单行输入：与 .textarea 同一套视觉语言 */
+.text-input {
+  width: 100%;
+  padding: 13px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-soft);
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-base);
+  transition: border-color var(--motion-fast) var(--ease-standard);
+}
+.text-input::placeholder { color: var(--meta); }
+.text-input:hover { border-color: var(--border); }
+.text-input:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); background: var(--bg); }
+.text-input[disabled] { opacity: 0.6; }
+
+/* ─── 门禁弹层 ───────────────────────────────────────────────────────── */
+.gate-sheet { max-width: 480px; }
+.gate-items { display: grid; gap: var(--space-3); }
+.gate-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 11px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.gate-q {
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  color: var(--fg);
+  white-space: nowrap;
+}
+.gate-answer {
+  width: 96px;
+  margin-left: auto;
+  padding: 9px 12px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+}
+.gate-sheet .stamp {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--meta);
+  line-height: 1.6;
+  margin-top: var(--space-4);
+  margin-bottom: var(--space-2);
+}
+.gate-sheet .sheet-actions { flex-wrap: wrap; }
+
+/* 发布抽屉里的门禁提示（未通过时才有） */
+.composer-verify { margin-bottom: var(--space-5); }
+
+@media (max-width: 720px) {
+  /* 窄屏优先保住标识与入口，正文提示让位 */
+  .beta-text { display: none; }
+  .beta-banner-inner { justify-content: space-between; }
+  .beta-notice { padding: var(--space-4); }
+  .beta-notice-foot { flex-direction: column; align-items: stretch; }
+  .verify-note { border-radius: var(--radius-lg); }
+  .verify-note .btn { width: 100%; justify-content: center; }
+  .gate-sheet { max-width: 100%; }
+  .gate-sheet .sheet-actions .btn { flex: 1 1 100%; justify-content: center; }
+}

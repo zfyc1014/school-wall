@@ -11,10 +11,17 @@
  *   - 默认只监听 127.0.0.1，由 Caddy/Nginx 终止 TLS（低配机器不做 TLS 握手）；
  *   - 全站安全响应头 + 进程内限流 + 请求体上限。
  *
+ * 内测版本（0.9.x）说明：
+ *   - 写操作闸门是**自托管**的「内测邀请码 + 一次性本地挑战」（见 gate.js），
+ *     不依赖任何第三方、不出网；原先的 Cloudflare Turnstile 已整体移除；
+ *   - 内测阶段不收集手机号，实名与短信相关代码已删除（需要时从 git 历史取回）；
+ *   - 新增 POST /api/feedback（内测反馈）与后台反馈队列；
+ *   - 后台审核接口沿用 v2.1.0 的控制台版本（队列分页/批量/详情/审核日志）。
+ *
  * 合规相关：
  *   - 不落盘原始 IP，只存 HMAC-SHA256 哈希（PDPO 数据最小化）；
  *   - 先审后发 + 通知—移除工单 + 审核操作留痕；
- *   - 内容预筛命中即转人工（见 moderation.js）。
+ *   - 内容预筛命中即转人工（见 moderation.js，含 NFKC 归一化与词表热重载）。
  */
 
 const http = require("http");
@@ -26,20 +33,23 @@ const crypto = require("crypto");
 const db = require("./db");
 const { classify } = require("./moderation");
 const { limit } = require("./rate-limit");
-const challenge = require("./challenge");
-// identity 这个名字在若干处理函数里被用作局部变量，模块本身用 identity_mod 引用
-const identity_mod = require("./identity");
+const gate = require("./gate");
+const beta = require("./beta");
 
 /* ────────────────────────────── 配置 ────────────────────────────── */
 
 const PORT = Number(process.env.PORT || 8080);
 const HOST = process.env.HOST || "127.0.0.1";
-const WEB_ROOT = path.resolve(
-  process.env.WEB_ROOT || path.join(__dirname, "..", "..")
-);
+
+/** 默认静态根：优先用 Vite 构建产物 web/dist，退回仓库根（源码目录） */
+const DEFAULT_WEB_ROOT = fs.existsSync(path.join(__dirname, "..", "..", "web", "dist", "index.html"))
+  ? path.join(__dirname, "..", "..", "web", "dist")
+  : path.join(__dirname, "..", "..");
+const WEB_ROOT = path.resolve(process.env.WEB_ROOT || DEFAULT_WEB_ROOT);
 /** 服务端自身目录：审核后台等自带资源从这里取，不受 WEB_ROOT 影响 */
 const SERVER_ROOT = path.resolve(__dirname, "..");
-const INDEX_FILE = process.env.INDEX_FILE || "school-confession-wall.html";
+
+const INDEX_FILE = process.env.INDEX_FILE || "index.html";
 const TRUST_PROXY = process.env.TRUST_PROXY === "1";
 const FORCE_HTTPS = process.env.FORCE_HTTPS === "1";
 const MAX_BODY = Number(process.env.MAX_BODY || 32768);
@@ -89,12 +99,9 @@ function fatalConfig(message) {
   process.exit(1);
 }
 
-// 人机验证配置自检：生产环境未配置 Turnstile 且没有显式放行时，直接终止启动。
+// 内测门禁配置自检：生产环境未配置邀请码且没有显式放行时，直接终止启动。
 // 必须真的调用 —— 只 require 不调用的话，这段保护等于不存在。
-challenge.logConfig({ fatal: fatalConfig });
-
-// 后台实名的配置自检：会校验短信通道是否可用（例如生产环境禁止 log 模式）。
-identity_mod.logConfig({ fatal: fatalConfig });
+gate.logConfig({ fatal: fatalConfig });
 
 /* ────────────────────────────── 工具 ────────────────────────────── */
 
@@ -102,18 +109,19 @@ const SECURITY_HEADERS = {
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "X-Frame-Options": "DENY",
+  // 内测版不该被搜索引擎收录：内容与规则都还会变，收录后反而留下历史快照。
+  // 与 index.html 的 <meta name="robots"> 双保险（meta 只管前台页，响应头覆盖 /admin）。
+  "X-Robots-Tag": "noindex, nofollow",
   "Permissions-Policy": "geolocation=(), camera=(), microphone=()",
   "Cross-Origin-Opener-Policy": "same-origin",
-  // Turnstile 需要放行它的脚本与 iframe（官方文档要求的两个来源）：
-  //   script-src  https://challenges.cloudflare.com
-  //   frame-src   https://challenges.cloudflare.com
+  // 内测版没有任何第三方脚本：CSP 收紧到 'self'，不再需要为外部来源开口子。
   // 仍保留 'unsafe-inline'，因为 React 产物是内联注入的样式；进一步加固可换成 nonce。
   "Content-Security-Policy": [
     "default-src 'self'",
     "img-src 'self' data:",
     "style-src 'self' 'unsafe-inline'",
-    "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com",
-    "frame-src https://challenges.cloudflare.com",
+    "script-src 'self' 'unsafe-inline'",
+    "frame-src 'none'",
     "connect-src 'self'",
     "base-uri 'none'",
     "form-action 'self'",
@@ -149,19 +157,100 @@ function finish(req, res, status, body, headers) {
   res.end(req.method === "HEAD" ? undefined : body);
 }
 
-function sendBuffer(req, res, status, body, headers) {
-  const accept = String(req.headers["accept-encoding"] || "");
-  if (body.length >= 1024 && /\bgzip\b/.test(accept)) {
-    zlib.gzip(body, (err, gz) => {
-      if (err) return finish(req, res, status, body, headers);
-      finish(req, res, status, gz, Object.assign({}, headers, {
-        "Content-Encoding": "gzip",
+/* ───────────────────────── 响应压缩（优化热点） ─────────────────────────
+ *
+ * 内测版把「压缩」从 gzip 升级为 **br 优先、gzip 兜底**，并加了一层
+ * 压缩结果缓存。压缩档位不是拍脑袋定的，实测数据（本机 Node 24，
+ * 对构建产物逐个量过）：
+ *
+ *   app js 55KB：gzip-6 19776 | br-q4 20052（更差！）| br-q5 17691 | br-q9 17211 | br-q11 16303
+ *   vendor 141KB：gzip-6 45223 | br-q4 45988（更差）  | br-q5 43372 | br-q9 42646 | br-q11 39579
+ *   css 25KB：   gzip-6  5157 | br-q4  5501（更差）  | br-q5  4908 | br-q9  4806 | br-q11  4540
+ *
+ * 两个结论：
+ *   1. **br 的默认档 4 是负优化**（比 gzip-6 还大 1%–7%），必须显式抬档；
+ *   2. 档位越高越省，但 q11 对 141KB 的包要压 156ms —— 单核机器上不能让
+ *      每个请求都付这个钱，所以**只对会被缓存的静态产物用高档**：
+ *      静态产物压缩一次就长期复用，q9/q11 的一次性成本完全值得。
+ *
+ * 因此策略是：
+ *   - 带 cacheKey 的静态产物：< 64KB 用 q11，更大的用 q9（一次压缩，之后查表）；
+ *   - 动态响应（JSON）：用 q5 —— 耗时与 gzip-6 同量级，体积还能再小 4%–10%；
+ *   - 客户端不接受 br 时退回 gzip-6；
+ *   - 缓存在内存里有 8MB 字节预算上限，只放静态产物，不会随流量膨胀。
+ * -------------------------------------------------------------------- */
+
+const COMPRESS_MIN = 1024;
+const COMPRESS_CACHE_MAX = 64;
+const COMPRESS_CACHE_BYTES_MAX = 8 * 1024 * 1024; // 最多缓存 8MB 压缩结果
+/** 静态产物里「小文件」的分界：超过它就用 9 档，避免单核被压上百毫秒 */
+const BROTLI_SMALL_MAX = 64 * 1024;
+const compressCache = new Map(); // key -> { enc, buf }
+let compressCacheBytes = 0;
+
+/** br 优先（体积更小），其次 gzip；都不支持就原样发送 */
+function pickEncoding(acceptEncoding) {
+  const accept = String(acceptEncoding || "");
+  if (/\bbr\b/.test(accept)) return "br";
+  if (/\bgzip\b/.test(accept)) return "gzip";
+  return "";
+}
+
+function compress(body, enc, { cached = false } = {}) {
+  return new Promise((resolve) => {
+    if (enc === "br") {
+      // 静态产物：一次压到最好；动态响应：与 gzip 同量级耗时的 5 档
+      const quality = cached ? (body.length < BROTLI_SMALL_MAX ? 11 : 9) : 5;
+      zlib.brotliCompress(body, {
+        params: {
+          [zlib.constants.BROTLI_PARAM_QUALITY]: quality,
+          [zlib.constants.BROTLI_PARAM_SIZE_HINT]: body.length
+        }
+      }, (err, out) => resolve(err ? null : out));
+      return;
+    }
+    zlib.gzip(body, { level: 6 }, (err, out) => resolve(err ? null : out));
+  });
+}
+
+function storeCompressed(key, enc, buf) {
+  if (buf.length > COMPRESS_CACHE_BYTES_MAX) return;
+  while (compressCacheBytes + buf.length > COMPRESS_CACHE_BYTES_MAX || compressCache.size >= COMPRESS_CACHE_MAX) {
+    const oldest = compressCache.keys().next().value;
+    if (oldest === undefined) break;
+    compressCacheBytes -= compressCache.get(oldest).buf.length;
+    compressCache.delete(oldest);
+  }
+  compressCache.set(key, { enc, buf });
+  compressCacheBytes += buf.length;
+}
+
+/**
+ * 统一的响应出口。
+ * @param {string} [cacheKey] 传入后启用压缩缓存（仅静态产物这样用）
+ */
+function sendBuffer(req, res, status, body, headers, cacheKey) {
+  const enc = pickEncoding(req.headers["accept-encoding"]);
+  if (!enc || body.length < COMPRESS_MIN) return finish(req, res, status, body, headers);
+
+  if (cacheKey) {
+    const hit = compressCache.get(cacheKey);
+    if (hit && hit.enc === enc) {
+      return finish(req, res, status, hit.buf, Object.assign({}, headers, {
+        "Content-Encoding": enc,
         Vary: "Accept-Encoding"
       }));
-    });
-  } else {
-    finish(req, res, status, body, headers);
+    }
   }
+
+  return compress(body, enc, { cached: Boolean(cacheKey) }).then((out) => {
+    if (!out) return finish(req, res, status, body, headers);
+    if (cacheKey) storeCompressed(cacheKey, enc, out);
+    return finish(req, res, status, out, Object.assign({}, headers, {
+      "Content-Encoding": enc,
+      Vary: "Accept-Encoding"
+    }));
+  });
 }
 
 function sendJson(req, res, status, obj, extraHeaders) {
@@ -238,7 +327,10 @@ function clamp(n, min, max) {
 }
 
 function toInt(value, fallback) {
-  if (value == null || value === "") return fallback; // Number(null) === 0 会静默吞掉默认值
+  // Number(null) === 0、Number("") === 0 —— 缺省参数会被静默吞成 0，
+  // 再被 clamp 成 1，于是「不传 limit」变成「只要 1 条」。这条 bug 已经
+  // 出现过一次（首屏只返回 1 条），因此必须显式挡住 null / 空串。
+  if (value == null || value === "") return fallback;
   const n = Number(value);
   return Number.isFinite(n) ? Math.trunc(n) : fallback;
 }
@@ -269,49 +361,27 @@ function audit(action, target, note, ip) {
   ).run(action, target == null ? null : String(target), note || null, hashIp(ip), Date.now());
 }
 
-/* ─────────────────────── 人机验证 / 限流 小工具 ─────────────────────── */
+/* ─────────────────────── 门禁 / 限流 小工具 ─────────────────────── */
 
 /**
- * 写操作统一入口：先过人机验证，再过限流。
- * 顺序很重要 —— 先挡机器人，再消耗限流计数，避免脚本靠打满限流把正常访客挤掉。
+ * 写操作统一入口：先过内测门禁，再过限流。
  *
- * @returns {Promise<boolean>} true 表示可以继续处理；false 表示已响应，直接返回
+ * 顺序很重要 —— 先挡未通过门禁的请求，再消耗限流计数，
+ * 避免脚本靠打满限流把正常访客挤掉。
+ *
+ * 与旧实现（Turnstile）的区别：这里**完全同步**，没有出网请求，
+ * 因此写路径不再有「验证服务超时」这个失败模式，也不需要 fail-open 策略。
+ *
+ * @returns {boolean} true 表示可以继续处理；false 表示已响应，直接返回
  */
-async function requireChallenge(ctx) {
-  const gate = await challenge.guardWrite(ctx.req, ctx);
-  if (gate.ok) return true;
-  sendJson(ctx.req, ctx.res, gate.status, {
-    error: gate.error,
-    message: gate.message
+function requireGate(ctx) {
+  const result = gate.guardWrite(ctx.req, ctx);
+  if (result.ok) return true;
+  sendJson(ctx.req, ctx.res, result.status, {
+    error: result.error,
+    message: result.message
   });
   return false;
-}
-
-/**
- * 实名闸门：发布内容必须具备已验证的身份标识。
- *
- * 与人机验证的关系是「且」不是「或」：
- *   人机验证回答「你不是脚本」，实名回答「出事时能找到你」。
- *   两者都过，才允许写入。
- *
- * 前端拿到 403 identity_required 后会拉起实名弹层，完成后自动重试原请求。
- *
- * @returns {object|null} 已验证的身份记录；null 表示已响应 403，调用方直接 return
- */
-function requireIdentity(ctx) {
-  if (!identity_mod.ENFORCE) return { id: null, phone_masked: "", bypassed: true };
-
-  const who = identity_mod.current(ctx.req);
-  if (who) {
-    ctx.identity = who;
-    return who;
-  }
-
-  sendJson(ctx.req, ctx.res, 403, {
-    error: "identity_required",
-    message: "发布内容需要先完成手机号验证（前台仍以匿名展示）"
-  });
-  return null;
 }
 
 /* ─────────────────────── 点赞计数批量回写 ─────────────────────── */
@@ -426,167 +496,121 @@ function feedItem(row) {
 
 // GET /api/health
 route("GET", "/api/health", (ctx) => {
-  sendJson(ctx.req, ctx.res, 200, { ok: true, now: Date.now() });
+  sendJson(ctx.req, ctx.res, 200, {
+    ok: true,
+    now: Date.now(),
+    // 版本随健康检查下发：前端探针、监控与「内测版」标识共用同一个值
+    version: beta.VERSION,
+    tag: beta.NAME
+  });
 });
 
-/* ───────────────────────── 人机验证（Turnstile） ─────────────────────────
- * 入口闸门：前端拉配置 → 渲染托管 widget → 把一次性 token 交给
- * POST /api/challenge/session → 服务端校验后签发短期会话 cookie。
- * 之后所有写操作只需带这个 cookie，不再往返 Cloudflare。
+/* ───────────────────── 内测门禁（邀请码 + 本地挑战） ─────────────────────
+ * 入口闸门：前端拉配置 → 拿一次性挑战题目 → 用户填邀请码 + 答案 →
+ * POST /api/gate/verify → 服务端校验后签发短期会话 cookie。
+ * 之后所有写操作只需带这个 cookie，不再重复答题。
+ * 全流程在本进程内完成，没有任何出网请求。
  * ---------------------------------------------------------------------- */
 
-// GET /api/challenge/config —— 公开配置（sitekey 本身不是机密）+ 当前会话状态
-// 同时下发实名要求，前端一次请求就能决定要弹哪个闸门。
-route("GET", "/api/challenge/config", (ctx) => {
-  const who = identity_mod.current(ctx.req);
-  sendJson(ctx.req, ctx.res, 200, Object.assign(challenge.publicConfig(), {
-    verified: challenge.hasSession(ctx.req, ctx.ipHash),
-    sessionTtl: challenge.TTL_SECONDS,
-    identity: Object.assign(identity_mod.publicConfig(), {
-      verified: Boolean(who),
-      // 只回脱敏号码，绝不回完整号码或哈希
-      phoneMasked: who ? who.phone_masked : "",
-      verifiedAt: who ? who.verified_at : null
-    })
+// GET /api/gate/config —— 公开配置 + 当前会话状态 + 内测版元信息
+// 前端一次请求就能决定：要不要弹门禁、首屏公告写什么、反馈入口开不开。
+route("GET", "/api/gate/config", (ctx) => {
+  sendJson(ctx.req, ctx.res, 200, Object.assign(gate.publicConfig(), {
+    verified: gate.hasSession(ctx.req, ctx.ipHash),
+    beta: beta.publicConfig()
   }));
 });
 
-/* ─────────────────────── 后台实名（手机号验证）───────────────────────
- * 前台匿名展示，但发布前必须收集并验证身份标识。
- * 这是「出事时能说明我采取了措施」的唯一凭据，因此服务端强制，不依赖前端。
- * ------------------------------------------------------------------ */
-
-// POST /api/identity/request-code  { phone }
-// 需要先过人机验证：否则这个接口就是一个现成的短信轰炸器。
-route("POST", "/api/identity/request-code", async (ctx) => {
-  if (!(await requireChallenge(ctx))) return;
-
-  const payload = await readJson(ctx.req);
-
-  // 顺序很重要：先做格式校验，再消耗限流配额。
-  // 格式非法的请求根本不会触发短信发送，如果也计入配额，
-  // 攻击者只要拿垃圾号码刷几次就能把正常用户的发码额度占满（自伤式 DoS）。
-  const normalized = identity_mod.normalizePhone(payload.phone);
-  if (!normalized.ok) {
-    return sendJson(ctx.req, ctx.res, 400, { error: "invalid_phone", message: normalized.error });
-  }
-
-  const bucket = limit(`identity-code:${ctx.ipHash}`, 6, 10 * 60 * 1000);
+// POST /api/gate/challenge —— 取一份一次性挑战题目（答案只存在服务端）
+route("POST", "/api/gate/challenge", (ctx) => {
+  // 题目本身很便宜，但仍要限流：避免被用来做内存增长型压测
+  const bucket = limit(`gate-challenge:${ctx.ipHash}`, 30, 10 * 60 * 1000);
   if (!bucket.ok) {
-    return sendJson(ctx.req, ctx.res, 429, {
-      error: "rate_limited",
-      message: "当前网络请求过于频繁，请稍后再试",
-      retryAfter: bucket.retryAfter
-    });
+    return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: bucket.retryAfter });
   }
-
-  const result = await identity_mod.requestCode({
-    phone: payload.phone,
-    ipHash: ctx.ipHash
-  });
-
-  if (!result.ok) {
-    const status = result.retryAfter ? 429 : 400;
-    return sendJson(ctx.req, ctx.res, status, {
-      error: result.retryAfter ? "rate_limited" : "invalid_request",
-      message: result.error,
-      retryAfter: result.retryAfter || undefined
-    });
+  if (!gate.ENABLED) {
+    // 门禁关闭时不发题，前端据此直接放行（少一次无意义往返）
+    return sendJson(ctx.req, ctx.res, 200, { enabled: false });
   }
-
-  // 刻意不透露该号码此前是否验证过，避免被用于枚举
-  sendJson(ctx.req, ctx.res, 200, {
-    ok: true,
-    masked: result.masked,
-    ttlMinutes: identity_mod.publicConfig().codeTtlMinutes
-  });
+  sendJson(ctx.req, ctx.res, 200, Object.assign({ enabled: true }, gate.issueChallenge(ctx.ipHash)));
 });
 
-// POST /api/identity/verify  { phone, code, consent }
-route("POST", "/api/identity/verify", async (ctx) => {
-  const bucket = limit(`identity-verify:${ctx.ipHash}`, 20, 10 * 60 * 1000);
+// POST /api/gate/verify  { code, challengeId, answers: string[] }
+route("POST", "/api/gate/verify", async (ctx) => {
+  // 校验接口是枚举邀请码的目标：单独限流，且比出题更严
+  const bucket = limit(`gate-verify:${ctx.ipHash}`, 20, 10 * 60 * 1000);
   if (!bucket.ok) {
     return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: bucket.retryAfter });
   }
 
   const payload = await readJson(ctx.req);
-
-  // 同意留痕：没有明确同意就不该收集手机号（个保法/PDPO 都要求告知同意义务）
-  if (payload.consent !== true) {
-    return sendJson(ctx.req, ctx.res, 400, {
-      error: "consent_required",
-      message: "需要先同意《实名与隐私告知》才能完成验证"
-    });
-  }
-
-  const result = await identity_mod.verifyCode({
-    phone: payload.phone,
-    code: payload.code,
-    ipHash: ctx.ipHash,
-    uaHash: ctx.uaHash
-  });
-
-  if (!result.ok) {
-    return sendJson(ctx.req, ctx.res, 400, { error: "verify_failed", message: result.error });
-  }
-
-  const headers = { "Cache-Control": "no-store" };
-  if (result.cookie) headers["Set-Cookie"] = result.cookie;
-  sendJson(ctx.req, ctx.res, 200, {
-    verified: true,
-    phoneMasked: result.identity.phoneMasked,
-    consentVersion: result.identity.consentVersion
-  }, headers);
-});
-
-// POST /api/identity/logout —— 清除本机实名会话（换人使用同一设备时用）
-route("POST", "/api/identity/logout", (ctx) => {
-  sendJson(ctx.req, ctx.res, 200, { verified: false }, {
-    "Set-Cookie": identity_mod.clearCookie(),
-    "Cache-Control": "no-store"
-  });
-});
-
-// POST /api/challenge/session  { token } —— 用一次性 token 换会话 cookie
-route("POST", "/api/challenge/session", async (ctx) => {
-  // 校验接口本身也要限流，避免被当作 Turnstile 校验放大器
-  const bucket = limit(`challenge:${ctx.ipHash}`, 20, 10 * 60 * 1000);
-  if (!bucket.ok) {
-    return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: bucket.retryAfter });
-  }
-
-  const payload = await readJson(ctx.req);
-  const token = String(payload.token || ctx.req.headers["cf-turnstile-response"] || "");
-
-  const result = await challenge.verifyToken(ctx.req, {
-    token,
-    ip: ctx.ip,
+  const result = gate.verify({
+    inviteCode: payload.code,
+    challengeId: payload.challengeId,
+    answers: payload.answers,
     ipHash: ctx.ipHash
   });
 
-  if (!result.success) {
-    return sendJson(ctx.req, ctx.res, result.code === "verify_unavailable" ? 503 : 403, {
+  if (!result.ok) {
+    return sendJson(ctx.req, ctx.res, result.status, {
       error: result.code,
       message: result.message,
-      codes: result.codes || undefined
+      remaining: result.remaining
     });
   }
 
   const headers = { "Cache-Control": "no-store" };
   if (result.cookie) headers["Set-Cookie"] = result.cookie;
-  sendJson(ctx.req, ctx.res, 200, {
-    verified: true,
-    expiresIn: challenge.TTL_SECONDS,
-    hostname: result.hostname || undefined
-  }, headers);
+  sendJson(ctx.req, ctx.res, 200, { verified: true, expiresIn: result.expiresIn }, headers);
 });
 
-// POST /api/challenge/logout —— 主动结束会话（前端「重新验证」用）
-route("POST", "/api/challenge/logout", (ctx) => {
+// POST /api/gate/logout —— 主动结束会话（换人使用同一设备时用）
+route("POST", "/api/gate/logout", (ctx) => {
   sendJson(ctx.req, ctx.res, 200, { verified: false }, {
-    "Set-Cookie": challenge.clearCookie(),
+    "Set-Cookie": gate.clearCookie(),
     "Cache-Control": "no-store"
   });
+});
+
+/* ───────────────────────── 内测反馈 ─────────────────────────
+ * 内测阶段最重要的输入渠道：用户不必注册、不必留联系方式也能提交。
+ * 反馈只进后台队列，不会出现在公开列表里，因此不做内容预筛。
+ * ---------------------------------------------------------- */
+
+// POST /api/feedback  { body, contact?, cat? }
+route("POST", "/api/feedback", async (ctx) => {
+  if (!beta.FEEDBACK_ENABLED) {
+    return sendJson(ctx.req, ctx.res, 403, { error: "feedback_disabled", message: "内测反馈入口已关闭" });
+  }
+  if (!requireGate(ctx)) return;
+
+  const bucket = limit(`feedback:${ctx.ipHash}`, 5, 60 * 60 * 1000);
+  if (!bucket.ok) {
+    return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: bucket.retryAfter });
+  }
+
+  const payload = await readJson(ctx.req);
+  const body = String(payload.body || "").trim();
+  const contact = String(payload.contact || "").trim().slice(0, 120);
+  const rawCat = String(payload.cat || "").trim();
+  const cat = ["bug", "idea", "other"].includes(rawCat) ? rawCat : "other";
+
+  if (body.length < 4) throw httpError(400, "feedback too short");
+  if (body.length > beta.FEEDBACK_MAX) throw httpError(400, "feedback too long");
+
+  const info = db.prepare(
+    `INSERT INTO feedback (cat, body, contact, status, ip_hash, ua_hash, created_at)
+     VALUES (?,?,?,?,?,?,?)`
+  ).run(cat, body, contact || null, "open", ctx.ipHash, ctx.uaHash, Date.now());
+
+  // 只保留最近 FEEDBACK_KEEP 条已处理反馈，避免这张表无限增长
+  db.prepare(
+    `DELETE FROM feedback WHERE status <> 'open' AND id NOT IN (
+       SELECT id FROM feedback ORDER BY id DESC LIMIT ?
+     )`
+  ).run(beta.FEEDBACK_KEEP);
+
+  sendJson(ctx.req, ctx.res, 201, { ok: true, id: info.lastInsertRowid });
 });
 
 // GET /api/posts?cat=&sort=new|hot&q=&cursor=&limit=
@@ -673,9 +697,7 @@ route("GET", "/api/posts", (ctx) => {
 
 // POST /api/posts  { cat, body }
 route("POST", "/api/posts", async (ctx) => {
-  if (!(await requireChallenge(ctx))) return;
-  const identity = requireIdentity(ctx);
-  if (!identity) return;
+  if (!requireGate(ctx)) return;
 
   const bucket = limit(`post:${ctx.ipHash}`, 3, 10 * 60 * 1000);
   if (!bucket.ok) {
@@ -690,24 +712,19 @@ route("POST", "/api/posts", async (ctx) => {
   if (body.length < 6 || body.length > 500) throw httpError(400, "invalid length");
 
   const mod = classify(body);
-  // status 恒为 pending：先审后发，不接受客户端任何形式的「直接公开」
   const info = db
     .prepare(
-      `INSERT INTO posts (cat, body, status, flag, ip_hash, ua_hash, identity_id, created_at)
-       VALUES (?,?,?,?,?,?,?,?)`
+      `INSERT INTO posts (cat, body, status, flag, ip_hash, ua_hash, created_at)
+       VALUES (?,?,?,?,?,?,?)`
     )
-    .run(
-      cat, body, "pending", mod.flagged ? mod.flags.join(",") : null,
-      ctx.ipHash, ctx.uaHash, identity.id, Date.now()
-    );
+    .run(cat, body, "pending", mod.flagged ? mod.flags.join(",") : null, ctx.ipHash, ctx.uaHash, Date.now());
 
-  identity_mod.recordPost(identity.id);
   sendJson(ctx.req, ctx.res, 201, { id: info.lastInsertRowid, status: "pending" });
 });
 
 // POST /api/posts/:id/like —— 幂等切换（同一 IP 再点即取消）
 route("POST", "/api/posts/:id/like", async (ctx) => {
-  if (!(await requireChallenge(ctx))) return;
+  if (!requireGate(ctx)) return;
 
   const bucket = limit(`like:${ctx.ipHash}`, 120, 5 * 60 * 1000);
   if (!bucket.ok) {
@@ -754,9 +771,7 @@ route("GET", "/api/posts/:id/comments", (ctx) => {
 
 // POST /api/posts/:id/comments  { body }
 route("POST", "/api/posts/:id/comments", async (ctx) => {
-  if (!(await requireChallenge(ctx))) return;
-  const identity = requireIdentity(ctx);
-  if (!identity) return;
+  if (!requireGate(ctx)) return;
 
   const bucket = limit(`comment:${ctx.ipHash}`, 20, 5 * 60 * 1000);
   if (!bucket.ok) {
@@ -774,28 +789,22 @@ route("POST", "/api/posts/:id/comments", async (ctx) => {
   const mod = classify(body);
 
   // 先审后发同样适用于评论：一律 pending，人工通过后才出现在帖子下。
-  // 之前的做法是「命中规则才转人工、否则直接公开」，那属于发布后审核 ——
+  // 为什么不做「命中规则才转人工、否则直接公开」：那属于发布后审核 ——
   // 一旦规则漏判，违规评论已经公开出去了，正是被处罚的那种模式。
+  // comment_count 只在审核通过时 +1（见 applyCommentReview），因此这里不动。
   const info = db
     .prepare(
-      `INSERT INTO comments (post_id, body, status, flag, ip_hash, identity_id, created_at)
-       VALUES (?,?,?,?,?,?,?)`
+      `INSERT INTO comments (post_id, body, status, flag, ip_hash, created_at)
+       VALUES (?,?,?,?,?,?)`
     )
-    .run(
-      postId, body, "pending", mod.flagged ? mod.flags.join(",") : null,
-      ctx.ipHash, identity.id, Date.now()
-    );
+    .run(postId, body, "pending", mod.flagged ? mod.flags.join(",") : null, ctx.ipHash, Date.now());
 
-  identity_mod.recordComment(identity.id);
-  // comment_count 只在审核通过时 +1（见管理接口），因此这里不动
   sendJson(ctx.req, ctx.res, 201, { id: info.lastInsertRowid, status: "pending" });
 });
 
 // POST /api/reports  { postId, reason }
 route("POST", "/api/reports", async (ctx) => {
-  if (!(await requireChallenge(ctx))) return;
-  const identity = requireIdentity(ctx);
-  if (!identity) return;
+  if (!requireGate(ctx)) return;
 
   const bucket = limit(`report:${ctx.ipHash}`, 10, 60 * 60 * 1000);
   if (!bucket.ok) {
@@ -814,9 +823,8 @@ route("POST", "/api/reports", async (ctx) => {
     .get(postId, ctx.ipHash);
   if (dup) return sendJson(ctx.req, ctx.res, 200, { ok: true, duplicated: true });
 
-  db.prepare(
-    "INSERT INTO reports (post_id, reason, ip_hash, identity_id, created_at) VALUES (?,?,?,?,?)"
-  ).run(postId, reason || null, ctx.ipHash, identity.id, Date.now());
+  db.prepare("INSERT INTO reports (post_id, reason, ip_hash, created_at) VALUES (?,?,?,?)")
+    .run(postId, reason || null, ctx.ipHash, Date.now());
 
   sendJson(ctx.req, ctx.res, 201, { ok: true });
 });
@@ -843,17 +851,36 @@ route("GET", "/api/admin/stats", (ctx) => {
   if (!requireAdmin(ctx)) return;
   const one = (sql, ...args) => db.prepare(sql).get(...args).n;
   const disk = db.stats();
+
+  const pendingPosts = one("SELECT COUNT(*) AS n FROM posts WHERE status='pending'");
+  const pendingComments = one("SELECT COUNT(*) AS n FROM comments WHERE status='pending'");
+  const openReports = one("SELECT COUNT(*) AS n FROM reports WHERE status='open'");
+
+  // 队列最久等待时长：审核员最需要的一个信号。
+  // 两条查询都走既有索引（(status, created_at, id)），且 LIMIT 1 直接取索引头部。
+  const oldestPost = db.prepare(
+    "SELECT created_at FROM posts WHERE status='pending' ORDER BY created_at ASC, id ASC LIMIT 1"
+  ).get();
+  const oldestComment = db.prepare(
+    "SELECT created_at FROM comments WHERE status='pending' ORDER BY created_at ASC, id ASC LIMIT 1"
+  ).get();
+  const candidates = [oldestPost && oldestPost.created_at, oldestComment && oldestComment.created_at]
+    .filter((v) => Number.isFinite(v) && v > 0);
+  const oldestPendingAt = candidates.length ? Math.min(...candidates) : null;
+
   sendJson(ctx.req, ctx.res, 200, {
-    pendingPosts: one("SELECT COUNT(*) AS n FROM posts WHERE status='pending'"),
-    pendingComments: one("SELECT COUNT(*) AS n FROM comments WHERE status='pending'"),
-    openReports: one("SELECT COUNT(*) AS n FROM reports WHERE status='open'"),
+    pendingPosts,
+    pendingComments,
+    openReports,
     approvedPosts: one("SELECT COUNT(*) AS n FROM posts WHERE status='approved'"),
-    // 实名制运营指标：验证过多少身份、有多少待审内容没有身份记录（实名前的旧数据）
-    verifiedIdentities: one("SELECT COUNT(*) AS n FROM identities"),
-    postsWithoutIdentity: one("SELECT COUNT(*) AS n FROM posts WHERE identity_id IS NULL"),
-    commentsWithoutIdentity: one("SELECT COUNT(*) AS n FROM comments WHERE identity_id IS NULL"),
-    identityRequired: identity_mod.ENFORCE,
-    smsProvider: identity_mod.publicConfig().provider,
+    pendingTotal: pendingPosts + pendingComments + openReports,
+    oldestPendingAt,
+    generatedAt: Date.now(),
+    // 内测运营指标：还有多少反馈没处理、门禁是否开着、当前是哪个内测版本
+    openFeedback: one("SELECT COUNT(*) AS n FROM feedback WHERE status='open'"),
+    gateRequired: gate.ENABLED,
+    gateInviteRequired: gate.INVITE_REQUIRED,
+    betaVersion: beta.VERSION,
     // 数据库体积与可回收空间：低配 VPS 上最该盯的两个数
     db: {
       fileBytes: disk.fileBytes,
@@ -865,97 +892,101 @@ route("GET", "/api/admin/stats", (ctx) => {
   });
 });
 
-// GET /api/admin/queue?type=posts|comments&limit=
-// 队列项带上发布者的脱敏手机号与「无身份记录」标记 ——
-// 审核员判断风险时需要知道这条内容能不能追溯到人。
+/**
+ * 审核队列游标：`created_at.id`。队列按时间正序处理，用行值元组比较翻页，
+ * 既不重复也不遗漏，且能吃到 (status, created_at, id) 这条既有索引。
+ */
+function parseQueueCursor(raw) {
+  const [t, i] = String(raw || "").split(".");
+  const createdAt = toInt(t, 0);
+  const id = toInt(i, 0);
+  return createdAt > 0 && id > 0 ? { createdAt, id } : null;
+}
+
+// GET /api/admin/queue?type=posts|comments&limit=&cursor=&q=
 route("GET", "/api/admin/queue", (ctx) => {
   if (!requireAdmin(ctx)) return;
   const type = ctx.query.get("type") === "comments" ? "comments" : "posts";
   const take = clamp(toInt(ctx.query.get("limit"), 50), 1, 100);
+  const q = String(ctx.query.get("q") || "").trim().slice(0, 60);
+  const cursor = parseQueueCursor(ctx.query.get("cursor"));
 
   if (type === "comments") {
+    // 审核评论必须看到它挂在哪个帖子上，否则无法判断上下文。
+    // LEFT JOIN 帖子仅用于取上下文，驱动表仍是 comments 且走 idx_comments_queue。
+    const where = ["c.status = 'pending'"];
+    const args = [];
+    if (q) {
+      where.push("(c.body LIKE ? ESCAPE '\\' OR p.body LIKE ? ESCAPE '\\')");
+      args.push("%" + escapeLike(q) + "%", "%" + escapeLike(q) + "%");
+    }
+    const totalWhere = where.slice();
+    const totalArgs = args.slice();
+    if (cursor) {
+      where.push("(c.created_at, c.id) > (?, ?)");
+      args.push(cursor.createdAt, cursor.id);
+    }
+
     const rows = db
       .prepare(
-        `SELECT c.id, c.post_id, c.body, c.flag, c.created_at, c.identity_id,
-                i.phone_masked, p.body AS post_body, p.status AS post_status,
-                p.cat AS post_cat
-           FROM comments c
-           LEFT JOIN identities i ON i.id = c.identity_id
-           LEFT JOIN posts p ON p.id = c.post_id
-          WHERE c.status = 'pending' ORDER BY c.created_at ASC LIMIT ?`
+        `SELECT c.id, c.post_id, c.body, c.flag, c.created_at,
+                p.body AS post_body, p.cat AS post_cat, p.status AS post_status
+           FROM comments c LEFT JOIN posts p ON p.id = c.post_id
+          WHERE ${where.join(" AND ")}
+          ORDER BY c.created_at ASC, c.id ASC LIMIT ?`
       )
-      .all(take);
+      .all(...args, take + 1);
+
+    const total = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM comments c LEFT JOIN posts p ON p.id = c.post_id
+          WHERE ${totalWhere.join(" AND ")}`
+      )
+      .get(...totalArgs).n;
+    const hasMore = rows.length > take;
+    const items = hasMore ? rows.slice(0, take) : rows;
+    const last = items[items.length - 1];
     return sendJson(ctx.req, ctx.res, 200, {
       type,
-      items: rows.map((r) => Object.assign({}, r, {
-        identityMissing: r.identity_id == null,
-        postExcerpt: String(r.post_body || "").slice(0, 60)
-      }))
+      items,
+      total,
+      nextCursor: hasMore && last ? `${last.created_at}.${last.id}` : null
     });
+  }
+
+  const where = ["status = 'pending'"];
+  const args = [];
+  if (q) {
+    where.push("body LIKE ? ESCAPE '\\'");
+    args.push("%" + escapeLike(q) + "%");
+  }
+  const totalWhere = where.slice();
+  const totalArgs = args.slice();
+  if (cursor) {
+    where.push("(created_at, id) > (?, ?)");
+    args.push(cursor.createdAt, cursor.id);
   }
 
   const rows = db
     .prepare(
-      `SELECT p.id, p.cat, p.body, p.flag, p.created_at, p.identity_id, i.phone_masked,
-              i.post_count, i.verified_at
-         FROM posts p
-         LEFT JOIN identities i ON i.id = p.identity_id
-        WHERE p.status = 'pending' ORDER BY p.created_at ASC LIMIT ?`
+      `SELECT id, cat, body, flag, created_at, like_count, comment_count
+         FROM posts WHERE ${where.join(" AND ")}
+        ORDER BY created_at ASC, id ASC LIMIT ?`
     )
-    .all(take);
+    .all(...args, take + 1);
+
+  const total = db
+    .prepare(`SELECT COUNT(*) AS n FROM posts WHERE ${totalWhere.join(" AND ")}`)
+    .get(...totalArgs).n;
+  const hasMore = rows.length > take;
+  const items = hasMore ? rows.slice(0, take) : rows;
+  const last = items[items.length - 1];
   sendJson(ctx.req, ctx.res, 200, {
     type,
-    items: rows.map((r) => Object.assign({}, r, { identityMissing: r.identity_id == null }))
+    items,
+    total,
+    nextCursor: hasMore && last ? `${last.created_at}.${last.id}` : null
   });
-});
-
-// GET /api/admin/identities?limit= —— 最近验证过的身份（便于发现异常号码）
-//
-// 注意注册顺序：这条必须放在 `/api/admin/identity/:id` **之前**。
-// 路由是按注册顺序匹配的，而 `:id` 编译出的正则是 ([^/]+)，它能把字面量
-// "identities" 也吃掉 —— 于是列表请求会被参数路由接管，toInt("identities") 得 0，
-// 查询落空，接口诡异地只返回一条记录。这个 bug 是测试抓出来的。
-route("GET", "/api/admin/identities", (ctx) => {
-  if (!requireAdmin(ctx)) return;
-  const take = clamp(toInt(ctx.query.get("limit"), 50), 1, 200);
-  // 按 verified_at 排序而不是 id：一是语义正确（「最近验证过的」），
-  // 二是能吃上 idx_identities_recent；按 id 排会让那个索引变成纯负担。
-  const rows = db
-    .prepare(
-      `SELECT id, phone_masked, country_code, verified_at, post_count, comment_count,
-              consent_version, last_seen_at
-         FROM identities ORDER BY verified_at DESC, id DESC LIMIT ?`
-    )
-    .all(take);
-  sendJson(ctx.req, ctx.res, 200, { items: rows, total: rows.length });
-});
-
-// GET /api/admin/identity/:id —— 追溯：某个身份发过的全部内容（含待审与下架）
-// 出事时用这条链路回答「这个号码发过什么」，是实名制的意义所在。
-route("GET", "/api/admin/identity/:id", (ctx) => {
-  if (!requireAdmin(ctx)) return;
-  const id = toInt(ctx.params.id, 0);
-  if (id <= 0) throw httpError(400, "invalid identity id");
-  const found = identity_mod.lookup(id);
-  if (!found) throw httpError(404, "identity not found");
-  audit("identity.lookup", id, `posts:${found.posts.length} comments:${found.comments.length}`, ctx.ip);
-  sendJson(ctx.req, ctx.res, 200, Object.assign({ id }, found));
-});
-
-// POST /api/admin/shutdown —— 受控的优雅停机入口
-//
-// 为什么需要它（而不是只能靠信号）：
-//   Windows 上 Node 对 SIGTERM 的支持有限 —— child.kill("SIGTERM") 走的是直接终止
-//   进程，JS 里的信号处理器根本不会执行，于是「干净退出标记」写不进去，
-//   下次启动会误判为非优雅退出并触发全量点赞校准。
-//   生产（Linux + systemd）信号路径是正常的，但这个接口让收尾逻辑在任何平台
-//   都能被验证，也给运维多一个不依赖信号的重启方式。
-route("POST", "/api/admin/shutdown", (ctx) => {
-  if (!requireAdmin(ctx)) return;
-  audit("server.shutdown", null, "manual", ctx.ip);
-  sendJson(ctx.req, ctx.res, 200, { ok: true, message: "正在优雅停机" });
-  // 先把响应发出去，再收尾，避免调用方拿到连接中断
-  setTimeout(() => shutdown("ADMIN"), 150);
 });
 
 const REVIEW = {
@@ -964,69 +995,198 @@ const REVIEW = {
   remove: "removed"
 };
 
+/**
+ * 审核帖子。抽成函数后单条与批量走同一条路径，避免两处逻辑各写一遍慢慢漂移。
+ * 下架时连带把该帖的待处理工单标记为已处理 —— 内容已经没了，工单再挂着只会误导。
+ */
+function applyPostReview(postId, action, ip) {
+  const post = db.prepare("SELECT id, status FROM posts WHERE id = ?").get(postId);
+  if (!post) return null;
+  const next = REVIEW[action];
+
+  const apply = db.transaction(() => {
+    db.prepare("UPDATE posts SET status = ?, reviewed_at = ? WHERE id = ?")
+      .run(next, Date.now(), postId);
+    if (action === "remove") {
+      db.prepare(
+        "UPDATE reports SET status = 'actioned', resolved_at = ? WHERE post_id = ? AND status = 'open'"
+      ).run(Date.now(), postId);
+    }
+  });
+  apply();
+
+  audit(`post.${action}`, postId, `from:${post.status}`, ip);
+  bumpFeedCache(); // 通过/下架都会改变公开列表，立即失效缓存
+  return { id: postId, status: next, from: post.status };
+}
+
+/**
+ * 审核评论。计数必须跟着状态变化走：通过 +1，把已通过的评论驳回则 -1，
+ * 否则 comment_count 会随着审核动作单向上漂，墙上显示的评论数就不可信了。
+ */
+function applyCommentReview(commentId, action, ip) {
+  const comment = db.prepare("SELECT id, post_id, status FROM comments WHERE id = ?").get(commentId);
+  if (!comment) return null;
+  const next = action === "approve" ? "approved" : "rejected";
+  const delta = (next === "approved" && comment.status !== "approved") ? 1
+    : (next !== "approved" && comment.status === "approved") ? -1
+    : 0;
+
+  const apply = db.transaction(() => {
+    db.prepare("UPDATE comments SET status = ? WHERE id = ?").run(next, commentId);
+    if (delta) {
+      db.prepare("UPDATE posts SET comment_count = MAX(0, comment_count + ?) WHERE id = ?")
+        .run(delta, comment.post_id);
+    }
+  });
+  apply();
+
+  audit(`comment.${action}`, commentId, delta ? `post:${comment.post_id} delta:${delta}` : null, ip);
+  // 评论数会出现在公开列表卡片上，计数变了就让列表缓存立即失效。
+  if (delta) bumpFeedCache();
+  return { id: commentId, status: next, commentCountDelta: delta };
+}
+
 for (const action of Object.keys(REVIEW)) {
-  route("POST", `/api/admin/posts/:id/${action}`, async (ctx) => {
+  route("POST", `/api/admin/posts/:id/${action}`, (ctx) => {
     if (!requireAdmin(ctx)) return;
-    const postId = toInt(ctx.params.id, 0);
-    const post = db.prepare("SELECT id, status FROM posts WHERE id = ?").get(postId);
-    if (!post) throw httpError(404, "post not found");
-
-    // 审核意见（可选）：先审后发的留痕，比只记时间更有说服力
-    let note = null;
-    try {
-      const payload = await readJson(ctx.req);
-      note = payload && payload.note ? String(payload.note).slice(0, 200) : null;
-    } catch { /* 无请求体也允许 */ }
-
-    db.prepare("UPDATE posts SET status = ?, reviewed_at = ?, review_note = ? WHERE id = ?")
-      .run(REVIEW[action], Date.now(), note, postId);
-    audit(`post.${action}`, postId, note, ctx.ip);
-    bumpFeedCache(); // 通过/下架都会改变公开列表，立即失效缓存
-    sendJson(ctx.req, ctx.res, 200, { id: postId, status: REVIEW[action], note });
+    const result = applyPostReview(toInt(ctx.params.id, 0), action, ctx.ip);
+    if (!result) throw httpError(404, "post not found");
+    sendJson(ctx.req, ctx.res, 200, result);
   });
 }
 
 for (const action of ["approve", "reject"]) {
   route("POST", `/api/admin/comments/:id/${action}`, (ctx) => {
     if (!requireAdmin(ctx)) return;
-    const commentId = toInt(ctx.params.id, 0);
-    const comment = db.prepare("SELECT id, post_id, status FROM comments WHERE id = ?").get(commentId);
-    if (!comment) throw httpError(404, "comment not found");
-
-    const next = action === "approve" ? "approved" : "rejected";
-    // 计数必须跟着状态变化走：通过 +1，把已通过的评论驳回则 -1，
-    // 否则 comment_count 会随着审核动作单向上漂，墙上显示的评论数就不可信了。
-    const delta = (next === "approved" && comment.status !== "approved") ? 1
-      : (next !== "approved" && comment.status === "approved") ? -1
-      : 0;
-
-    const apply = db.transaction(() => {
-      db.prepare("UPDATE comments SET status = ?, reviewed_at = ? WHERE id = ?")
-        .run(next, Date.now(), commentId);
-      if (delta) {
-        db.prepare(
-          "UPDATE posts SET comment_count = MAX(0, comment_count + ?) WHERE id = ?"
-        ).run(delta, comment.post_id);
-      }
-    });
-    apply();
-
-    // 评论状态变化会改变信息流里的 comment_count，必须让缓存失效，
-    // 否则墙上的评论数会停留在审核前的旧值（这个 bug 是测试抓出来的）。
-    if (delta) bumpFeedCache();
-    audit(`comment.${action}`, commentId, delta ? `post:${comment.post_id} delta:${delta}` : null, ctx.ip);
-    sendJson(ctx.req, ctx.res, 200, { id: commentId, status: next, commentCountDelta: delta });
+    const result = applyCommentReview(toInt(ctx.params.id, 0), action, ctx.ip);
+    if (!result) throw httpError(404, "comment not found");
+    sendJson(ctx.req, ctx.res, 200, result);
   });
 }
 
-// GET /api/admin/reports?status=open|actioned|dismissed|all
+// GET /api/admin/posts/:id —— 单帖详情（正文 + 全部评论 + 相关工单）
+// 审核举报时需要在一个页面看全上下文，而不是来回翻列表。
+route("GET", "/api/admin/posts/:id", (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  const postId = toInt(ctx.params.id, 0);
+  const post = db
+    .prepare(
+      `SELECT id, cat, body, status, flag, like_count, comment_count, created_at, reviewed_at
+         FROM posts WHERE id = ?`
+    )
+    .get(postId);
+  if (!post) throw httpError(404, "post not found");
+
+  const comments = db
+    .prepare(
+      `SELECT id, body, status, flag, created_at FROM comments
+        WHERE post_id = ? ORDER BY id ASC LIMIT 500`
+    )
+    .all(postId);
+  const reports = db
+    .prepare(
+      `SELECT id, reason, status, created_at FROM reports
+        WHERE post_id = ? ORDER BY id DESC LIMIT 50`
+    )
+    .all(postId);
+
+  sendJson(ctx.req, ctx.res, 200, {
+    post: {
+      id: post.id,
+      cat: post.cat,
+      body: post.body,
+      status: post.status,
+      flag: post.flag,
+      likes: post.like_count,
+      comments: post.comment_count,
+      createdAt: post.created_at,
+      reviewedAt: post.reviewed_at
+    },
+    comments: comments.map((c) => ({
+      id: c.id, body: c.body, status: c.status, flag: c.flag, createdAt: c.created_at
+    })),
+    reports: reports.map((r) => ({
+      id: r.id, reason: r.reason, status: r.status, createdAt: r.created_at
+    }))
+  });
+});
+
+// POST /api/admin/bulk  { type:'posts'|'comments', ids:number[], action }
+// 一次事务处理多条，审核高峰期省掉「每条一个来回」的开销。
+route("POST", "/api/admin/bulk", async (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  const payload = await readJson(ctx.req);
+  const type = payload.type === "comments" ? "comments" : "posts";
+  const action = String(payload.action || "").trim();
+  const allowed = type === "posts" ? Object.keys(REVIEW) : ["approve", "reject"];
+  if (!allowed.includes(action)) throw httpError(400, "invalid action");
+
+  const ids = (Array.isArray(payload.ids) ? payload.ids : [])
+    .map((v) => toInt(v, 0))
+    .filter((v) => v > 0)
+    .slice(0, 100);
+  if (!ids.length) throw httpError(400, "empty ids");
+
+  const updated = [];
+  const skipped = [];
+  const apply = type === "posts" ? applyPostReview : applyCommentReview;
+  const run = db.transaction(() => {
+    for (const id of ids) {
+      const result = apply(id, action, ctx.ip);
+      (result ? updated : skipped).push(id);
+    }
+  });
+  run();
+
+  sendJson(ctx.req, ctx.res, 200, { type, action, updated, skipped });
+});
+
+// GET /api/admin/audit?action=&limit= —— 审核操作留痕（合规与追责）
+route("GET", "/api/admin/audit", (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  const take = clamp(toInt(ctx.query.get("limit"), 50), 1, 200);
+  const action = String(ctx.query.get("action") || "").trim().slice(0, 40);
+  // 不返回 ip_hash：留痕只需要「谁在什么时候做了什么」，而不是可追踪标识。
+  const rows = action
+    ? db.prepare(
+        `SELECT id, action, target, note, created_at FROM audit_log
+          WHERE action = ? ORDER BY id DESC LIMIT ?`
+      ).all(action, take)
+    : db.prepare(
+        `SELECT id, action, target, note, created_at FROM audit_log
+          ORDER BY id DESC LIMIT ?`
+      ).all(take);
+  const total = action
+    ? db.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action = ?").get(action).n
+    : db.prepare("SELECT COUNT(*) AS n FROM audit_log").get().n;
+  sendJson(ctx.req, ctx.res, 200, { items: rows, total });
+});
+
+// GET /api/admin/reports?status=open|actioned|dismissed|all&limit=
 route("GET", "/api/admin/reports", (ctx) => {
   if (!requireAdmin(ctx)) return;
   const status = ctx.query.get("status") || "open";
+  const take = clamp(toInt(ctx.query.get("limit"), 100), 1, 200);
+
+  // 工单必须能直接看到被举报内容，否则审核员只能凭一条理由盲判。
+  // LEFT JOIN 只按主键取上下文，驱动表仍是 reports 且走 idx_reports_status。
+  const base = `SELECT r.id, r.post_id, r.comment_id, r.reason, r.status,
+                       r.created_at, r.resolved_at,
+                       p.body AS post_body, p.cat AS post_cat, p.status AS post_status,
+                       c.body AS comment_body
+                  FROM reports r
+                  LEFT JOIN posts p ON p.id = r.post_id
+                  LEFT JOIN comments c ON c.id = r.comment_id`;
+
   const rows = status === "all"
-    ? db.prepare("SELECT * FROM reports ORDER BY id DESC LIMIT 100").all()
-    : db.prepare("SELECT * FROM reports WHERE status = ? ORDER BY id DESC LIMIT 100").all(status);
-  sendJson(ctx.req, ctx.res, 200, { items: rows });
+    ? db.prepare(`${base} ORDER BY r.id DESC LIMIT ?`).all(take)
+    : db.prepare(`${base} WHERE r.status = ? ORDER BY r.id DESC LIMIT ?`).all(status, take);
+  const total = status === "all"
+    ? db.prepare("SELECT COUNT(*) AS n FROM reports").get().n
+    : db.prepare("SELECT COUNT(*) AS n FROM reports WHERE status = ?").get(status).n;
+
+  sendJson(ctx.req, ctx.res, 200, { items: rows, total, status });
 });
 
 // POST /api/admin/reports/:id/resolve  { action: 'takedown' | 'dismiss' }
@@ -1043,8 +1203,10 @@ route("POST", "/api/admin/reports/:id/resolve", async (ctx) => {
     if (action === "takedown") {
       db.prepare("UPDATE posts SET status = 'removed', reviewed_at = ? WHERE id = ?")
         .run(Date.now(), report.post_id);
-      db.prepare("UPDATE reports SET status = 'actioned', resolved_at = ? WHERE id = ?")
-        .run(Date.now(), reportId);
+      // 同一帖子可能积压多条工单：内容下架即全部结案，避免工单列表残留。
+      db.prepare(
+        "UPDATE reports SET status = 'actioned', resolved_at = ? WHERE post_id = ? AND status = 'open'"
+      ).run(Date.now(), report.post_id);
     } else {
       db.prepare("UPDATE reports SET status = 'dismissed', resolved_at = ? WHERE id = ?")
         .run(Date.now(), reportId);
@@ -1055,6 +1217,65 @@ route("POST", "/api/admin/reports/:id/resolve", async (ctx) => {
   if (action === "takedown") bumpFeedCache();
   audit(`report.${action}`, reportId, `post:${report.post_id}`, ctx.ip);
   sendJson(ctx.req, ctx.res, 200, { id: reportId, action });
+});
+
+// GET /api/admin/feedback?status=open|done|dismissed|all&limit= —— 内测反馈队列
+//
+// 路由顺序提醒（历史 bug，值得留在这里）：管理端曾经把列表路由
+// `/api/admin/identities` 注册在参数路由 `/api/admin/identity/:id` 之后，
+// 而 `:id` 编译出的正则 ([^/]+) 会把字面量 "identities" 也吃掉 ——
+// 列表请求被参数路由接管，结果只返回一条记录。这里两条路由的字面量前缀
+// 完全不同（feedback / 无参数路由），不存在该问题；新增参数路由时请务必
+// 先注册字面量路由。
+route("GET", "/api/admin/feedback", (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  const status = ctx.query.get("status") || "open";
+  const take = clamp(toInt(ctx.query.get("limit"), 50), 1, 200);
+  const rows = status === "all"
+    ? db.prepare("SELECT * FROM feedback ORDER BY id DESC LIMIT ?").all(take)
+    : db.prepare("SELECT * FROM feedback WHERE status = ? ORDER BY id DESC LIMIT ?").all(status, take);
+  const total = status === "all"
+    ? db.prepare("SELECT COUNT(*) AS n FROM feedback").get().n
+    : db.prepare("SELECT COUNT(*) AS n FROM feedback WHERE status = ?").get(status).n;
+  sendJson(ctx.req, ctx.res, 200, { items: rows, total, status });
+});
+
+// POST /api/admin/feedback/:id/resolve  { action: 'done' | 'dismiss' }
+// 反馈不改变公开内容，因此不需要 bumpFeedCache。
+route("POST", "/api/admin/feedback/:id/resolve", async (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  const id = toInt(ctx.params.id, 0);
+  if (id <= 0) throw httpError(400, "invalid feedback id");
+
+  let action = "dismiss";
+  try {
+    const payload = await readJson(ctx.req);
+    if (payload && payload.action === "done") action = "done";
+  } catch { /* 无请求体时按 dismiss 处理 */ }
+
+  const row = db.prepare("SELECT id, status FROM feedback WHERE id = ?").get(id);
+  if (!row) throw httpError(404, "feedback not found");
+
+  db.prepare("UPDATE feedback SET status = ?, resolved_at = ? WHERE id = ?")
+    .run(action === "done" ? "done" : "dismissed", Date.now(), id);
+  audit(`feedback.${action}`, id, null, ctx.ip);
+  sendJson(ctx.req, ctx.res, 200, { id, status: action === "done" ? "done" : "dismissed" });
+});
+
+// POST /api/admin/shutdown —— 受控的优雅停机入口
+//
+// 为什么需要它（而不是只能靠信号）：
+//   Windows 上 Node 对 SIGTERM 的支持有限 —— child.kill("SIGTERM") 走的是直接终止
+//   进程，JS 里的信号处理器根本不会执行，于是「干净退出标记」写不进去，
+//   下次启动会误判为非优雅退出并触发全量点赞校准。
+//   生产（Linux + systemd）信号路径是正常的，但这个接口让收尾逻辑在任何平台
+//   都能被验证，也给运维多一个不依赖信号的重启方式。
+route("POST", "/api/admin/shutdown", (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  audit("server.shutdown", null, "manual", ctx.ip);
+  sendJson(ctx.req, ctx.res, 200, { ok: true, message: "正在优雅停机" });
+  // 先把响应发出去，再收尾，避免调用方拿到连接中断
+  setTimeout(() => shutdown("ADMIN"), 150);
 });
 
 /* ───────────────────────────── 静态资源 ───────────────────────────── */
@@ -1074,7 +1295,7 @@ const MIME = {
   ".woff2": "font/woff2"
 };
 
-function serveStatic(ctx) {
+async function serveStatic(ctx) {
   const { req, res } = ctx;
   let rel = decodeURIComponent(ctx.pathname);
   if (rel === "/") rel = "/" + INDEX_FILE;
@@ -1107,17 +1328,24 @@ function serveStatic(ctx) {
 
   const ext = path.extname(filePath).toLowerCase();
   const type = MIME[ext] || "application/octet-stream";
-  const immutable = /\.(css|js|png|jpe?g|webp|avif|svg|woff2?|ico)$/i.test(filePath);
+  // Vite 产物文件名带内容哈希（index-CaUYiDMA.js / index-t4MySId-.js）：内容变了
+  // 文件名就变，因此可以放心用「一年 + immutable」，浏览器不再发条件请求；
+  // 没带哈希的静态资源（favicon 等）保守用一天。
+  const hashed = /[-.][0-9A-Za-z_-]{8,}\.(?:js|css|woff2?|png|jpe?g|webp|avif|svg)$/.test(filePath);
+  const asset = /\.(css|js|png|jpe?g|webp|avif|svg|woff2?|ico)$/i.test(filePath);
   const headers = {
     "Content-Type": type,
-    "Cache-Control": immutable ? "public, max-age=86400" : "no-cache",
+    "Cache-Control": hashed ? "public, max-age=31536000, immutable"
+      : asset ? "public, max-age=86400"
+      : "no-cache",
     ETag: etag,
     "Last-Modified": stat.mtime.toUTCString()
   };
 
   const isText = /^(text\/|application\/(json|javascript)|image\/svg)/.test(type);
   if (isText && stat.size < 2 * 1024 * 1024) {
-    return sendBuffer(req, res, 200, fs.readFileSync(filePath), headers);
+    // 文本产物按 etag 缓存压缩结果：同一份 JS/CSS 只压一次
+    return sendBuffer(req, res, 200, fs.readFileSync(filePath), headers, etag);
   }
 
   res.writeHead(200, Object.assign(baseHeaders(req), headers, { "Content-Length": stat.size }));
@@ -1163,7 +1391,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method !== "GET" && req.method !== "HEAD") {
       return sendJson(req, res, 405, { error: "method_not_allowed" });
     }
-    serveStatic(ctx);
+    return await serveStatic(ctx);
   } catch (err) {
     const code = typeof err.code === "number" ? err.code : 500;
     if (code >= 500) console.error("[error]", (err && err.stack) || err);
@@ -1180,12 +1408,24 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+/**
+ * 连接层调优（低配机器上很实际的几项）：
+ *   - keepAliveTimeout 65s：高于常见反代（Caddy/Nginx 默认 60s）的空闲超时，
+ *     避免反代复用连接时恰好撞上源站关闭连接，产生偶发 502；
+ *   - headersTimeout 必须大于 keepAliveTimeout，否则 Node 会直接报错退出；
+ *   - requestTimeout 30s：请求体很小，超过这个时间的连接基本是慢速攻击，
+ *     让它自然断开，不占用单核。
+ */
+server.keepAliveTimeout = 65_000;
+server.headersTimeout = 66_000;
+server.requestTimeout = 30_000;
+
 server.listen(PORT, HOST, () => {
-  console.log(`[up] 表白墙服务 http://${HOST}:${PORT}`);
+  console.log(`[up] 表白墙服务（${beta.NAME} ${beta.VERSION}）http://${HOST}:${PORT}`);
   console.log(`[up] 静态根目录 ${WEB_ROOT}`);
   console.log(`[up] 数据库 ${db.DB_PATH}（页缓存 ${db.CACHE_MB}MB）`);
-  console.log(`[up] 人机验证 ${challenge.ENABLED ? "开启" : "关闭"}`
-    + `（sitekey ${challenge.CONFIGURED ? "已配置" : "未配置"}）`);
+  console.log(`[up] 内测门禁 ${gate.ENABLED ? "开启" : "关闭"}`
+    + `（邀请码 ${gate.INVITE_REQUIRED ? "已配置" : "未配置"}）`);
 });
 
 /* ─────────────────────────── 优雅退出 ─────────────────────────── */
@@ -1201,8 +1441,9 @@ let shuttingDown = false;
  * 进程以 SIGABRT(134) 结束 —— 那样 systemd 会认为服务异常退出，
  * 而我们精心写的「干净退出标记」也就白写了。
  *
- * 事件循环能被自然排空：HTTP server 已 close、点赞定时器与维护定时器都是 unref、
- * Cloudflare/短信的出网请求都会自行结束。留一个兜底计时器防极端情况挂住。
+ * 事件循环能被自然排空：HTTP server 已 close、点赞定时器与维护定时器都是 unref；
+ * 内测版没有任何出网请求（门禁与反馈都在本进程内完成），因此不会有悬挂的 socket。
+ * 留一个兜底计时器防极端情况挂住。
  */
 function shutdown(signal) {
   if (shuttingDown) return;
@@ -1230,16 +1471,12 @@ process.on("uncaughtException", (err) => console.error("[uncaught]", err));
 process.on("unhandledRejection", (err) => console.error("[unhandled]", err));
 
 // 退出原因留痕：进程在没有任何信号的情况下退出时，这里能告诉我们是谁触发的
-// （stack 会指向调用 process.exit 的位置）。生产排障时设 DEBUG_EXIT=1 即可打开。
+// （setImmediate 的 stack 会指向调用 process.exit 的位置）。
 if (process.env.DEBUG_EXIT === "1") {
   process.on("exit", (code) => {
+    const stack = new Error("exit").stack;
     try {
-      fs.writeSync(2, `[exit-trace] pid=${process.pid} code=${code}\n${new Error("exit").stack}\n`);
+      fs.writeSync(2, `[exit-trace] code=${code}\n${stack}\n`);
     } catch { /* ignore */ }
   });
-  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) {
-    process.on(sig, () => {
-      try { fs.writeSync(2, `[signal-trace] pid=${process.pid} 收到 ${sig}（shutdown 处理器会接管）\n`); } catch { /* ignore */ }
-    });
-  }
 }

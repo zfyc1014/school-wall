@@ -5,10 +5,15 @@ import { IconClose } from './icons.jsx';
 /**
  * 免责声明与发布公约。文案为面向香港运营场景的一般性模板，
  * 逐字保留自原型，不构成法律意见。上线前请由香港执业律师审阅。
+ *
+ * 内测版新增「内测阶段特别说明」：内测的前提（数据可能重置、功能可能变更、
+ * 不提供正式服务承诺）必须写在公约里，而不是只放在页脚的小字里。
  */
-export function LegalSheet({ open, onClose }) {
+export function LegalSheet({ open, onClose, beta }) {
   const titleId = useId();
   const { ref, entered } = useSheet({ open, onClose });
+  const version = beta?.version || '';
+  const name = beta?.name || '内测版';
 
   return (
     <div
@@ -88,6 +93,19 @@ export function LegalSheet({ open, onClose }) {
         <p>
           如你认为自身权益受到侵害，请将相关链接与说明发送至 report@example.edu，我们将依程序处理。
         </p>
+
+        <h3>九、内测阶段特别说明</h3>
+        <p>
+          本站当前为<strong>{name}（{version}）</strong>，属于面向小范围用户的功能验证版本，
+          与正式服务存在以下差别：
+        </p>
+        <ul>
+          <li>功能、界面与规则可能随时调整或下线，恕不另行逐一通知；</li>
+          <li>内测期间的数据可能被定期重置或清理，请勿发布无法承受丢失的内容；</li>
+          <li>内测阶段不收集手机号、不建立账号体系，也没有找回或导出数据的途径；</li>
+          <li>发布门槛为「内测邀请码 + 本地验证」，仅用于控制范围与阻挡批量脚本；</li>
+          <li>内测期间仍坚持「先审后发」，并通过页面上的「内测反馈」入口收集问题与建议。</li>
+        </ul>
 
         <p className="stamp">
           模板版本 v1.0 · 更新于 2026 年 9 月 · 正式上线前请由具备香港执业资格的律师审阅

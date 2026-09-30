@@ -7,7 +7,7 @@ import './styles/global.css';
 import './styles/chrome.css';
 import './styles/wall.css';
 import './styles/sheets.css';
-import './styles/challenge.css';
+import './styles/beta.css';
 import './styles/mobile.css';
 
 const container = document.getElementById('root');

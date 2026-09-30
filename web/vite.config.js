@@ -50,8 +50,30 @@ export default defineConfig({
     outDir: resolve(here, 'dist'),
     emptyOutDir: true,
     assetsDir: 'assets',
-    target: 'es2019', // 低配环境 / 老 WebView 友好
+    /**
+     * 目标从 es2019 提到 es2020：
+     *   - 源码里大量使用可选链/空值合并（`?.` / `??`），es2019 下 esbuild 要
+     *     逐处降级成辅助函数，产物明显更大；es2020 原生支持，直接省掉这部分。
+     *   - 代价是放弃 2020 年之前的旧 WebView —— 内测阶段的目标设备（近几年的
+     *     手机与桌面浏览器）都在范围内，值得换这部分体积与解析时间。
+     */
+    target: 'es2020',
     sourcemap: false,
     assetsInlineLimit: 4096,
+    // 现代浏览器（es2020 目标）不需要 modulepreload 兼容垫片，省一个内联脚本
+    modulePreload: { polyfill: false },
+    rollupOptions: {
+      output: {
+        /**
+         * 把 React 单独拆成一个 chunk：
+         *   - 框架代码与业务代码的更新频率完全不同，拆开后发版不会让用户
+         *     重新下载 ~140KB 的 React；
+         *   - 两者可以并行下载与解析，首屏更快。
+         */
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'react-dom/client'],
+        },
+      },
+    },
   },
 });

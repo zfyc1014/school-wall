@@ -26,6 +26,76 @@ const value = (name, fallback) => {
   return i >= 0 && args[i + 1] ? args[i + 1] : fallback;
 };
 
+/* ─────────────────── 父子进程拆分（Windows 上必须这么写） ───────────────────
+ *
+ * 这是唯一在当前进程内直接加载 better-sqlite3 的测试脚本，因此会踩到
+ * Windows 上一个很隐蔽的坑：
+ *
+ *   stdout 是**管道**时，Node 在退出阶段要处理管道句柄，进程环境（Environment）
+ *   的拆除会连带触发更好的语句析构顺序问题 —— better-sqlite3 的 Statement 析构
+ *   在环境拆除之后才执行，命中原生断言 `Assertion failed: (env) != nullptr`，
+ *   进程以 134（0xC0000409）结束；更糟的是**管道缓冲里的报告会被整段丢掉**
+ *   （只剩一段 native stack，连「50/50 通过」都看不到）。
+ *   `npm test` 的 && 串联、CI 日志采集、`| Select-String` 用的都是管道，
+ *   所以在这些场景下必崩；重定向到文件或 NUL 时则 100% 正常。
+ *
+ * 实测（同一份代码各跑 5 次）：
+ *   `> file 2>&1`  → 0,0,0,0,0
+ *   `> NUL 2> NUL` → 0,0,0,0,0
+ *   `2>&1 | 管道`  → 134,134,134,134,134
+ *
+ * 处理办法：把真正的检查放进一个子进程（stdout/stderr 接管道），子进程把报告
+ * **同步写进临时文件**（不走 stdout，所以不受管道缓冲影响）；父进程读完文件
+ * 同步打印，并按报告里的 RESULT 行决定退出码。
+ *
+ * 子进程的 stdio 有两个反直觉的实测结论（各跑 3 次，100% 复现）：
+ *   stdio: 'ignore'（fd 指向 NUL）→ 子进程在**启动阶段**就崩，报告 0 字节；
+ *   stdio: ['ignore','pipe','pipe'] → 正常跑完，报告 5880 字节、含 RESULT。
+ * 所以这里必须用管道，而不是直觉上更「干净」的 ignore。
+ * ------------------------------------------------------------------------- */
+
+const IS_CHILD = process.env.OD_DBCHECK_CHILD === "1";
+const REPORT_PATH = process.env.OD_DBCHECK_REPORT || "";
+
+if (!IS_CHILD) {
+  const { spawnSync } = require("child_process");
+  const reportPath = path.join(os.tmpdir(), `od-dbcheck-report-${process.pid}-${Date.now()}.txt`);
+  const res = spawnSync(process.execPath, [__filename, ...process.argv.slice(2)], {
+    env: Object.assign({}, process.env, {
+      OD_DBCHECK_CHILD: "1",
+      OD_DBCHECK_REPORT: reportPath
+    }),
+    // 关键：管道，不是 ignore（原因见上）
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+
+  let report = "";
+  try { report = fs.readFileSync(reportPath, "utf8"); } catch { /* 走下面的兜底 */ }
+  try { fs.rmSync(reportPath, { force: true }); } catch { /* ignore */ }
+
+  // 同步写：父进程自己的 stdout 可能是管道，异步写会被截断
+  try { if (report) fs.writeSync(1, report); } catch { /* ignore */ }
+
+  const hit = report.match(/RESULT (\d+)\/(\d+)/);
+  if (!hit) {
+    try {
+      fs.writeSync(2, `[db-check] 子进程未产出完整报告（exit=${res.status}）。`
+        + "这通常意味着更好的原生崩溃，请单独运行 `node scripts/db-check.js` 并重定向到文件排查\n");
+    } catch { /* ignore */ }
+    process.exit(1);
+  }
+  process.exit(Number(hit[1]) === Number(hit[2]) ? 0 : 1);
+}
+
+/**
+ * 子进程里的输出：同步写进报告文件（父进程读它）。
+ * 不用 console.log 的原因同上 —— 这里要的是「崩溃也不丢内容」。
+ */
+const reportFd = REPORT_PATH ? fs.openSync(REPORT_PATH, "a") : 1;
+const out = (line = "") => {
+  try { fs.writeSync(reportFd, `${line}\n`); } catch { /* 输出不可写时忽略 */ }
+};
+
 const useRealDb = flag("--real");
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "od-dbcheck-"));
 const targetDb = useRealDb
@@ -37,20 +107,22 @@ process.env.DB_PATH = targetDb;
 if (!flag("--recount")) process.env.DB_RECOUNT_DAYS = "3650";
 
 const results = [];
-const ok = (name, detail = "") => { results.push(true); console.log(`  \u2713 ${name}${detail ? `  — ${detail}` : ""}`); };
-const bad = (name, detail = "") => { results.push(false); console.log(`  \u2717 ${name}${detail ? `  — ${detail}` : ""}`); };
+const ok = (name, detail = "") => { results.push(true); out(`  \u2713 ${name}${detail ? `  — ${detail}` : ""}`); };
+const bad = (name, detail = "") => { results.push(false); out(`  \u2717 ${name}${detail ? `  — ${detail}` : ""}`); };
 const check = (name, cond, detail = "") => { if (cond) ok(name, detail); else bad(name, detail); return Boolean(cond); };
 
 const db = require("../src/db");
 
-console.log(`\n数据库自检：${targetDb}\n`);
+out(`\n数据库自检：${targetDb}\n`);
 
 /* ── 1. 结构 ─────────────────────────────────────────────────────── */
 
-console.log("[1/6] 表与索引");
+out("[1/6] 表与索引");
 const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
   .pluck().all();
-check("核心表齐全", ["audit_log", "comments", "likes", "posts", "reports", "stats"].every((t) => tables.includes(t)), tables.join(", "));
+check("核心表齐全",
+  ["audit_log", "comments", "feedback", "likes", "posts", "reports", "stats"].every((t) => tables.includes(t)),
+  tables.join(", "));
 
 const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND sql IS NOT NULL").pluck().all();
 const expectedIndexes = [
@@ -58,12 +130,11 @@ const expectedIndexes = [
   "idx_posts_feed", "idx_posts_hot", "idx_posts_cat",
   "idx_comments_post", "idx_comments_queue",
   "idx_reports_status", "idx_reports_post", "idx_audit_time",
-  // 后台实名（实名制上线新增）
-  "idx_identities_recent", "idx_posts_identity", "idx_comments_identity",
-  "idx_reports_identity", "idx_codes_lookup"
+  // 内测反馈（0.9 新增，后台队列的唯一索引）
+  "idx_feedback_status"
 ];
 const missing = expectedIndexes.filter((i) => !indexes.includes(i));
-check("索引齐全（含 pending 部分索引）", missing.length === 0, missing.length ? `缺少 ${missing.join(", ")}` : `${indexes.length} 个`);
+check("索引齐全（含反馈队列索引）", missing.length === 0, missing.length ? `缺少 ${missing.join(", ")}` : `${indexes.length} 个`);
 
 const pragmas = {
   journal_mode: db.pragma("journal_mode", { simple: true }),
@@ -85,7 +156,7 @@ check("busy_timeout 已设置", pragmas.busy_timeout >= 1000, `${pragmas.busy_ti
  * 优化器改判「全表扫描更便宜」，首屏查询悄悄退化。所以要求计划**稳定**，
  * 而不是「某一时刻看起来不错」。
  */
-console.log("[2/6] 关键查询是否走索引（EXPLAIN QUERY PLAN）");
+out("[2/6] 关键查询是否走索引（EXPLAIN QUERY PLAN）");
 const plan = (sql, ...params) =>
   db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params).map((r) => r.detail).join(" | ");
 
@@ -102,6 +173,9 @@ const seedComments = db.prepare(
 );
 const seedReports = db.prepare(
   "INSERT INTO reports (post_id, reason, status, created_at) VALUES (?,?,?,?)"
+);
+const seedFeedback = db.prepare(
+  "INSERT INTO feedback (cat, body, status, created_at) VALUES (?,?,?,?)"
 );
 const seedMany = db.transaction(() => {
   const cats = ["表白", "树洞", "寻人", "失物", "致谢"];
@@ -123,6 +197,10 @@ const seedMany = db.transaction(() => {
   for (let i = 0; i < 40; i += 1) {
     seedReports.run((i % 100) + 1, "压测举报", i % 4 === 0 ? "open" : "actioned", base - i * 60000);
   }
+  // 反馈队列的主力查询是 status='open'（待处理），所以让 open 占多数
+  for (let i = 0; i < 200; i += 1) {
+    seedFeedback.run("other", `压测反馈 ${i}`, i % 5 === 0 ? "done" : "open", base - i * 60000);
+  }
 });
 seedMany();
 
@@ -137,10 +215,8 @@ const SQL_QUEUE_COMMENTS = "SELECT id FROM comments WHERE status='pending' ORDER
 const SQL_COMMENTS = "SELECT id, body, created_at FROM comments WHERE post_id=1 AND status='approved' ORDER BY id ASC LIMIT 200";
 const SQL_LIKES = "SELECT COUNT(*) FROM likes WHERE post_id = 1";
 const SQL_REPORTS = "SELECT * FROM reports WHERE status='open' ORDER BY id DESC LIMIT 100";
-/** 实名相关热查询：取某号码最近一条未消费的验证码、从身份反查内容、最近身份列表 */
-const SQL_CODE_LOOKUP = "SELECT id, code_hash FROM identity_codes WHERE phone_hash = ? AND consumed_at IS NULL ORDER BY id DESC LIMIT 1";
-const SQL_IDENTITY_POSTS = "SELECT id, cat, body FROM posts WHERE identity_id = ? ORDER BY id DESC LIMIT 200";
-const SQL_RECENT_IDENTITIES = "SELECT id FROM identities ORDER BY verified_at DESC, id DESC LIMIT 50";
+/** 内测反馈的后台队列：status 等值 + 最新在前，必须走 idx_feedback_status */
+const SQL_FEEDBACK_QUEUE = "SELECT id FROM feedback WHERE status=? ORDER BY id DESC LIMIT ?";
 
 /** 一次跑完所有关键查询并返回计划文本 */
 function snapPlans() {
@@ -155,9 +231,7 @@ function snapPlans() {
     comments: plan(SQL_COMMENTS),
     likes: plan(SQL_LIKES),
     reports: plan(SQL_REPORTS),
-    codeLookup: plan(SQL_CODE_LOOKUP, "h"),
-    identityPosts: plan(SQL_IDENTITY_POSTS, 1),
-    recentIdentities: plan(SQL_RECENT_IDENTITIES)
+    feedbackQueue: plan(SQL_FEEDBACK_QUEUE, "open", 50)
   };
 }
 
@@ -187,12 +261,9 @@ function assertPlans(tag) {
     /PRIMARY KEY/.test(p.likes) && noScan(p.likes), p.likes);
   check(`[${tag}] 待处理工单走 idx_reports_status`,
     /idx_reports_status/.test(p.reports) && noScan(p.reports), p.reports);
-  check(`[${tag}] 实名：取最近验证码走 idx_codes_lookup（含未消费条件）`,
-    /idx_codes_lookup/.test(p.codeLookup), p.codeLookup);
-  check(`[${tag}] 实名：从身份反查内容走 idx_posts_identity`,
-    /idx_posts_identity/.test(p.identityPosts) && noScan(p.identityPosts), p.identityPosts);
-  check(`[${tag}] 实名：最近身份列表走 idx_identities_recent`,
-    /idx_identities_recent/.test(p.recentIdentities), p.recentIdentities);
+  check(`[${tag}] 反馈队列（待处理 + 最新在前）走 idx_feedback_status`,
+    /idx_feedback_status/.test(p.feedbackQueue) && noScan(p.feedbackQueue) && noTemp(p.feedbackQueue),
+    p.feedbackQueue);
 
   return p;
 }
@@ -201,13 +272,17 @@ assertPlans("无统计信息");
 db.exec("ANALYZE");
 const after = assertPlans("ANALYZE 后");
 
-// 索引预算：索引不是越多越好，这里把「预期数量」写死，避免以后被随手加回来
+// 索引预算：索引不是越多越好，这里把「预期数量」写死，避免以后被随手加回来。
+// 当前 9 个 = 帖子 3（feed/hot/cat）+ 评论 2（post/queue）+ 工单 2（status/post）
+//            + 留痕 1（audit_time）+ 内测反馈 1（feedback_status）。
+// 审核后台新增的队列/留痕/工单接口都复用上面这些索引（见 schema.sql 的逐条对照），
+// 因此这个数字**不应该**随着后台功能增加而变大。
 const allIndexes = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND sql IS NOT NULL").pluck().all();
-check("索引数量在预算内（无冗余索引）", allIndexes.length === 13, `${allIndexes.length} 个：${allIndexes.sort().join(", ")}`);
+check("索引数量在预算内（无冗余索引）", allIndexes.length === 9, `${allIndexes.length} 个：${allIndexes.sort().join(", ")}`);
 
 /* ── 3. 写入与计数一致性 ─────────────────────────────────────────── */
 
-console.log("\n[3/6] 写入路径与计数一致性");
+out("\n[3/6] 写入路径与计数一致性");
 const now = Date.now();
 const postId = db.prepare(
   "INSERT INTO posts (cat, body, status, ip_hash, created_at) VALUES (?,?,?,?,?)"
@@ -253,7 +328,7 @@ check("删除已下架帖子后级联清理评论", leftComments === 0, `残留 
 
 /* ── 4. 举报工单 ─────────────────────────────────────────────────── */
 
-console.log("\n[4/6] 工单与去重索引");
+out("\n[4/6] 工单与去重索引");
 const p2 = db.prepare("INSERT INTO posts (cat, body, status, created_at) VALUES (?,?,?,?)")
   .run("树洞", "第二条自检内容。", "approved", now).lastInsertRowid;
 db.prepare("INSERT INTO reports (post_id, reason, ip_hash, created_at) VALUES (?,?,?,?)")
@@ -268,12 +343,17 @@ check("举报去重查询走索引", /idx_reports_post|idx_reports_open/.test(pl
 
 /* ── 5. 保留期清理 ───────────────────────────────────────────────── */
 
-console.log("\n[5/6] 保留期清理与空间回收");
+out("\n[5/6] 保留期清理与空间回收");
 const old = Date.now() - 200 * 86400000;
 db.prepare("INSERT INTO posts (cat, body, status, created_at) VALUES (?,?,?,?)")
   .run("树洞", "很久以前被拒的内容。", "rejected", old);
 db.prepare("INSERT INTO audit_log (action, target, created_at) VALUES (?,?,?)")
   .run("post.reject", "999", old);
+// 内测反馈的保留期规则：已处理的旧反馈该删，未处理的**不能被时间清掉**
+db.prepare("INSERT INTO feedback (cat, body, status, created_at) VALUES (?,?,?,?)")
+  .run("other", "很久以前已处理的反馈。", "done", old);
+db.prepare("INSERT INTO feedback (cat, body, status, created_at) VALUES (?,?,?,?)")
+  .run("other", "很久以前仍未处理的反馈。", "open", old);
 
 // 孤儿行：外键 ON DELETE CASCADE 正常情况下不会产生孤儿，
 // 所以这里临时关掉外键约束来构造一个（对应早期没有外键的库/外部导入的数据）。
@@ -298,10 +378,19 @@ check("清理后计数确实下降",
   `posts ${beforeCleanup.posts}→${afterCleanup.posts} · audit ${beforeCleanup.audit}→${afterCleanup.audit}`);
 check("孤儿行清理生效", cleaned.removed.orphan_likes === 1, JSON.stringify(cleaned.removed));
 
+const openFeedbackLeft = db.prepare("SELECT COUNT(*) AS n FROM feedback WHERE status='open' AND created_at < ?")
+  .get(Date.now() - 90 * 86400000).n;
+check("保留期清理删除已处理的旧反馈（未处理的不删，统计同步下降）",
+  cleaned.removed.old_feedback === 1
+    && afterCleanup.feedback === beforeCleanup.feedback - 1
+    && openFeedbackLeft === 1,
+  `${JSON.stringify(cleaned.removed)} · feedback ${beforeCleanup.feedback}→${afterCleanup.feedback} · 未处理保留 ${openFeedbackLeft}`);
+
 // 不开启保留期时：只做结构性清理，不删历史内容
 const cleaned0 = db.cleanup(0);
 check("RETENTION_DAYS=0 时不按时间删数据",
-  cleaned0.removed.rejected_posts === undefined && cleaned0.removed.old_audit === undefined,
+  cleaned0.removed.rejected_posts === undefined && cleaned0.removed.old_audit === undefined
+    && cleaned0.removed.old_feedback === undefined,
   JSON.stringify(cleaned0.removed));
 
 const optimizeMs = db.optimize();
@@ -312,7 +401,7 @@ check("WAL checkpoint 可用", cp !== null, JSON.stringify(cp));
 
 /* ── 6. 启动路径与干净退出标记 ───────────────────────────────────── */
 
-console.log("\n[6/6] 启动路径与退出标记");
+out("\n[6/6] 启动路径与退出标记");
 check("首次启动不会误判为干净退出", db.stats().dirtyAtBoot === true, `dirtyAtBoot=${db.stats().dirtyAtBoot}`);
 check("校准时间已记录（用于决定是否跳过全量校准）",
   Number(db.getStat("like_recount_at")) > 0,
@@ -323,8 +412,9 @@ check("退出后标记为干净（下次启动跳过全量校准）", db.getStat
 
 const finalStats = db.stats();
 check("统计信息可读（体积/可回收/计数）",
-  finalStats.fileBytes > 0 && typeof finalStats.reclaimableBytes === "number",
-  `文件 ${(finalStats.fileBytes / 1024).toFixed(0)}KB · 可回收 ${(finalStats.reclaimableBytes / 1024).toFixed(0)}KB · WAL ${finalStats.walBytes}B`);
+  finalStats.fileBytes > 0 && typeof finalStats.reclaimableBytes === "number"
+    && typeof finalStats.counts.feedback === "number",
+  `文件 ${(finalStats.fileBytes / 1024).toFixed(0)}KB · 可回收 ${(finalStats.reclaimableBytes / 1024).toFixed(0)}KB · WAL ${finalStats.walBytes}B · 反馈 ${finalStats.counts.feedback} 条`);
 
 if (flag("--recount")) {
   const res = db.recountLikeCounts();
@@ -335,8 +425,10 @@ if (flag("--recount")) {
 // better-sqlite3 在「连接已 close、但此前创建的 Statement 之后才被 GC」时，
 // 会在 Node 退出阶段触发原生断言崩溃（RemoveEnvironmentCleanupHook 断言）。
 // 这是脚本层的问题 —— 生产进程里语句与连接同生命周期，不会出现这种情况。
-// 收尾动作已由 db.shutdown() 完成（标记干净退出 + optimize + WAL 截断），
-// 剩下的资源交给进程退出统一回收。
+// 收尾动作已由 db.shutdown() 完成（标记干净退出 + optimize + WAL 截断）。
+//
+// 退出码由**父进程**根据下面这行 RESULT 决定（原因见文件开头的父子进程说明）：
+// 子进程自己可能带崩退出，但报告已经同步落盘，父进程不依赖它的退出码。
 
 /* ── 汇总 ────────────────────────────────────────────────────────── */
 
@@ -345,7 +437,21 @@ if (!useRealDb) {
 }
 
 const failed = results.filter((r) => !r).length;
-console.log(`\n${"─".repeat(64)}`);
-console.log(`数据库自检：${results.length - failed}/${results.length} 通过`);
-console.log(`${"─".repeat(64)}\n`);
-process.exit(failed ? 1 : 0);
+out(`\n${"─".repeat(64)}`);
+out(`数据库自检：${results.length - failed}/${results.length} 通过`);
+out(`${"─".repeat(64)}\n`);
+// 机器可读的一行：父进程按它决定退出码（分子等于分母即全绿）
+out(`RESULT ${results.length - failed}/${results.length}`);
+try { fs.closeSync(reportFd); } catch { /* ignore */ }
+
+/**
+ * 硬退出：报告已经同步落盘，此时**必须避免走 Node 的正常收尾流程**。
+ *
+ * 原因见文件开头的说明：better-sqlite3 的 Statement 析构一旦落在环境拆除之后，
+ * 就会触发原生断言（134）。而「是否触发」取决于句柄类型与收尾顺序 ——
+ * 同一个脚本在 TTY/文件/NUL/管道四种情况下表现不同，属于不可控的竞态。
+ * 既然本进程的唯一产出（报告）已经写完，直接终止进程即可：
+ *   - 退出码由父进程按报告内容决定，不依赖这里；
+ *   - 生产代码完全不受影响，这只是一个测试脚本的收尾策略。
+ */
+process.kill(process.pid, "SIGKILL");

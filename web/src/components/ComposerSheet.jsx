@@ -1,48 +1,34 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { BODY_MAX, BODY_MIN, POST_CATS } from '../lib/types.js';
 import { useSheet } from '../hooks/useSheet.js';
-import { useChallenge } from '../context/ChallengeContext.jsx';
-import { setPendingChallengeToken } from '../data/adapters.js';
-import { Turnstile } from './Turnstile.jsx';
-import { IconClose, IconHouse } from './icons.jsx';
+import { useGate } from '../context/GateContext.jsx';
+import { IconClose, IconHouse, IconShield } from './icons.jsx';
 
 const emptyErrors = { cat: '', body: '', agree: '' };
 
 /**
- * 发布内联人机验证。
+ * 发布前的内测门禁提示。
  *
- * 为什么要在这里再放一个 widget，而不是只依赖入口弹层：
- * 用户可能跳过入口验证（我们允许「仅浏览」），也可能会话已过期；
- * 发布是唯一会产生公开内容的行为，验证必须发生在提交那一刻之前。
- * 拿到的 token 交给 setPendingChallengeToken，写请求会自动带上。
+ * 内测版不再在抽屉里嵌第三方验证控件：入口闸门已经覆盖了这条路径，
+ * 而且数据层在收到 `403 gate_required` 时会自动拉起闸门、验证成功后
+ * **重试原来那次提交**（见 data/adapters.js 的 requestWrite）。
+ * 这里只负责把这件事说清楚，避免用户以为是「提交失败」。
  */
-function ComposerChallenge() {
-  const { required, verified, siteKey } = useChallenge();
-  const [error, setError] = useState('');
-
-  useEffect(() => () => setPendingChallengeToken(''), []);
-
-  if (!required || verified || !siteKey) return null;
+function ComposerGateNote() {
+  const gate = useGate();
+  if (!gate.required || gate.verified) return null;
 
   return (
     <div className="field composer-verify">
-      <div className="field-label">
-        <span>人机验证</span>
-        <span className="meta">发布前需确认一次</span>
+      <div className="anon-row">
+        <IconShield />
+        提交时会先请你输入内测邀请码并答一道题；验证通过后会自动继续提交，不用担心白填。
       </div>
-      <div className="turnstile-box">
-        <Turnstile
-          siteKey={siteKey}
-          action="publish"
-          onToken={(token) => {
-            setPendingChallengeToken(token);
-            if (token) setError('');
-          }}
-          onError={setError}
-          onExpire={() => setPendingChallengeToken('')}
-        />
-      </div>
-      {error && <p className="err">{error}</p>}
+      <p className="meta" style={{ marginTop: 'var(--space-2)' }}>
+        <button className="textlink" type="button" onClick={gate.openSheet}>
+          现在就去验证
+        </button>
+      </p>
     </div>
   );
 }
@@ -153,7 +139,7 @@ export function ComposerSheet({ open, onClose, onSubmit }) {
           </div>
         </div>
 
-        <ComposerChallenge />
+        <ComposerGateNote />
 
         <label className="agree">
           <input

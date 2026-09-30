@@ -1,8 +1,8 @@
 {
   "name": "confession-wall",
-  "version": "2.0.0",
+  "version": "0.9.0-beta.1",
   "private": true,
-  "description": "校园表白墙 · React 前端（Vite）+ Node/SQLite 后端（server/）",
+  "description": "校园表白墙 · 内测版：React 前端（Vite）+ 纯 Node 后端（node:http + SQLite，自托管门禁，无任何第三方依赖）",
   "type": "module",
   "engines": {
     "node": ">=18.17"

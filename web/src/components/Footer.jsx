@@ -1,7 +1,10 @@
 import { IconGrid, IconPlus, IconShield } from './icons.jsx';
 
-/** 页脚：品牌说明 + 平台/法律链接 + 数据源状态 */
-export function Footer({ siteName, onOpenComposer, onOpenLegal, source, sourceNote, demoReset }) {
+/** 页脚：品牌说明 + 平台/法律链接 + 内测信息与数据源状态 */
+export function Footer({
+  siteName, beta, onOpenComposer, onOpenLegal, onOpenFeedback,
+  source, sourceNote, demoReset,
+}) {
   const dotClass =
     source === 'api' ? 'dot api' : source === 'fallback' ? 'dot fallback' : 'dot local';
 
@@ -19,6 +22,7 @@ export function Footer({ siteName, onOpenComposer, onOpenLegal, source, sourceNo
                 墙
               </span>
               <span className="brand-name">{siteName}</span>
+              <span className="beta-tag">{beta.name} {beta.version}</span>
             </div>
             <p>校园匿名分享空间。内容均由用户发布，不代表平台或学校立场。</p>
           </div>
@@ -27,6 +31,9 @@ export function Footer({ siteName, onOpenComposer, onOpenLegal, source, sourceNo
             <div className="foot-title">平台</div>
             <div className="foot-links">
               <button type="button" onClick={onOpenComposer}>发布告白</button>
+              {beta.feedback && (
+                <button type="button" onClick={onOpenFeedback}>内测反馈</button>
+              )}
               {demoReset && (
                 <button type="button" onClick={demoReset}>重置演示数据</button>
               )}
@@ -49,8 +56,11 @@ export function Footer({ siteName, onOpenComposer, onOpenLegal, source, sourceNo
         </div>
 
         <div className="foot-bottom">
-          <span>© 2026 校园表白墙 · 演示原型</span>
-          <span>内容为用户生成内容（UGC）· 举报邮箱 report@example.edu</span>
+          <span>© 2026 校园表白墙 · {beta.name} {beta.version}</span>
+          <span>
+            内容为用户生成内容（UGC）· 举报邮箱 report@example.edu
+            {beta.feedbackEmail ? ` · 反馈邮箱 ${beta.feedbackEmail}` : ''}
+          </span>
         </div>
       </div>
     </footer>

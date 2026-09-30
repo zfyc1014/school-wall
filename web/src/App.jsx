@@ -4,12 +4,19 @@ import { Wall } from './components/Wall.jsx';
 import { Footer, TabBar } from './components/Footer.jsx';
 import { ComposerSheet, ReportSheet } from './components/ComposerSheet.jsx';
 import { LegalSheet } from './components/LegalSheet.jsx';
+import { BetaBanner } from './components/BetaBanner.jsx';
+import { BetaNotice } from './components/BetaNotice.jsx';
+import { FeedbackSheet } from './components/FeedbackSheet.jsx';
 import { ToastProvider, useToast } from './context/ToastContext.jsx';
-import { ChallengeProvider, useChallenge } from './context/ChallengeContext.jsx';
-import { IdentityProvider, useIdentity } from './context/IdentityContext.jsx';
+import { GateProvider, useGate } from './context/GateContext.jsx';
 import { useWall } from './hooks/useWall.js';
-import { createAdapter, setChallengeResolver, setIdentityResolver } from './data/adapters.js';
-import { loadLikedIds, saveLikedIds } from './lib/storage.js';
+import { createAdapter, setGateResolver } from './data/adapters.js';
+import {
+  loadLikedIds,
+  saveLikedIds,
+  shouldShowBetaNotice,
+  markBetaNoticeSeen,
+} from './lib/storage.js';
 
 const SITE_NAME = import.meta.env.VITE_SITE_NAME || '表白墙';
 const SCHOOL_NAME = import.meta.env.VITE_SCHOOL_NAME || '示例大学';
@@ -23,8 +30,7 @@ const SOURCE_NOTES = {
 
 function WallApp() {
   const toast = useToast();
-  const challenge = useChallenge();
-  const identity = useIdentity();
+  const gate = useGate();
 
   const [adapter, setAdapter] = useState(null);
   const [source, setSource] = useState('local');
@@ -40,20 +46,15 @@ function WallApp() {
 
   const [composerOpen, setComposerOpen] = useState(false);
   const [legalOpen, setLegalOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [noticeSeen, setNoticeSeen] = useState(() => !shouldShowBetaNotice(gate.beta.version));
 
-  // 把「确保已通过人机验证」交给数据层：写请求遇到 403 challenge_required
-  // 会自动弹验证弹层，验证通过后重试原来那次请求。
+  // 把「确保已通过内测验证」交给数据层：写请求遇到 403 gate_required
+  // 会自动弹验证弹层，通过后重试原来那次请求。
   useEffect(() => {
-    setChallengeResolver(challenge.ensureVerified);
-    return () => setChallengeResolver(null);
-  }, [challenge.ensureVerified]);
-
-  // 实名同理：403 identity_required → 拉起实名弹层 → 通过后重试。
-  // 服务端是「先机器人、后身份」的顺序，前端两个 resolver 也按这个顺序触发。
-  useEffect(() => {
-    setIdentityResolver(identity.ensureVerified);
-    return () => setIdentityResolver(null);
-  }, [identity.ensureVerified]);
+    setGateResolver(gate.ensureVerified);
+    return () => setGateResolver(null);
+  }, [gate.ensureVerified]);
 
   // 探测数据源：auto 模式下后端不可用就静默回落本地演示数据
   useEffect(() => {
@@ -128,12 +129,37 @@ function WallApp() {
     [adapter, reportTarget, toast]
   );
 
+  const submitFeedback = useCallback(
+    async ({ cat: fbCat, body, contact }) => {
+      if (!adapter || typeof adapter.sendFeedback !== 'function') {
+        toast('当前模式不支持提交反馈');
+        return false;
+      }
+      try {
+        await adapter.sendFeedback({ cat: fbCat, body, contact });
+        toast('反馈已收到，谢谢！');
+        return true;
+      } catch (err) {
+        toast(err?.message || '反馈提交失败，请稍后再试');
+        return false;
+      }
+    },
+    [adapter, toast]
+  );
+
   // 弹层开关保持引用稳定：避免每次渲染都重建回调，导致弹层副作用反复重跑
   const openComposer = useCallback(() => setComposerOpen(true), []);
   const closeComposer = useCallback(() => setComposerOpen(false), []);
   const openLegal = useCallback(() => setLegalOpen(true), []);
   const closeLegal = useCallback(() => setLegalOpen(false), []);
   const closeReport = useCallback(() => clearReportTarget(), [clearReportTarget]);
+  const openFeedback = useCallback(() => setFeedbackOpen(true), []);
+  const closeFeedback = useCallback(() => setFeedbackOpen(false), []);
+
+  const dismissNotice = useCallback(() => {
+    setNoticeSeen(true);
+    markBetaNoticeSeen(gate.beta.version);
+  }, [gate.beta.version]);
 
   const demoReset = useMemo(
     () => (typeof adapter?.reset === 'function' ? wall.resetDemo : null),
@@ -143,8 +169,8 @@ function WallApp() {
   const sourceNote = SOURCE_NOTES[source] || SOURCE_NOTES.local;
   const notice = mode === 'api' && bootError ? `后端不可用：${bootError}` : '';
 
-  // 调试/自动化探针：把当前数据源与墙上条数挂到 window，
-  // 让 scripts/smoke.mjs 能在无头浏览器里断言「到底连了谁、渲染了几条」。
+  // 调试/自动化探针：把当前数据源、门禁状态与墙上条数挂到 window，
+  // 让 scripts/smoke.mjs / prod-e2e.mjs 能在无头浏览器里断言真实状态。
   useEffect(() => {
     if (typeof window === 'undefined') return;
     window.__WALL_DEBUG__ = {
@@ -157,32 +183,49 @@ function WallApp() {
       loading: wall.loading,
       error: wall.error,
       bootError,
-      sheets: { composer: composerOpen, legal: legalOpen, report: reportTarget != null, reportTarget },
-      challenge: {
-        enabled: challenge.config.enabled,
-        required: challenge.required,
-        verified: challenge.verified,
-        open: challenge.open,
-        siteKey: challenge.siteKey ? `${challenge.siteKey.slice(0, 6)}…` : '',
-        loading: challenge.loading,
+      sheets: {
+        composer: composerOpen,
+        legal: legalOpen,
+        report: reportTarget != null,
+        reportTarget,
+        feedback: feedbackOpen,
+        notice: !noticeSeen,
       },
-      identity: {
-        required: identity.required,
-        verified: identity.verified,
-        // 只暴露脱敏号码，便于端到端断言；绝不暴露完整号码
-        phoneMasked: identity.phoneMasked,
-        open: identity.open,
-        step: identity.step,
-        provider: identity.config.provider,
+      gate: {
+        enabled: gate.config.enabled,
+        required: gate.required,
+        verified: gate.verified,
+        open: gate.open,
+        inviteRequired: gate.inviteRequired,
+        loading: gate.loading,
+        // 题目只暴露数量，不暴露答案（服务端本来就不下发答案）
+        challengeItems: gate.challenge?.items?.length || 0,
+      },
+      beta: {
+        version: gate.beta.version,
+        name: gate.beta.name,
+        feedback: gate.beta.feedback,
+        noticeVisible: !noticeSeen,
       },
     };
   }, [
     mode, source, ready, adapter, wall.items.length, wall.loading, wall.error,
-    likedIds.size, bootError, composerOpen, legalOpen, reportTarget, challenge, identity,
+    likedIds.size, bootError, composerOpen, legalOpen, reportTarget, feedbackOpen, noticeSeen, gate,
   ]);
 
   return (
     <>
+      <BetaBanner
+        beta={gate.beta}
+        gateRequired={gate.required}
+        gateVerified={gate.verified}
+        onOpenNotice={() => {
+          setNoticeSeen(false);
+        }}
+        onOpenFeedback={openFeedback}
+        onOpenGate={gate.openSheet}
+      />
+
       <TopNav
         sort={sort}
         onSort={setSort}
@@ -210,33 +253,23 @@ function WallApp() {
               </button>
             </p>
 
-            {identity.required && !identity.verified && (
+            <BetaNotice
+              beta={gate.beta}
+              visible={!noticeSeen}
+              onOpenFeedback={openFeedback}
+              onDismiss={dismissNotice}
+            />
+
+            {gate.required && !gate.verified && (
               <div className="verify-note" role="status">
                 <span className="verify-dot" aria-hidden="true" />
                 <span>
-                  浏览无需验证；<strong>发布、评论、举报</strong>前需先完成手机号实名验证
-                  （前台仍以匿名展示）。
+                  浏览无需验证；<strong>发布、评论、举报</strong>前需要输入内测邀请码并完成一次本地验证。
                 </span>
-                <button className="btn btn-secondary btn-sm" type="button" onClick={identity.openSheet}>
+                <button className="btn btn-secondary btn-sm" type="button" onClick={gate.openSheet}>
                   去验证
                 </button>
               </div>
-            )}
-
-            {challenge.required && !challenge.verified && (
-              <div className="verify-note" role="status">
-                <span className="verify-dot" aria-hidden="true" />
-                <span>还需完成一次人机验证，以确认操作由真人发起。</span>
-                <button className="btn btn-secondary btn-sm" type="button" onClick={() => challenge.requestVerification()}>
-                  立即验证
-                </button>
-              </div>
-            )}
-
-            {identity.required && identity.verified && (
-              <p className="meta verified-note">
-                已完成实名验证（{identity.phoneMasked}）· 墙上仍以匿名展示
-              </p>
             )}
           </div>
         </section>
@@ -275,8 +308,10 @@ function WallApp() {
 
       <Footer
         siteName={SITE_NAME}
+        beta={gate.beta}
         onOpenComposer={openComposer}
         onOpenLegal={openLegal}
+        onOpenFeedback={openFeedback}
         source={source}
         sourceNote={sourceNote}
         demoReset={demoReset}
@@ -296,7 +331,14 @@ function WallApp() {
         onSubmit={submitReport}
       />
 
-      <LegalSheet open={legalOpen} onClose={closeLegal} />
+      <FeedbackSheet
+        open={feedbackOpen}
+        onClose={closeFeedback}
+        onSubmit={submitFeedback}
+        beta={gate.beta}
+      />
+
+      <LegalSheet open={legalOpen} onClose={closeLegal} beta={gate.beta} />
 
       {notice && (
         <p className="sr-only" role="alert">{notice}</p>
@@ -306,23 +348,13 @@ function WallApp() {
 }
 
 export default function App() {
-  // Provider 嵌套：IdentityProvider 需要 challenge 的 ensureVerified（发短信前人机验证），
-  // 因此必须在 ChallengeProvider 内层。
+  // 内测版只有一个 Provider：门禁（含内测版元信息）。
+  // 身份/实名相关 Provider 已随实名功能一并移除。
   return (
     <ToastProvider>
-      <ChallengeProvider>
-        <IdentityBridge />
-      </ChallengeProvider>
+      <GateProvider>
+        <WallApp />
+      </GateProvider>
     </ToastProvider>
-  );
-}
-
-/** 把 challenge 的 ensureVerified 桥接给 IdentityProvider */
-function IdentityBridge() {
-  const challenge = useChallenge();
-  return (
-    <IdentityProvider ensureChallenge={challenge.ensureVerified}>
-      <WallApp />
-    </IdentityProvider>
   );
 }

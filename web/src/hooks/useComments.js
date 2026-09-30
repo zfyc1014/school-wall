@@ -65,7 +65,10 @@ export function useComments({ open, adapter, postId, toast, onCountChange }) {
             return next;
           });
         } else {
-          toast('评论含联系方式，已转入审核');
+          // 内测版与帖子同口径：评论**一律先审后发**（不再是「命中规则才转人工」），
+          // 因此这里的提示不能再说「因为含联系方式」—— 那句话会让人误以为
+          // 没写联系方式的评论会直接公开。
+          toast('评论已提交，审核通过后公开');
         }
         return true;
       } catch (err) {

@@ -95,6 +95,43 @@ async function main() {
   check('数据源回落到本地演示数据', debug.source === 'fallback', JSON.stringify(debug));
   check('墙上渲染 8 条种子内容', debug.counts.posts === 8, `posts=${debug.counts.posts}`);
 
+  /* 内测门禁：拿不到配置（本地/无后端）时前端一律按「未启用」处理，绝不弹层挡人。
+     服务端仍有独立闸门，真实闸门回归见 scripts/prod-e2e.mjs。 */
+  const gate = await page.eval(`(() => {
+    const el = document.querySelector('#gate');
+    return {
+      debug: window.__WALL_DEBUG__.gate,
+      exists: Boolean(el),
+      open: el ? el.classList.contains('open') : false,
+      ariaHidden: el ? el.getAttribute('aria-hidden') : null,
+      visible: el ? (getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none') : false,
+    };
+  })()`);
+  check('本地模式不出现门禁弹层',
+    gate.debug.required === false && !gate.open
+      && (!gate.exists || gate.ariaHidden === 'true' || !gate.visible),
+    JSON.stringify(gate));
+
+  /* 内测标识条与首屏公告：内测阶段的「前提说明」必须一直看得见 */
+  const betaUi = await page.eval(`(() => {
+    const banner = document.querySelector('[data-od-id="beta-banner"]');
+    const notice = document.querySelector('#beta-notice');
+    const rect = notice ? notice.getBoundingClientRect() : null;
+    return {
+      bannerText: banner ? banner.textContent.replace(/\\s+/g, '') : '',
+      tag: banner && banner.querySelector('.beta-tag')
+        ? banner.querySelector('.beta-tag').textContent.replace(/\\s+/g, '') : '',
+      noticeText: notice ? notice.textContent.replace(/\\s+/g, '') : '',
+      noticeVisible: Boolean(notice) && getComputedStyle(notice).display !== 'none'
+        && Boolean(rect) && rect.height > 0,
+      debugBeta: window.__WALL_DEBUG__.beta,
+    };
+  })()`);
+  check('内测标识与首屏公告都在',
+    /内测版/.test(betaUi.tag) && /内测版/.test(betaUi.bannerText)
+      && betaUi.noticeVisible && /内测/.test(betaUi.noticeText),
+    `${betaUi.tag} · 公告可见=${betaUi.noticeVisible} · ${betaUi.debugBeta.version}`);
+
   const shell = await page.eval(`(() => ({
     title: document.title,
     lang: document.documentElement.lang,

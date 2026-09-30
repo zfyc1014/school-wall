@@ -2,6 +2,8 @@
 export const STORE_KEY = 'od_biaobai_v2';
 export const LIKES_KEY = 'od_biaobai_likes_v1';
 export const MODE_KEY = 'od_biaobai_mode_v1';
+/** 内测公告已读标记：值为用户读过的内测版本号 */
+export const BETA_NOTICE_KEY = 'od_beta_notice_v1';
 
 /** 隐私模式 / 禁用存储时全部降级为内存，绝不抛错打断渲染 */
 function safeGet(key) {
@@ -48,4 +50,19 @@ export function loadLikedIds() {
 
 export function saveLikedIds(set) {
   writeJSON(LIKES_KEY, Array.from(set));
+}
+
+/**
+ * 内测公告是否还需要展示。
+ *
+ * 记的是**版本号**而不是布尔值：内测阶段版本迭代频繁，换版本时公告应该
+ * 重新出现一次（用户需要知道「规则可能又变了」），同一版本内则不再打扰。
+ */
+export function shouldShowBetaNotice(version) {
+  if (!version) return true;
+  return readJSON(BETA_NOTICE_KEY, '') !== version;
+}
+
+export function markBetaNoticeSeen(version) {
+  return writeJSON(BETA_NOTICE_KEY, version || '');
 }

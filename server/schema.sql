@@ -9,6 +9,36 @@
 -- 迁移策略：下面的 DROP 是幂等的，用来清掉旧版本建过、现在已由更合适的索引
 -- 取代的索引（索引名相同但列不同时，CREATE INDEX IF NOT EXISTS 不会自动改，
 -- 必须显式 DROP 再建）。每次启动执行一次，代价可忽略。
+--
+-- ── 后台审核链路复核（本轮）────────────────────────────────────────────
+--
+-- 新增的审核接口全部复用既有索引，没有引入第 9 个索引。逐条对照：
+--
+--   GET /api/admin/queue?type=posts      待审帖子按 created_at ASC 取
+--     → idx_posts_feed(status, created_at, id) 正序遍历即时间升序，覆盖所需列
+--       （cat/body/flag 之外的 like_count/comment_count 需回表，但待审集很窄，
+--        每次最多 100 行，回表代价可忽略）。
+--
+--   GET /api/admin/queue?type=comments   待审评论按时间升序 + 关联帖子上下文
+--     → idx_comments_queue(status, created_at, id) 正序遍历；
+--       帖子上下文由 posts 主键点查（LEFT JOIN），不产生额外索引需求。
+--
+--   GET /api/admin/stats                 队列最久等待 = 两条 ORDER BY created_at ASC LIMIT 1
+--     → 同样吃 idx_posts_feed / idx_comments_queue 的索引头部，零额外开销。
+--
+--   GET /api/admin/reports               工单按 status 过滤 + id DESC
+--     → idx_reports_status(status, id DESC) 完全覆盖排序；
+--       被举报内容由 posts/comments 主键点查补齐。
+--
+--   GET /api/admin/audit                 操作留痕按 id DESC
+--     → idx_audit_time(created_at DESC) 覆盖；id 与 created_at 同序，语义等价。
+--
+-- 结论：**不新增索引**。审核是「低频读 + 高频写」的链路，多一个索引就多一份
+-- 写入放大；既有 8 个索引已经覆盖审核侧的全部热查询。
+--
+-- 内测版（0.9）在这一版之上只加了 1 个索引：idx_feedback_status —— 内测反馈是
+-- 本期唯一的新表，它的后台队列查询（status 等值 + id 倒序）必须走索引，
+-- 否则每次打开后台都要扫全表。合计 9 个索引，db-check.js 里写死断言。
 -- ─────────────────────────────────────────────────────────────────────────
 
 DROP INDEX IF EXISTS idx_posts_feed;   -- 旧版含 created_at，改由 (status, id DESC) 承担
@@ -16,46 +46,16 @@ DROP INDEX IF EXISTS idx_posts_queue;  -- 旧版是全表索引，改为 pending
 DROP INDEX IF EXISTS idx_comments_queue;
 DROP INDEX IF EXISTS idx_reports_open; -- 与 idx_reports_status 前缀重复，属多余索引
 
--- ─────────────────────────────────────────────────────────────────────────
--- 实名身份（后台实名，前台匿名）
---
--- 合规需求：前台展示匿名，但平台必须能追溯到发布者。这不是「用户账号」——
--- 没有密码、没有昵称、没有个人主页，只有一个已验证的手机号标识 + 同意记录。
--- 数据最小化原则：
---   * 存 HMAC 哈希（phone_hash），不存明文号码；哈希密钥独立于 IP 哈希密钥；
---   * 明文只在「提交验证码的那一次请求」的内存里存在，不落盘、不写日志；
---   * 需要联系发布者时，运营方凭哈希去短信网关/工单系统反查，
---     而不是让数据库里躺着一份可直接泄露的手机号清单。
--- ─────────────────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS identities (
-  id             INTEGER PRIMARY KEY AUTOINCREMENT,
-  phone_hash     TEXT    NOT NULL UNIQUE,  -- HMAC-SHA256(归一化手机号, IDENTITY_SECRET)
-  phone_masked   TEXT    NOT NULL,         -- 138****8000，仅供后台人工核对
-  country_code   TEXT,                     -- 86 / 852 …
-  method         TEXT    NOT NULL DEFAULT 'phone',
-  verified_at    INTEGER NOT NULL,
-  consent_version TEXT   NOT NULL,         -- 同意条款版本，留痕用
-  consent_at     INTEGER NOT NULL,
-  post_count     INTEGER NOT NULL DEFAULT 0,
-  comment_count  INTEGER NOT NULL DEFAULT 0,
-  last_seen_at   INTEGER NOT NULL,
-  created_at     INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_identities_recent ON identities(verified_at DESC);
-
--- 短信验证码。只存哈希，明文码只在内存里比对。
-CREATE TABLE IF NOT EXISTS identity_codes (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  phone_hash  TEXT    NOT NULL,
-  code_hash   TEXT    NOT NULL,            -- HMAC-SHA256(code, IDENTITY_SECRET)
-  attempts    INTEGER NOT NULL DEFAULT 0,  -- 校验失败次数，超过上限即作废
-  consumed_at INTEGER,                     -- 用过/作废的时间
-  expires_at  INTEGER NOT NULL,
-  ip_hash     TEXT,
-  created_at  INTEGER NOT NULL
-);
--- 取「某个号码最近一条未消费的码」是热查询，走这个索引
-CREATE INDEX IF NOT EXISTS idx_codes_lookup ON identity_codes(phone_hash, consumed_at, id DESC);
+-- 内测版清理：实名时代的索引与表（幂等；新库里本来就不存在）。
+-- 内测阶段不再收集手机号，因此这两张表和它们的索引一并抹掉；
+-- 旧库里的 identity_id 列由 db.js 的迁移尽力删除（失败则保留为空列）。
+DROP INDEX IF EXISTS idx_identities_recent;
+DROP INDEX IF EXISTS idx_codes_lookup;
+DROP INDEX IF EXISTS idx_posts_identity;
+DROP INDEX IF EXISTS idx_comments_identity;
+DROP INDEX IF EXISTS idx_reports_identity;
+DROP TABLE IF EXISTS identity_codes;
+DROP TABLE IF EXISTS identities;
 
 -- 帖子。默认 status='pending'：先审后发。
 CREATE TABLE IF NOT EXISTS posts (
@@ -96,12 +96,14 @@ CREATE INDEX IF NOT EXISTS idx_posts_hot  ON posts(status, like_count, id);
 -- 分类 + 最热（可选项）只在一个分类的小结果集上排序，代价可接受。
 CREATE INDEX IF NOT EXISTS idx_posts_cat  ON posts(status, cat, created_at, id);
 
--- 评论。默认即公开，命中规则才转 pending。
+-- 评论。默认 status='pending'：与帖子同口径，先审后发。
+-- （曾经这里写的是 DEFAULT 'approved'，与 server.js 的写入路径不一致 ——
+--   即使调用方忘了带 status，也不该有任何评论绕过审核直接公开。）
 CREATE TABLE IF NOT EXISTS comments (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   post_id    INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
   body       TEXT    NOT NULL,
-  status     TEXT    NOT NULL DEFAULT 'approved',  -- approved | pending | rejected | removed
+  status     TEXT    NOT NULL DEFAULT 'pending',  -- approved | pending | rejected | removed
   flag       TEXT,
   ip_hash    TEXT,
   created_at INTEGER NOT NULL
@@ -137,6 +139,28 @@ CREATE TABLE IF NOT EXISTS reports (
 CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status, id DESC);
 -- 同一 IP 对同一帖反复举报的去重判断
 CREATE INDEX IF NOT EXISTS idx_reports_post   ON reports(post_id, ip_hash);
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- 内测反馈（0.9 新增）
+--
+-- 内测阶段最重要的输入渠道。刻意做得很窄：
+--   * contact 选填 —— 不留联系方式也能提交，避免为了收反馈而收集个人信息；
+--   * status 只有 open / done / dismissed 三态，够用且不需要工作流引擎；
+--   * 不参与公开内容，因此不进 feed 缓存，也没有任何对外读取接口。
+-- 队列查询是「status 等值 + id 倒序」，由 idx_feedback_status 一条索引覆盖。
+-- ─────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS feedback (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  cat         TEXT    NOT NULL DEFAULT 'other',   -- bug | idea | other
+  body        TEXT    NOT NULL,
+  contact     TEXT,
+  status      TEXT    NOT NULL DEFAULT 'open',    -- open | done | dismissed
+  ip_hash     TEXT,
+  ua_hash     TEXT,
+  created_at  INTEGER NOT NULL,
+  resolved_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status, id DESC);
 
 -- 审核操作日志（追责与合规留痕；管理员身份以 ip_hash 记录）
 CREATE TABLE IF NOT EXISTS audit_log (

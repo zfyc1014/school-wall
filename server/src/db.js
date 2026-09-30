@@ -90,39 +90,47 @@ db.pragma("auto_analyze = 0");
 
 db.exec(fs.readFileSync(path.join(__dirname, "..", "schema.sql"), "utf8"));
 
-/* ───────────────────── 列级迁移（幂等）───────────────────── */
+/* ───────────────────── 内测版迁移（幂等）───────────────────── */
 
 /**
- * SQLite 的 ALTER TABLE ADD COLUMN 没有 IF NOT EXISTS，重复执行会报错。
- * 这里用 PRAGMA table_info 先看列是否存在，再决定是否加 —— 比 catch 掉报错更明确，
- * 也不会掩盖真正的失败原因。
+ * 内测版（0.9）删除实名制后，从旧库升级上来的数据库里会留下
+ * `identities` / `identity_codes` 两张表与三处 `identity_id` 列。
  *
- * 为什么要有这一步：实名制上线后，posts / comments 需要记录发布者身份
- * （identity_id）。既有数据库里已经积累了内容，不能靠重建表来加列。
+ * 处理原则：**尽力清理，失败不影响启动**。
+ *   - 新库根本不会建这些对象（schema.sql 已删除），这段只对旧库生效；
+ *   - DROP COLUMN 要求该列不被索引/约束引用，因此先删索引再删列；
+ *   - 万一数据库版本或约束不允许删除，就退化为「保留空列不再使用」——
+ *     绝不能因为一次清理失败就让服务起不来。
  */
-function ensureColumn(table, column, definition) {
-  const exists = db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
-  if (exists) return false;
-  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-  console.log(`[db] 迁移：${table}.${column} 已添加`);
-  return true;
+function tableExists(table) {
+  return Boolean(db.prepare("SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name=?").get(table));
 }
 
-// 发布者身份（后台实名，前台匿名）。旧数据为 NULL —— 那批内容是在实名制之前发布的，
-// 审核后台会把它标成「无身份记录」，便于运营方决定是留是清。
-ensureColumn("posts", "identity_id", "INTEGER REFERENCES identities(id)");
-ensureColumn("comments", "identity_id", "INTEGER REFERENCES identities(id)");
-// 举报人也实名：恶意举报同样要能追溯到人
-ensureColumn("reports", "identity_id", "INTEGER REFERENCES identities(id)");
-// 审核动作留痕：谁在什么时候审的（管理端目前是单一令牌，记录时间与结论即可）
-ensureColumn("posts", "review_note", "TEXT");
-ensureColumn("comments", "reviewed_at", "INTEGER");
-ensureColumn("reports", "resolved_by", "TEXT");
+function dropColumnIfExists(table, column) {
+  if (!tableExists(table)) return false;
+  const exists = db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+  if (!exists) return false;
+  try {
+    db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
+    console.log(`[db] 迁移：已移除 ${table}.${column}（内测版不再收集实名信息）`);
+    return true;
+  } catch (err) {
+    console.warn(`[db] 迁移：${table}.${column} 无法删除（${err.message}），已保留为空列，代码不再读写`);
+    return false;
+  }
+}
 
-// 按身份查内容：出事时要能从手机号一路查到它发过的所有内容
-db.exec("CREATE INDEX IF NOT EXISTS idx_posts_identity ON posts(identity_id, id DESC)");
-db.exec("CREATE INDEX IF NOT EXISTS idx_comments_identity ON comments(identity_id, id DESC)");
-db.exec("CREATE INDEX IF NOT EXISTS idx_reports_identity ON reports(identity_id, id DESC)");
+if (tableExists("identities") || tableExists("identity_codes")) {
+  console.log("[db] 检测到实名时代的旧表，正在清理（内测版不收集手机号）");
+}
+db.exec("DROP INDEX IF EXISTS idx_posts_identity");
+db.exec("DROP INDEX IF EXISTS idx_comments_identity");
+db.exec("DROP INDEX IF EXISTS idx_reports_identity");
+db.exec("DROP TABLE IF EXISTS identity_codes");
+db.exec("DROP TABLE IF EXISTS identities");
+dropColumnIfExists("posts", "identity_id");
+dropColumnIfExists("comments", "identity_id");
+dropColumnIfExists("reports", "identity_id");
 
 /* ───────────────────── 上次是否干净退出 ───────────────────── */
 
@@ -204,6 +212,9 @@ function cleanup(days = Number(process.env.RETENTION_DAYS || 0)) {
     run("closed_reports",
       "DELETE FROM reports WHERE status <> 'open' AND created_at < ?", cutoff);
     run("old_audit", "DELETE FROM audit_log WHERE created_at < ?", cutoff);
+    // 已处理的内测反馈：保留期满清理（未处理的永远保留，不能被时间清掉）
+    run("old_feedback",
+      "DELETE FROM feedback WHERE status <> 'open' AND created_at < ?", cutoff);
   } else {
     // 未开启保留期时，仍然清掉「已下架帖子」，因为下架即不再需要保留正文。
     // 该动作同时通过外键级联清掉它的点赞与评论，直接缩小主键表体积。
@@ -264,6 +275,7 @@ function stats() {
       comments: count("SELECT COUNT(*) FROM comments"),
       likes: count("SELECT COUNT(*) FROM likes"),
       reports: count("SELECT COUNT(*) FROM reports"),
+      feedback: count("SELECT COUNT(*) FROM feedback"),
       audit: count("SELECT COUNT(*) FROM audit_log")
     },
     autoVacuum: db.pragma("auto_vacuum", { simple: true }),
@@ -289,14 +301,20 @@ if (db.pragma("auto_vacuum", { simple: true }) === 0) {
   }
 }
 
-// 上次是否优雅退出：非优雅退出说明进程可能死在写事务中间，需要校准计数。
-//
-// 「干净启动」也要保留标记：如果只是有人开库看一眼（体检脚本、一次性查询），
-// 不应该把 clean 抹成 open —— 否则下次真正启动会误判为崩溃恢复，
-// 白做一次全量校准（帖量大时要几秒）。只有真的开始服务时才标记为运行中。
+/**
+ * 上次是否优雅退出：非优雅退出说明进程可能死在写事务中间，需要校准计数。
+ *
+ * 这里有个容易写错的细节（本项目踩过一次）：
+ *   dirtyAtBoot 必须由**上一个**标记值算出，然后**无条件**把标记改成 "open"。
+ *   如果写成 `dirtyAtBoot = !getStat(DIRTY_KEY)`，那么崩溃留下的 "open" 会被
+ *   判成 false —— 「上次非优雅退出 → 全量校准」这条路径实际永远走不到。
+ *   反过来说，无条件写 "open" 的代价是：有人手工开库看一眼又不写回 "clean"
+ *   （体检脚本 db-check 会在结束时调用 shutdown() 写回），下次启动会多做一次
+ *   全量校准 —— 校准是幂等的，宁可贵一点，也不能漏掉计数不一致。
+ */
 const previousState = getStat(DIRTY_KEY);
 dirtyAtBoot = previousState !== "clean";
-if (dirtyAtBoot) setStat(DIRTY_KEY, "open");
+setStat(DIRTY_KEY, "open");
 
 maybeRecountLikeCounts("启动检测");
 

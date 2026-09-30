@@ -8,8 +8,9 @@
 [Unit]
 Description=校园表白墙后端 (Node + SQLite)
 After=network.target
-# Turnstile 校验需要出网访问 challenges.cloudflare.com，
-# 若网络短暂不可用，验证会按 CHALLENGE_FAIL_OPEN 策略处理（默认 fail-closed）
+# 内测门禁（邀请码 + 本机一次性挑战）完全在本进程内完成，不需要任何出网请求；
+# 保留 network-online.target 只是为了让域名解析与系统校时先就绪，
+# 网络短暂不可用不会影响写操作的校验（没有第三方校验服务可等）。
 Wants=network-online.target
 
 [Service]
@@ -33,7 +34,9 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/srv/confession-wall/server/data
-# 只允许绑定/连接本机回环与外网 HTTPS（Turnstile 校验）
+# 地址族白名单保持 AF_INET / AF_INET6 / AF_UNIX：
+# 服务自身只监听回环、内测门禁也不出网，但 DNS 解析与校时仍需要 INET，
+# 收紧到只留 AF_UNIX 会让服务起不来，因此这里不做进一步限制。
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 
 [Install]

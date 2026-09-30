@@ -1,8 +1,8 @@
 {
   "name": "confession-wall-server",
-  "version": "1.0.0",
+  "version": "0.9.0-beta.1",
   "private": true,
-  "description": "校园表白墙后端：Node 内置 http + SQLite(WAL)，面向最低配置 VPS / 香港部署",
+  "description": "校园表白墙后端（内测版）：Node 内置 http + SQLite(WAL)，自托管内测门禁，面向最低配置 VPS / 香港部署",
   "type": "commonjs",
   "engines": {
     "node": ">=18.17"
@@ -11,10 +11,10 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node scripts/api-test.js && node scripts/db-check.js && node scripts/identity-test.js",
+    "test": "node scripts/api-test.js && node scripts/gate-test.js && node scripts/db-check.js",
     "test:api": "node scripts/api-test.js",
+    "test:gate": "node scripts/gate-test.js",
     "test:db": "node scripts/db-check.js",
-    "test:identity": "node scripts/identity-test.js",
     "db:check": "node scripts/db-check.js --real",
     "db:recount": "node scripts/db-check.js --recount"
   },
