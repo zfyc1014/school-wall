@@ -283,12 +283,24 @@ GATE_SECRET=<openssl rand -hex 16>
 ### 面板部署的排查顺序
 
 1. `ERR_UNKNOWN_FILE_EXTENSION ".html"` → `JS_FILE` 填错了，应为 `server/src/server.js`。
-2. `Cannot find module 'better-sqlite3'` → `prepare` 没跑成功（多半是 `npm install` 被加了 `--omit=dev`，或缺网）。
-   手动补救：把 `web/dist` 与本机 `server/node_modules` 一起上传（面板文件管理器支持压缩包解压）。
-3. 页面 404 或样式全无 → 日志出现 `[warn] 前端产物不存在`：`web/dist` 没构建成功，见上一条。
-4. 一直反复要求验证邀请码 → `GATE_COOKIE_SECURE` 没设成 `0`（面板是 http）。
-5. `EADDRINUSE` 或面板显示端口不通 → 面板注入的端口没被读到，在 `server/.env` 里显式写 `PORT=<面板分配的端口>`、`HOST=0.0.0.0`。
-6. 面板自动重启且日志出现 `Assertion failed: (env) != nullptr`（退出码 134）→ 已知的 better-sqlite3 原生 teardown 竞态，
+2. **`Could not locate the bindings file` / `npm warn install-scripts … better-sqlite3 (install: node-gyp rebuild)`**
+   → **npm 12 起默认不执行依赖的安装脚本**（供应链加固），而 better-sqlite3 的原生二进制正是靠安装脚本
+   （`prebuild-install` 下载预编译包）就位的。
+   仓库已经处理：`.npmrc` 与 `server/.npmrc` 显式放行了 `better-sqlite3` / `esbuild`；
+   即使你的 npm 不认这项配置，`scripts/prepare.mjs` 也会在安装后检查
+   `server/node_modules/better-sqlite3/build/Release/better_sqlite3.node`，缺失时自己补跑
+   `prebuild-install`（秒级），再不行才回退 `node-gyp rebuild`（需要 python3 / make / g++）。
+   日志里会看到 `[prepare] better-sqlite3 缺原生二进制…正在补装`。
+   若两种方式都失败（容器缺编译器且不能访问 GitHub Releases）：把本机 `server/node_modules` 打包上传解压，
+   或请面板管理员放行安装脚本。
+3. `Cannot find module 'better-sqlite3'` → 依赖根本没装上：确认镜像是 **nodejs_22 / nodejs_20**（别用 19），
+   并确认 `npm install` 没被加 `--omit=dev`。
+4. 页面 404 或样式全无 → 日志出现 `[warn] 前端产物不存在`：vite 没构建成功（Node 19 上较常见）→ 换 nodejs_22；
+   或本机 `npm run build` 后把 `web/dist` 上传。
+5. 一直反复要求验证邀请码 → `GATE_COOKIE_SECURE` 没设成 `0`（面板是 http）。
+6. `EADDRINUSE` 或面板显示端口不通 → 面板注入的端口没被读到，在 `server/.env` 里显式写
+   `PORT=<面板分配的端口>`、`HOST=0.0.0.0`。
+7. 面板自动重启且日志出现 `Assertion failed: (env) != nullptr`（退出码 134）→ 已知的 better-sqlite3 原生 teardown 竞态，
    只在**带管道 stdout 的子进程正常退出**时出现；服务进程本身不受影响（服务是被 kill 的）。若真遇到，把 Node 换成 22 LTS 再试。
 
 > 面板主机多数不带 TLS 也不能自定义域名：内测够用，但**会话 cookie 与邀请码都是明文传输**，

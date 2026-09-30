@@ -64,6 +64,13 @@
     构建失败、缺 vite、装依赖失败都只警告不阻断，避免「装不上 → 起不来」的死循环；
   - 服务端启动时若 `WEB_ROOT` 下没有入口文件会明确告警（面板部署最容易漏的一步）。
     部署步骤见 `DEPLOY.md` §5.5。
+  - **绕过 npm 12 的安装脚本封锁**：npm 12 起默认不执行依赖的安装脚本（供应链加固），
+    而 better-sqlite3 的原生二进制要靠它的 `install` 脚本（`prebuild-install`）才能就位 ——
+    表现是包"装好了"但运行时 `Could not locate the bindings file`。
+    `.npmrc` 与 `server/.npmrc` 显式放行 `better-sqlite3` / `esbuild`；
+    同时 `scripts/prepare.mjs` 会在安装后**自检二进制是否存在**，缺失就自己补跑
+    `prebuild-install`（下载预编译包），失败再回退 `node-gyp rebuild`（现场编译）。
+    这让部署不依赖任何特定 npm 版本的策略。
 
 ### Changed
 
