@@ -11,9 +11,10 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node scripts/api-test.js && node scripts/gate-test.js && node scripts/db-check.js",
+    "test": "node scripts/api-test.js && node scripts/gate-test.js && node scripts/route-sweep.js && node scripts/db-check.js",
     "test:api": "node scripts/api-test.js",
     "test:gate": "node scripts/gate-test.js",
+    "test:sweep": "node scripts/route-sweep.js",
     "test:db": "node scripts/db-check.js",
     "db:check": "node scripts/db-check.js --real",
     "db:recount": "node scripts/db-check.js --recount"

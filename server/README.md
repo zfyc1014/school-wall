@@ -391,9 +391,10 @@ const api = {
 全部零依赖（不需要 Jest/Playwright），默认使用**临时数据库与临时端口**，不会碰 `data/wall.db`。
 
 ```bash
-npm test              # api-test.js && gate-test.js && db-check.js
+npm test              # api-test.js && gate-test.js && route-sweep.js && db-check.js
 npm run test:api      # 只跑接口（真实起服务）
 npm run test:gate     # 只跑门禁（按环境变量分档启动真实服务进程）
+npm run test:sweep    # 只跑路由巡检（注册表里每个路由都打一遍，只看 5xx）
 npm run test:db       # 只跑数据库自检
 npm run db:check      # 针对真实 data/wall.db 的只读体检（--real）
 npm run db:recount    # 手动全量校准点赞计数（--recount）
@@ -403,6 +404,7 @@ npm run db:recount    # 手动全量校准点赞计数（--recount）
 | --- | --- |
 | `scripts/api-test.js` | 对着真实 `src/server.js` 发请求（不是 mock）：keyset 分页不重不漏、旧版纯 id 游标兼容、**缺省 `limit` 回归**（`toInt` 少写「null/空串走 fallback」会把首屏吞成 1 条）、`ETag` 304、门禁关闭档（不下发任何第三方挑战密钥的反向断言）、开启档（无凭据 403 `gate_required`、邀请码错误、答对换会话、挑战一次性、答错超限、伪造 cookie、登出后重新被拦）、先审后发、反馈长度校验、CSP 收紧到 `'self'`、**生产环境未配置邀请码时拒绝启动** |
 | `scripts/gate-test.js` | 门禁的行为完全由环境变量决定，因此**按档启动服务进程**：① 关闭档（不出题、写接口放行）；② 开启档（配置字段、题数与题面不泄答案、邀请码空/错/多码、答对换会话、会话复用）；③ 会话档（挑战绑定 IP、会话有效期、登出清 cookie）；④ 答错上限档（剩余次数递减 → 超限作废 → 答案正确也不再受理）；⑤ 先审后发链路（含审核队列与统计）；⑥ 反馈链路（需过门禁、后台可读、resolve 后出队）；⑦ 生产守卫档（无邀请码拒启 / `GATE_ALLOW_DISABLED=1` 可起）；⑧ 限流档（`/api/gate/verify` 20 次/10 分钟后 429） |
+| `scripts/route-sweep.js` | **路由巡检**：正则读出 `server.js` 里注册过的每个路由（含循环注册的 `/api/admin/…/:action`），起一个生产模式 + 门禁开启的真实服务，过门禁、造好帖子/评论/工单/反馈，然后**逐条打一遍**，断言没有任何 5xx。4xx 一律算正常拒绝（鉴权、限流、参数不合法、内容不存在）。存在的理由：测试按功能链路组织，**不属于任何链路的处理器就是盲区** —— 点赞接口曾把 SQL 保留字 `ON` 当列别名（`SELECT 1 AS on`），真实后端上一直是 500，而 smoke（本地模式）、api-smoke（自带 mock）、prod-e2e（没点过赞）、db-check（直接写表）四个套件全绿却没有一个碰到它。新增路由即使不写针对性断言，也不会再悄无声息地 500 |
 | `scripts/db-check.js` | 结构（表与 **9 个索引**清单）、关键查询 `EXPLAIN QUERY PLAN`（**`ANALYZE` 前后各断言一遍**，防止统计信息一更新就退化成全表扫描）、写入与计数一致性（点赞批量回写、评论先审后发 +1/−1、下架级联）、举报去重索引、保留期清理（含反馈：已处理可删、**未处理不能被时间清掉**；不开启保留期时只做结构性清理）、启动路径与干净退出标记 |
 
 `db-check.js` 的用法（脚本自己解析参数）：
@@ -527,6 +529,7 @@ server/
 ├─ scripts/
 │  ├─ api-test.js              接口测试（真起服务 + 临时库）
 │  ├─ gate-test.js             内测门禁分档测试
+│  ├─ route-sweep.js           路由巡检（注册表里每个路由都打一遍，只看 5xx）
 │  └─ db-check.js              数据库自检（结构 / 查询计划 / 计数 / 清理 / 退出标记）
 └─ src/
    ├─ server.js                HTTP 服务 / 路由 / 静态资源 / 压缩 / 缓存

@@ -52,8 +52,11 @@
   更大的用 `q9`，动态 JSON 用 `q5` —— 实测 br 默认档 4 反而比 gzip-6 大 1%–7%，因此不能沿用默认档。
 - **测试**：新增 `server/scripts/gate-test.js`（按环境变量**分档**启动真实服务进程，覆盖门禁关闭/开启、
   会话绑定与过期、答错上限、先审后发链路、反馈链路、生产守卫、限流档）；
-  `server/package.json` 的 `test` 串跑 `api-test.js && gate-test.js && db-check.js`，
-  并新增 `test:api` / `test:gate` / `test:db` / `db:check` / `db:recount`。
+  **新增 `server/scripts/route-sweep.js`（路由巡检）**：从 `server.js` 解析出全部注册路由，
+  在真实服务上逐条打一遍，只断言「没有 5xx」—— 给没人写过断言的路由兜底
+  （点赞接口 500 就是这么漏过去的）；
+  `server/package.json` 的 `test` 串跑 `api-test.js && gate-test.js && route-sweep.js && db-check.js`，
+  并新增 `test:api` / `test:gate` / `test:sweep` / `test:db` / `db:check` / `db:recount`。
 - **面板 / 容器部署支持（没有 shell 的主机）**：
   - `server/src/env.js`：零依赖读取 `server/.env`（**已存在的环境变量优先**，与 `--env-file` 语义一致），
     Pterodactyl / Wispbyte 这类「启动命令固定为 `node ${JS_FILE}`、开不了 shell」的主机因此能配环境；

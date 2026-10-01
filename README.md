@@ -274,10 +274,11 @@ ssh -L 8080:127.0.0.1:8080 user@your-vps   # 然后本机打开 http://127.0.0.1
 | `npm run tokens` | `python scripts/check-tokens.py` | `tokens.css` 与原型 `school-confession-wall.html` 的**第一个 `:root` 块**逐字一致（当前 53 个契约令牌） |
 | `npm run smoke` | `scripts/smoke.mjs`：构建 + `vite preview` + 无头 Edge（`/api` 指向不存在的后端），**46 项** | 本地回落数据源、**本地模式不出现门禁弹层**、**内测标识与首屏公告**、设计令牌生效、排序 / 分类筛选 / 搜索、点赞与本地记忆、发布校验与「先审后发」提示、举报弹层、Esc 关闭、移动端单列与 ≥44px 触摸目标、无横向滚动、`reduced-motion` |
 | `npm run smoke:api` | `scripts/api-smoke.mjs`：按后端契约写的假后端 + `vite preview` 代理，**15 项** | 探测 `/api/health` 后走 API、信息流来自后端、点赞用服务端权威计数、发布返回 `pending` 且不进墙、举报与**内测反馈**的请求体形状、门禁未启用时不弹层 |
-| `npm run e2e` | `scripts/prod-e2e.mjs`：真后端（`NODE_ENV=production`）+ 真构建产物 + 无头浏览器，**47 项** | 生产验收全链路：启动守卫（未配邀请码拒绝启动）、**真实 UI 里输入邀请码 + 答本地挑战**、全新无痕上下文写请求仍 403、发布进审核队列、后台界面点「通过」后公开、评论先审后发、静态长缓存与 CSP |
-| `npm --prefix server test` | `api-test.js && gate-test.js && db-check.js` | 见下三行 |
-| ├ `cd server && npm run test:api` | 真起服务 + 临时库 + 临时端口 | keyset 分页（不重不漏、旧游标兼容、**缺省 `limit` 回归**）、ETag 304、门禁关闭/开启两档（无凭据 403 `gate_required`、邀请码错误、答对换会话、挑战一次性、伪造 cookie、登出后重新被拦）、先审后发、反馈长度校验、CSP 收紧、生产启动守卫 |
+| `npm run e2e` | `scripts/prod-e2e.mjs`：真后端（`NODE_ENV=production`）+ 真构建产物 + 无头浏览器，**48 项** | 生产验收全链路：启动守卫（未配邀请码拒绝启动）、**真实 UI 里输入邀请码 + 答本地挑战**、全新无痕上下文写请求仍 403、发布进审核队列、后台界面点「通过」后公开、**老地址 `/admin` 只返回钓鱼页**、评论先审后发、静态长缓存与 CSP |
+| `npm --prefix server test` | `api-test.js && gate-test.js && route-sweep.js && db-check.js` | 见下四行 |
+| ├ `cd server && npm run test:api` | 真起服务 + 临时库 + 临时端口 | keyset 分页（不重不漏、旧游标兼容、**缺省 `limit` 回归**）、ETag 304、门禁关闭/开启两档（无凭据 403 `gate_required`、邀请码错误、答对换会话、挑战一次性、伪造 cookie、登出后重新被拦）、先审后发、**点赞全链路**（待审不可赞 → 审核通过 → 点赞 1 → 取消 0）、管理限流两桶（已鉴权不掐 / 错误令牌 401→429）、反馈长度校验、CSP 收紧、生产启动守卫 |
 | ├ `cd server && npm run test:gate` | 按环境变量**分档**启动真实服务进程 | 门禁关闭档、开启档（配置字段、题数、题面不泄答案、邀请码校验、会话复用）、会话档（挑战绑 IP、过期、登出）、答错上限档、先审后发链路、反馈链路与后台队列、生产守卫档（无邀请码拒启 / `GATE_ALLOW_DISABLED=1` 可起）、`/api/gate/verify` 限流档 |
+| ├ `cd server && npm run test:sweep` | **路由巡检**：从 `server.js` 解析出注册过的每个路由，对着真实服务全打一遍 | 只关心「有没有 5xx」——4xx 属正常业务拒绝。给没人写过断言的路由兜底（点赞接口曾因 SQL 别名踩保留字 500 很久，四个套件全绿却没碰到它） |
 | └ `cd server && npm run test:db` | `db-check.js`（临时库） | 表与 **9 个索引**清单、关键查询 `EXPLAIN QUERY PLAN`（**`ANALYZE` 前后各断言一遍**）、点赞/评论计数一致性（含「驳回已通过评论 −1」）、举报去重索引、保留期清理（含反馈：已处理可删、未处理不可删）、干净退出标记 |
 | `cd server && npm run db:check` | `db-check.js --real` | 对真实 `server/data/wall.db` 做只读体检（体积、页数、可回收空间、各表行数） |
 | `cd server && npm run db:recount` | `db-check.js --recount` | 手动全量校准点赞计数（怀疑漂移时用） |
