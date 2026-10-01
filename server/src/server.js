@@ -786,7 +786,11 @@ route("POST", "/api/posts/:id/like", async (ctx) => {
   if (!post || post.status !== "approved") throw httpError(404, "post not found");
 
   const existing = db
-    .prepare("SELECT 1 AS on FROM likes WHERE post_id = ? AND ip_hash = ?")
+    // 别名别用 SQL 关键字：这里原来写成 `SELECT 1 AS on`，`ON` 是保留字，
+    // 于是每次点赞都 `SqliteError: near "on": syntax error`（500）。
+    // 之所以一直没被发现：smoke 跑的是本地模式、api-smoke 用的是它自己 mock 的后端，
+    // 两者都不会碰到真实处理器；api-test 现在补了点赞全链路断言。
+    .prepare("SELECT 1 AS hit FROM likes WHERE post_id = ? AND ip_hash = ?")
     .get(postId, ctx.ipHash);
 
   const toggle = db.transaction(() => {

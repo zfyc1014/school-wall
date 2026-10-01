@@ -149,6 +149,13 @@
   Statement 析构会晚于环境拆除（`Assertion failed: (env) != nullptr`）。改为「结果落盘标记文件 +
   硬退出」，父进程按标记文件判定成功，不再看退出码（同款处理见 `server/scripts/db-check.js`）。
 - 旧库升级的兼容性：新增**尽力而为的幂等迁移**（见下）。
+- **点赞接口在真实后端上一直是 500**：`POST /api/posts/:id/like` 里的
+  `SELECT 1 AS on FROM likes …` 把 SQL 保留字 `ON` 当成了列别名，每次点赞都
+  `SqliteError: near "on": syntax error`（服务端只留一行 `[error]`，前端表现为点了没反应）。
+  长期没被发现是因为**这条链路从来没被测过**：`smoke.mjs` 跑本地演示模式、
+  `api-smoke.mjs` 用它自带的 mock 后端，两者都不经过真实处理器；`prod-e2e.mjs` 也没点过赞。
+  现在 `api-test.js` 补了点赞全链路断言：待审帖子点赞 404 → 管理接口通过 → 点赞 `{liked:true,likes:1}`
+  → 再点取消 `{liked:false,likes:0}` → 不带会话 403。顺手全仓扫了一遍「SQL 关键字当别名」，无其他命中。
 - **后台被自己的限流挡住（页面报 `rate_limited`）**：`requireAdmin` 原来只有一个桶且对
   **所有**管理请求计数，默认 10 次 / 15 分钟 —— 控制台一进页面就打 6 个接口，点几下审核就超，
   于是正常审核变成「等 15 分钟」。现在拆成两个桶：令牌错误 `ADMIN_RATE_LIMIT`（防爆破，行为不变）、

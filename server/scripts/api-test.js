@@ -419,6 +419,34 @@ function seed(count, extraEnv) {
   const cfgWithCookie = await api("/api/gate/config", { headers: { cookie } });
   check("配置接口反映当前会话已验证", cfgWithCookie.body.verified === true, `verified=${cfgWithCookie.body.verified}`);
 
+  /* ── 点赞全链路：先审后发 → 审核通过 → 点赞 → 取消 ──────────────
+   * 这段曾经完全没有覆盖（smoke 走本地模式、api-smoke 用自带 mock 后端），
+   * 结果 SQL 里一个保留字别名（`SELECT 1 AS on`）让点赞接口在真实后端上一直是 500。
+   * ------------------------------------------------------------------ */
+  const pendingId = withSession.body.id;
+  const likeBeforeApprove = await jsonPost(`/api/posts/${pendingId}/like`, {}, { cookie });
+  check("待审帖子不可点赞（404，先审后发对外生效）",
+    likeBeforeApprove.status === 404, `status=${likeBeforeApprove.status}`);
+
+  const approved = await api(`/api/admin/posts/${pendingId}/approve`, {
+    method: "POST", headers: { authorization: `Bearer ${ADMIN_TOKEN}` }
+  });
+  check("管理接口把待审帖子置为 approved", approved.status === 200, `status=${approved.status}`);
+
+  const liked = await jsonPost(`/api/posts/${pendingId}/like`, {}, { cookie });
+  check("点赞成功并返回权威计数（回归：别名踩 SQL 关键字曾整条 500）",
+    liked.status === 200 && liked.body.liked === true && liked.body.likes === 1,
+    `status=${liked.status} · ${JSON.stringify(liked.body)}`);
+
+  const unliked = await jsonPost(`/api/posts/${pendingId}/like`, {}, { cookie });
+  check("再次点击取消点赞（同一 IP 幂等切换）",
+    unliked.status === 200 && unliked.body.liked === false && unliked.body.likes === 0,
+    `status=${unliked.status} · ${JSON.stringify(unliked.body)}`);
+
+  const likeNoGate = await jsonPost(`/api/posts/${pendingId}/like`, {});
+  check("不带门禁会话的点赞被 403 拦下",
+    likeNoGate.status === 403 && likeNoGate.body.error === "gate_required", JSON.stringify(likeNoGate.body));
+
   // 一次性：答对后服务端立刻作废该挑战，不给重放留窗口
   const replay = await jsonPost("/api/gate/verify", {
     code: INVITE_CODE, challengeId: session.challengeId, answers: session.answers
