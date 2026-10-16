@@ -1,8 +1,8 @@
 {
   "name": "confession-wall",
-  "version": "0.9.0-beta.1",
+  "version": "1.0.0",
   "private": true,
-  "description": "校园表白墙 · 内测版：React 前端（Vite）+ 纯 Node 后端（node:http + SQLite，自托管门禁，无任何第三方依赖）",
+  "description": "校园墙：React 前端（Vite）+ 纯 Node 后端（node:http + SQLite），邮箱验证码登录、匿名表白墙、署名论坛、好友与私信",
   "type": "module",
   "engines": {
     "node": ">=18.17"
@@ -12,15 +12,13 @@
     "dev": "vite --config web/vite.config.js",
     "build": "vite build --config web/vite.config.js",
     "preview": "vite preview --config web/vite.config.js",
-    "smoke": "node scripts/smoke.mjs",
-    "smoke:api": "node scripts/api-smoke.mjs",
-    "e2e": "node scripts/prod-e2e.mjs",
     "tokens": "python scripts/check-tokens.py",
+    "e2e": "node scripts/e2e.mjs",
     "server": "npm --prefix server start",
     "server:dev": "npm --prefix server run dev",
     "server:install": "npm --prefix server install",
     "server:test": "npm --prefix server test",
-    "verify": "python scripts/check-tokens.py && npm run build && npm run smoke && npm run smoke:api && npm --prefix server test && npm run e2e"
+    "verify": "python scripts/check-tokens.py && npm run build && npm --prefix server test && npm run e2e"
   },
   "dependencies": {
     "react": "^18.3.1",

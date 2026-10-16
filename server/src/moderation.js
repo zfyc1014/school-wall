@@ -161,8 +161,77 @@ function classify(raw) {
   return { flagged: flags.length > 0, flags: flags.slice(0, 8) };
 }
 
+/* ───────────────────────── 昵称预审 ─────────────────────────
+ *
+ * 与内容预筛的关键区别：**昵称命中即拒绝，不进人工队列**。
+ * 理由是昵称会出现在全站每一个角落（论坛、私信、好友、主页），
+ * 让它先进队列等于先污染后收拾；而内容命中转人工则是为了不误伤正常表达。
+ *
+ * 另有一类「冒名」风险是内容侧没有的：昵称叫「管理员」「官方客服」就能骗人。
+ * 这类词在这里硬拒。
+ * ------------------------------------------------------------------ */
+
+const IMPERSONATION = [
+  "管理员", "管理員", "官方", "客服", "系统", "系統", "版主", "校长", "校長",
+  "班主任", "辅导员", "輔導員", "教务处", "教務處", "学生会", "學生會",
+  "admin", "administrator", "root", "moderator", "official", "support", "service"
+];
+
+/**
+ * @param {string} raw 用户提交的昵称
+ * @returns {{rejected: boolean, flagged: boolean, flags: string[]}}
+ *   rejected=true 时必须拒绝（服务端返回 400 nickname_rejected）
+ *   flagged=true 时留痕供后台观察（例如「全是数字和符号」这种低质昵称）
+ */
+function classifyNickname(raw) {
+  refreshBanned();
+
+  const text = normalize(raw);
+  const tight = compact(raw);   // 去掉分隔符：防「微 信 1 2 3 4」
+  const flat = squash(raw);     // 只去空白：中文词匹配用
+  const lower = text.toLowerCase();
+  const flags = [];
+
+  // 1) 联系方式（手机号 / 邮箱 / 社交账号 / 学号 / 住址）—— 昵称里出现就是引流或起底
+  for (const rule of RULES) {
+    if (rule.re.test(text) || (rule.compact && rule.re.test(tight))) flags.push(rule.name);
+  }
+
+  // 2) 违禁词：原文、去空白、去分隔符三种形态都查一遍
+  for (const word of bannedWords) {
+    if (!word) continue;
+    const needle = word.toLowerCase();
+    if (text.includes(word) || flat.includes(word) || tight.includes(word)
+      || lower.includes(needle) || tight.toLowerCase().includes(needle)) {
+      flags.push("banned");
+      break; // 只记一次，避免暴露词表结构
+    }
+  }
+
+  // 3) 冒名官方/管理员
+  for (const word of IMPERSONATION) {
+    if (lower.includes(word) || tight.toLowerCase().includes(word)) {
+      flags.push("impersonation");
+      break;
+    }
+  }
+
+  // 4) 低质昵称：全是数字/符号，或同一个字重复 5 次以上（只留痕，不拒绝）
+  const soft = [];
+  if (/^[\s\d\p{P}\p{S}]+$/u.test(text)) soft.push("digits_or_symbols");
+  if (/(.)\1{4,}/u.test(text)) soft.push("repeated_chars");
+
+  const rejected = flags.length > 0;
+  return {
+    rejected,
+    flagged: rejected || soft.length > 0,
+    flags: (rejected ? flags : soft).slice(0, 8)
+  };
+}
+
 module.exports = {
   classify,
+  classifyNickname,
   normalize,
   ruleCount: RULES.length + DOXX_HINTS.length,
   reloadBanned: () => refreshBanned(true),

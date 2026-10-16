@@ -1,5 +1,5 @@
 -- ─────────────────────────────────────────────────────────────────────────
--- 校园表白墙 · SQLite schema（WAL）
+-- 校园墙 v1.0.0 · SQLite schema（WAL）
 -- 设计取向：低配 VPS 友好 —— 单文件、无独立数据库进程、keyset 分页走索引。
 -- 由 src/db.js 在启动时执行，幂等（IF NOT EXISTS）。
 --
@@ -9,36 +9,24 @@
 -- 迁移策略：下面的 DROP 是幂等的，用来清掉旧版本建过、现在已由更合适的索引
 -- 取代的索引（索引名相同但列不同时，CREATE INDEX IF NOT EXISTS 不会自动改，
 -- 必须显式 DROP 再建）。每次启动执行一次，代价可忽略。
+-- 列的增删由 src/db.js 的迁移函数负责（ADD COLUMN / RENAME COLUMN 都是增量的）。
 --
--- ── 后台审核链路复核（本轮）────────────────────────────────────────────
+-- ── v1.0.0 索引复核 ─────────────────────────────────────────────────────
 --
--- 新增的审核接口全部复用既有索引，没有引入第 9 个索引。逐条对照：
---
---   GET /api/admin/queue?type=posts      待审帖子按 created_at ASC 取
---     → idx_posts_feed(status, created_at, id) 正序遍历即时间升序，覆盖所需列
---       （cat/body/flag 之外的 like_count/comment_count 需回表，但待审集很窄，
---        每次最多 100 行，回表代价可忽略）。
---
---   GET /api/admin/queue?type=comments   待审评论按时间升序 + 关联帖子上下文
---     → idx_comments_queue(status, created_at, id) 正序遍历；
---       帖子上下文由 posts 主键点查（LEFT JOIN），不产生额外索引需求。
---
---   GET /api/admin/stats                 队列最久等待 = 两条 ORDER BY created_at ASC LIMIT 1
---     → 同样吃 idx_posts_feed / idx_comments_queue 的索引头部，零额外开销。
---
---   GET /api/admin/reports               工单按 status 过滤 + id DESC
---     → idx_reports_status(status, id DESC) 完全覆盖排序；
---       被举报内容由 posts/comments 主键点查补齐。
---
---   GET /api/admin/audit                 操作留痕按 id DESC
---     → idx_audit_time(created_at DESC) 覆盖；id 与 created_at 同序，语义等价。
---
--- 结论：**不新增索引**。审核是「低频读 + 高频写」的链路，多一个索引就多一份
--- 写入放大；既有 8 个索引已经覆盖审核侧的全部热查询。
---
--- 内测版（0.9）在这一版之上只加了 1 个索引：idx_feedback_status —— 内测反馈是
--- 本期唯一的新表，它的后台队列查询（status 等值 + id 倒序）必须走索引，
--- 否则每次打开后台都要扫全表。合计 9 个索引，db-check.js 里写死断言。
+--   users          邮箱与 uuid 的 UNIQUE 约束自带索引；另加 created_at 倒序一条
+--                  供后台「最新注册」列表；昵称模糊搜索走 LIKE（后台低频，可接受）。
+--   auth_codes     (email, created_at DESC) 覆盖「取该邮箱最新验证码」。
+--   sessions       token_hash 主键即索引；(user_id) 供「退出全部设备」；
+--                  (expires_at) 供定时清理过期会话。
+--   announcements  (active, sort, id DESC) 覆盖首页公告读取。
+--   forum_threads  (board, status, last_reply_at DESC, id DESC) 覆盖版块列表两种排序；
+--                  (author_id, id DESC) 供个人主页。
+--   forum_replies  (thread_id, status, id) 覆盖楼层读取与审核队列。
+--   thread_likes   主键 (thread_id, user_id) 天然去重。
+--   friendships    (addressee_id, status, updated_at DESC) 覆盖「待处理好友请求」。
+--   dm_messages    (sender_id, recipient_id, id DESC) 覆盖单聊；(recipient_id, read_at, id DESC)
+--                  覆盖未读数与会话列表。
+--   合计新增 10 条索引，全部对应真实存在的热查询；没有任何「为了对称」建的索引。
 -- ─────────────────────────────────────────────────────────────────────────
 
 DROP INDEX IF EXISTS idx_posts_feed;   -- 旧版含 created_at，改由 (status, id DESC) 承担
@@ -46,20 +34,122 @@ DROP INDEX IF EXISTS idx_posts_queue;  -- 旧版是全表索引，改为 pending
 DROP INDEX IF EXISTS idx_comments_queue;
 DROP INDEX IF EXISTS idx_reports_open; -- 与 idx_reports_status 前缀重复，属多余索引
 
--- 内测版清理：实名时代的索引与表（幂等；新库里本来就不存在）。
--- 内测阶段不再收集手机号，因此这两张表和它们的索引一并抹掉；
--- 旧库里的 identity_id 列由 db.js 的迁移尽力删除（失败则保留为空列）。
-DROP INDEX IF EXISTS idx_identities_recent;
-DROP INDEX IF EXISTS idx_codes_lookup;
-DROP INDEX IF EXISTS idx_posts_identity;
-DROP INDEX IF EXISTS idx_comments_identity;
-DROP INDEX IF EXISTS idx_reports_identity;
-DROP TABLE IF EXISTS identity_codes;
-DROP TABLE IF EXISTS identities;
+-- ── 账号体系（v1.0.0 新增）──────────────────────────────────────────────
+--
+-- 用户对外唯一标识是 uuid，不是自增 id：自增 id 会泄露注册顺序与总量，
+-- 且一旦换库/迁移就会撞车。uuid 也是私信、好友、主页 URL 里出现的那个值。
+--
+-- school 一旦写入不可更改（业务上由服务端强约束：PATCH /api/me 不接受 school）。
+-- 它同时是「这个账号属于哪个学校」的唯一依据，展示在用户主页最前面。
+CREATE TABLE IF NOT EXISTS users (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  uuid             TEXT    NOT NULL UNIQUE,
+  email            TEXT    NOT NULL UNIQUE,          -- 小写归一后存储
+  nickname         TEXT    NOT NULL,
+  nickname_flagged TEXT,                             -- 命中预筛的规则名；非空即需人工复核
+  school           TEXT    NOT NULL,
+  avatar           TEXT    NOT NULL DEFAULT '',
+  bio              TEXT    NOT NULL DEFAULT '',
+  title_id         INTEGER,
+  level            INTEGER NOT NULL DEFAULT 1,
+  exp              INTEGER NOT NULL DEFAULT 0,
+  status           TEXT    NOT NULL DEFAULT 'active', -- active | muted | banned
+  muted_until      INTEGER,
+  last_nickname_at INTEGER,                           -- 昵称冷却用
+  ip_hash          TEXT,
+  ua_hash          TEXT,
+  created_at       INTEGER NOT NULL,
+  last_login_at    INTEGER,
+  last_seen_at     INTEGER
+);
+-- 后台「最新注册」列表：ORDER BY created_at DESC, id DESC
+CREATE INDEX IF NOT EXISTS idx_users_created ON users(created_at DESC, id DESC);
 
+-- 邮箱验证码。只存 HMAC，不存明文 —— 数据库泄露也不能直接拿来登录。
+-- attempts 计数与 expires_at 一起构成「5 次错误即作废」的实现。
+CREATE TABLE IF NOT EXISTS auth_codes (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  email       TEXT    NOT NULL,
+  code_hash   TEXT    NOT NULL,
+  purpose     TEXT    NOT NULL DEFAULT 'login',   -- login | register
+  attempts    INTEGER NOT NULL DEFAULT 0,
+  ip_hash     TEXT,
+  created_at  INTEGER NOT NULL,
+  expires_at  INTEGER NOT NULL,
+  consumed_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_auth_codes_lookup ON auth_codes(email, created_at DESC);
+
+-- 会话。token 本身不落盘（只存 SHA-256），cookie 里的随机串是唯一凭据。
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash   TEXT    PRIMARY KEY,
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at   INTEGER NOT NULL,
+  expires_at   INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL,
+  ip_hash      TEXT,
+  ua_hash      TEXT
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS idx_sessions_user   ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
+
+-- 一次性注册令牌：邮箱验证通过但还没填昵称/学校时签发，15 分钟有效。
+CREATE TABLE IF NOT EXISTS register_tokens (
+  token_hash TEXT    PRIMARY KEY,
+  email      TEXT    NOT NULL,
+  ip_hash    TEXT,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used_at    INTEGER
+) WITHOUT ROWID;
+
+-- 头衔。auto=1 表示「达到 min_level 自动获得」，否则只能由管理员手动指定。
+-- color 留空表示用站点默认强调色，不强制配色。
+CREATE TABLE IF NOT EXISTS user_titles (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT    NOT NULL UNIQUE,
+  color      TEXT    NOT NULL DEFAULT '',
+  min_level  INTEGER NOT NULL DEFAULT 1,
+  auto       INTEGER NOT NULL DEFAULT 0,
+  sort       INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+
+-- 学校名单。**由后台维护**（/houtai/ 的「学校管理」），不再从文件生成：
+-- 学校是本校本地的运营数据，谁在用、什么时候加，只有运营方知道。
+--
+-- 注意 users.school 存的是**校名快照**而不是外键：管理员删掉/改名一个学校时，
+-- 已经选了它的用户不受影响（学校一经选择不可更改是产品承诺，不能因为运营
+-- 调整名单就让人"失去学校"）。因此这里删行是安全的。
+CREATE TABLE IF NOT EXISTS schools (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT    NOT NULL UNIQUE,
+  sort       INTEGER NOT NULL DEFAULT 0,
+  active     INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_schools_active ON schools(active, sort, id);
+
+-- 首页公告栏。后台可增删改；active=0 即下线但保留内容。
+CREATE TABLE IF NOT EXISTS announcements (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  body       TEXT    NOT NULL,
+  link       TEXT,
+  link_text  TEXT,
+  active     INTEGER NOT NULL DEFAULT 1,
+  sort       INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_announcements_active ON announcements(active, sort, id DESC);
+
+-- ── 表白墙（既有）───────────────────────────────────────────────────────
+--
 -- 帖子。默认 status='pending'：先审后发。
+-- user_id 只服务后台追责与「我的发布」，**前台任何接口都不返回**（匿名是产品前提）。
 CREATE TABLE IF NOT EXISTS posts (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id       INTEGER,
   cat           TEXT    NOT NULL,                 -- 表白 / 树洞 / 寻人 / 失物 / 致谢
   body          TEXT    NOT NULL,
   status        TEXT    NOT NULL DEFAULT 'pending', -- pending | approved | rejected | removed
@@ -85,72 +175,133 @@ CREATE TABLE IF NOT EXISTS posts (
 --   解决办法不是反复调索引，而是让索引**覆盖查询需要列**：
 --   (status, created_at, id) 已包含列表要返回的全部列，SQLite 只读索引就能出结果
 --   （查询计划里显示为 COVERING INDEX），优化器在任何统计信息下都不会放弃它。
---   连带好处：同一索引反向遍历即「最新在前」，正序遍历即按时间升序（审核队列用），
---   一个索引同时服务两个热查询。正文 body 不进索引 —— 那会让索引体积翻倍、
---   写入翻倍，而覆盖索引已经避免了回表，没必要。
+--   正文 body 不进索引 —— 那会让索引体积翻倍、写入翻倍。
 CREATE INDEX IF NOT EXISTS idx_posts_feed ON posts(status, created_at, id);
--- 热榜：WHERE status=? + ORDER BY like_count DESC, id DESC 由同一索引满足
 CREATE INDEX IF NOT EXISTS idx_posts_hot  ON posts(status, like_count, id);
--- 分类页：等值 status, cat 之后按时间取序（与首屏同样的 keyset 翻页方式）。
--- 为什么不按 like_count 建：分类页默认是「最新」排序，按时间才吃到索引；
--- 分类 + 最热（可选项）只在一个分类的小结果集上排序，代价可接受。
 CREATE INDEX IF NOT EXISTS idx_posts_cat  ON posts(status, cat, created_at, id);
+-- 个人主页「我的发布」：只查自己的帖子（后台与 /me 用），不参与公开列表
+CREATE INDEX IF NOT EXISTS idx_posts_user ON posts(user_id, id DESC);
 
 -- 评论。默认 status='pending'：与帖子同口径，先审后发。
--- （曾经这里写的是 DEFAULT 'approved'，与 server.js 的写入路径不一致 ——
---   即使调用方忘了带 status，也不该有任何评论绕过审核直接公开。）
 CREATE TABLE IF NOT EXISTS comments (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   post_id    INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  user_id    INTEGER,
   body       TEXT    NOT NULL,
   status     TEXT    NOT NULL DEFAULT 'pending',  -- approved | pending | rejected | removed
   flag       TEXT,
   ip_hash    TEXT,
   created_at INTEGER NOT NULL
 );
--- 评论：按帖取评论（post_id + status 前缀已覆盖），同时覆盖审核队列查询
--- （status='pending' 时按 created_at 升序取，列全在索引里，不回表）
-CREATE INDEX IF NOT EXISTS idx_comments_post ON comments(post_id, status, id);
+CREATE INDEX IF NOT EXISTS idx_comments_post  ON comments(post_id, status, id);
 CREATE INDEX IF NOT EXISTS idx_comments_queue ON comments(status, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_comments_user  ON comments(user_id, id DESC);
 
 -- 点赞去重：主键天然防重复，可在高并发下安全 upsert。
+-- actor 是「谁点的」：登录用户写 u:<uuid>，这样换设备仍然是同一个人。
 CREATE TABLE IF NOT EXISTS likes (
   post_id    INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
-  ip_hash    TEXT    NOT NULL,
+  actor      TEXT    NOT NULL,
   created_at INTEGER NOT NULL,
-  PRIMARY KEY (post_id, ip_hash)
+  PRIMARY KEY (post_id, actor)
 ) WITHOUT ROWID;
 
--- 举报 / 通知—移除工单。
+-- ── 论坛（v1.0.0 新增）──────────────────────────────────────────────────
+--
+-- 与表白墙的关键区别：**署名**。论坛展示昵称/头衔/等级，是有身份的讨论区；
+-- 表白墙保持匿名。两者共用同一套预筛（moderation.js）。
+--
+-- board 白名单在服务端硬编码（general | study | life | lost），不建表：
+-- 版块是产品结构而不是运营数据，建模成表只会多一次 JOIN。
+CREATE TABLE IF NOT EXISTS forum_threads (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  board         TEXT    NOT NULL DEFAULT 'general',
+  author_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title         TEXT    NOT NULL,
+  body          TEXT    NOT NULL,
+  status        TEXT    NOT NULL DEFAULT 'approved', -- approved | pending | removed
+  flag          TEXT,
+  reply_count   INTEGER NOT NULL DEFAULT 0,
+  like_count    INTEGER NOT NULL DEFAULT 0,
+  view_count    INTEGER NOT NULL DEFAULT 0,
+  created_at    INTEGER NOT NULL,
+  last_reply_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_threads_board  ON forum_threads(board, status, last_reply_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_threads_new    ON forum_threads(status, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_threads_hot    ON forum_threads(status, like_count DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_threads_author ON forum_threads(author_id, id DESC);
+
+CREATE TABLE IF NOT EXISTS forum_replies (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  thread_id  INTEGER NOT NULL REFERENCES forum_threads(id) ON DELETE CASCADE,
+  author_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  body       TEXT    NOT NULL,
+  status     TEXT    NOT NULL DEFAULT 'approved',
+  flag       TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_replies_thread ON forum_replies(thread_id, status, id);
+CREATE INDEX IF NOT EXISTS idx_replies_author ON forum_replies(author_id, id DESC);
+
+CREATE TABLE IF NOT EXISTS thread_likes (
+  thread_id  INTEGER NOT NULL REFERENCES forum_threads(id) ON DELETE CASCADE,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (thread_id, user_id)
+) WITHOUT ROWID;
+
+-- ── 好友与私信（v1.0.0 新增）────────────────────────────────────────────
+--
+-- 单向存一行，A→B 的请求就是 (requester=A, addressee=B)。
+-- 「成为好友」= 存在一行 status='accepted'（无论方向）；加好友时若对方已向我发过请求，
+-- 直接把那一行改成 accepted —— 这正是微信/QQ 的「互相添加即刻成为好友」。
+CREATE TABLE IF NOT EXISTS friendships (
+  requester_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  addressee_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status       TEXT    NOT NULL DEFAULT 'pending', -- pending | accepted | declined | blocked
+  message      TEXT,
+  created_at   INTEGER NOT NULL,
+  updated_at   INTEGER NOT NULL,
+  PRIMARY KEY (requester_id, addressee_id)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS idx_friendships_addressee ON friendships(addressee_id, status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS dm_messages (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  sender_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  body         TEXT    NOT NULL,
+  read_at      INTEGER,
+  created_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_dm_pair  ON dm_messages(sender_id, recipient_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_dm_inbox ON dm_messages(recipient_id, read_at, id DESC);
+
+-- ── 举报 / 工单 ─────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS reports (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   post_id     INTEGER NOT NULL,
   comment_id  INTEGER,
+  reporter_id INTEGER,
   reason      TEXT,
   status      TEXT    NOT NULL DEFAULT 'open',      -- open | actioned | dismissed
   ip_hash     TEXT,
   created_at  INTEGER NOT NULL,
   resolved_at INTEGER
 );
--- 工单列表：按 status 过滤 + 时间倒序。
--- 注意这里**只需要一个**索引：status 是共同前缀，(status, id DESC) 已经能覆盖
--- 「只查 open」和「查任意 status」两种查询。再为 open 单独建部分索引属于重复投资 ——
--- 每个多余的索引都会拖慢写入并多占内存，低配机器上不值得。
+-- 工单列表：按 status 过滤 + 时间倒序。status 是共同前缀，一条索引覆盖两种查询。
 CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status, id DESC);
--- 同一 IP 对同一帖反复举报的去重判断
+-- 同一来源对同一帖反复举报的去重判断
 CREATE INDEX IF NOT EXISTS idx_reports_post   ON reports(post_id, ip_hash);
 
--- ─────────────────────────────────────────────────────────────────────────
--- 内测反馈（0.9 新增）
+-- ── 意见反馈 ────────────────────────────────────────────────────────────
 --
--- 内测阶段最重要的输入渠道。刻意做得很窄：
---   * contact 选填 —— 不留联系方式也能提交，避免为了收反馈而收集个人信息；
---   * status 只有 open / done / dismissed 三态，够用且不需要工作流引擎；
---   * 不参与公开内容，因此不进 feed 缓存，也没有任何对外读取接口。
--- 队列查询是「status 等值 + id 倒序」，由 idx_feedback_status 一条索引覆盖。
--- ─────────────────────────────────────────────────────────────────────────
+-- 刻意做得很窄：contact 选填；三态够用；不参与公开内容，因此不进 feed 缓存，
+-- 也没有任何对外读取接口。队列查询是「status 等值 + id 倒序」。
 CREATE TABLE IF NOT EXISTS feedback (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id     INTEGER,
   cat         TEXT    NOT NULL DEFAULT 'other',   -- bug | idea | other
   body        TEXT    NOT NULL,
   contact     TEXT,
@@ -174,7 +325,6 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_log(created_at DESC);
 
 -- 计数器：把「启动/定期校准」这类全表维护的元信息记在这里。
--- 例如 like_recount_at 用来判断距离上次校准过了多久，避免每次启动都做全表校准。
 CREATE TABLE IF NOT EXISTS stats (
   key        TEXT PRIMARY KEY,
   value      TEXT NOT NULL,

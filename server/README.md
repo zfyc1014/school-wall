@@ -1,14 +1,16 @@
-# 校园表白墙 · 后端（内测版 `0.9.0-beta.1`）
+# 校园墙 · 后端 v1.0.0
 
-面向**最低配置 VPS**（1 vCPU / 1GB RAM 级别）与**香港部署**场景的后端服务：
-Node 内置 `http` + SQLite(WAL)，**自托管内测门禁**（邀请码 + 一次性本地挑战 + HMAC 会话），
-**不需要任何出网请求**。
+面向**最低配置 VPS**（1 vCPU / 1GB RAM 级别）的后端服务：
+Node 内置 `http` + SQLite(WAL)，标准库之外只依赖 `better-sqlite3`。
+唯一的出网请求是**发送登录验证码**（Cloudflare Email Service 的 REST 接口，见 `src/email.js`）；
+未配置邮件通道时它会降级为「写日志 + outbox 文件」，服务本身照样能跑起来。
 
-前端有两个：React 版（`web/` 的 Vite 工程，构建到 `web/dist/`）与保留未改动的单文件原型
-`school-confession-wall.html`。两者共用本服务的 `/api`，见第 5 节。
+前端是 React（Vite）工程，构建到 `web/dist/`，由本服务直接托管；`/houtai/` 是审核后台（单文件，无构建）。
 
-> **内测阶段不收集手机号、没有账号体系。** 实名与短信相关代码（`identity.js` / `sms.js`）
-> 已从仓库删除，需要时从 git 历史取回：`git log --oneline -- server/src/identity.js`。
+> **v1.0.0 变更提示**：内测门禁（`src/gate.js`）与内测元信息（`src/beta.js`）已整体删除，
+> 登录改为**邮箱验证码 + 会话 cookie**（`src/users.js`），并新增论坛（`src/forum.js`）、
+> 好友与私信（`src/social.js`）、公告（`src/announce.js`）与学校表。
+> 下文若仍出现 `GATE_*` / `BETA_*` 字样，属于历史章节，对应功能已不存在。
 >
 > 本文件是工程与部署说明，**不构成法律意见**。前端给用户看的只有一份**发布公约**
 > （`web/src/components/LegalSheet.jsx`），内容是本站实际怎么做（不能发什么、留了什么记录、
@@ -24,14 +26,15 @@ Node 内置 `http` + SQLite(WAL)，**自托管内测门禁**（邀请码 + 一�
 | 数据库 | SQLite（WAL 模式） | 单文件、无独立进程，省下一整份数据库内存 |
 | 分页 | keyset（游标）分页 | 行值元组比较走索引区间扫描，深翻页不扫全表 |
 | 点赞写入 | 内存队列 + 定时批量回写 | 把多次 fsync 合并成一次事务 |
-| 内测门禁 | 自托管（`src/gate.js`） | 不出网、无第三方数据处理、没有「校验服务不可达」这种失败模式 |
+| 登录 | 邮箱验证码 + 会话 cookie（`src/users.js`） | 无密码即无撞库；验证码只存 HMAC，会话 token 只存 SHA-256 |
 | 响应压缩 | br 优先（静态产物 q11/q9、动态 JSON q5）+ gzip-6 兜底 + 压缩结果缓存 | 静态产物只压一次；单核上省掉每次 10–20ms |
 | TLS | Caddy / Nginx 终止 | 低配机器不承担 TLS 握手 CPU |
 | 缓存 | 3 秒信息流缓存 + ETag + CDN | 并发首屏合并为一次查询，重复请求回 304 |
 | 限流 | 进程内固定窗口 | 免去 Redis 的额外内存与运维 |
 
 数据流：`浏览器 → Caddy(TLS/静态) → Node(动态 API) → SQLite(WAL)`。
-写请求在进入业务逻辑前先过**内测门禁**（同步、无出网）→ 再过限流 → 落库为 `pending`。
+写请求进入业务逻辑前先校验**登录会话**（未登录 401）→ 再过限流 → 落库（表白墙为 `pending` 待审，
+论坛命中预筛才转人工）。
 
 ---
 

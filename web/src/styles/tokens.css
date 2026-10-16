@@ -1,10 +1,14 @@
 /* ─────────────────────────────────────────────────────────────────────────
- * 设计系统令牌 · Apple（contract，逐字粘贴自 school-confession-wall.html）
- * 这是唯一允许出现颜色字面量的地方；其余样式一律 var()/color-mix() 派生。
+ * 设计令牌 · 唯一允许出现颜色字面量的地方
+ * 其余样式一律用 var()/color-mix() 派生，深色模式只在这里切换。
+ *
+ * 移动优先：所有尺寸先按手机定，桌面用 min-width 媒体查询放大。
  * ───────────────────────────────────────────────────────────────────── */
 :root {
-  --bg: #ffffff;
-  --surface: #f5f5f7;
+  /* 浅色（默认） */
+  --bg: #f7f7f9;
+  --surface: #ffffff;
+  --surface-2: #f2f2f5;
   --surface-warm: #fbfbfd;
 
   --fg: #1d1d1f;
@@ -12,85 +16,119 @@
   --muted: #6e6e73;
   --meta: #86868b;
 
-  --border: #d2d2d7;
-  --border-soft: #e8e8ed;
+  --border: #d9d9de;
+  --border-soft: #ebebef;
 
   --accent: #0071e3;
-  --accent-on: #ffffff;
-
   --accent-hover: #0077ed;
   --accent-active: #0066cc;
+  --accent-on: #ffffff;
 
   --success: #16a34a;
-  --warn:    #eab308;
-  --danger:  #dc2626;
+  --warn: #d97706;
+  --danger: #dc2626;
+  --like: #ff375f; /* 点赞激活色：比 danger 柔和，避免「点个赞像报错」 */
+  --danger-on: #ffffff; /* 危险色块上的文字色 */
+  --shadow-sheet: 0 -12px 40px rgba(0, 0, 0, 0.22); /* 底部弹层向上投影 */
 
-  --font-display:
-    "SF Pro Display", "SF Pro Icons", "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --font-body:
-    "SF Pro Text", "SF Pro Icons", "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --font-mono:
-    "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
+  /* 液态玻璃：背景半透明 + 模糊 + 内高光 + 极细描边。
+     亮色下高光是白色的，暗色下必须换成极淡的白色描边，否则会「发灰」。 */
+  --glass-bg: color-mix(in srgb, var(--surface) 62%, transparent);
+  --glass-bg-strong: color-mix(in srgb, var(--surface) 82%, transparent);
+  --glass-border: color-mix(in srgb, #ffffff 65%, transparent);
+  --glass-highlight: color-mix(in srgb, #ffffff 90%, transparent);
+  --glass-blur: 22px;
+  --glass-saturate: 180%;
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.14);
+  --glass-shadow-dock: 0 10px 40px rgba(0, 0, 0, 0.18), 0 1px 0 var(--glass-highlight) inset;
 
-  --text-xs:   12px;
-  --text-sm:   14px;
-  --text-base: 17px;
-  --text-lg:   21px;
-  --text-xl:   28px;
-  --text-2xl:  40px;
-  --text-3xl:  56px;
-  --text-4xl:  80px;
+  --overlay: color-mix(in srgb, var(--fg) 46%, transparent);
 
-  --leading-body:  1.47;
-  --leading-tight: 1.05;
+  --font-display: "SF Pro Display", "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  --font-body: "SF Pro Text", "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
 
-  --tracking-display: -0.015em;
+  --text-xs: 11px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-md: 16px;   /* 输入框最小字号：低于 16px iOS 会自动放大页面 */
+  --text-lg: 19px;
+  --text-xl: 24px;
 
-  --space-1:  4px;
-  --space-2:  8px;
-  --space-3:  12px;
-  --space-4:  16px;
-  --space-5:  20px;
-  --space-6:  24px;
-  --space-8:  32px;
-  --space-12: 48px;
+  --leading: 1.5;
+  --tracking-tight: -0.01em;
 
-  --section-y-desktop: 100px;
-  --section-y-tablet:  64px;
-  --section-y-phone:   40px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
 
-  --radius-sm:   8px;
-  --radius-md:   12px;
-  --radius-lg:   18px;
-  --radius-pill: 980px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+  --radius-pill: 999px;
 
-  --elev-flat:   none;
-  --elev-ring:   0 0 0 1px var(--border);
-  --elev-raised: 0 12px 32px rgba(0, 0, 0, 0.08);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-lift: 0 12px 32px rgba(0, 0, 0, 0.12);
 
-  --focus-ring: 0 0 0 4px color-mix(in oklab, var(--accent), transparent 65%);
+  --focus-ring: 0 0 0 3px color-mix(in oklab, var(--accent), transparent 70%);
 
-  --motion-fast:   150ms;
-  --motion-base:   220ms;
-  --ease-standard: cubic-bezier(0.28, 0, 0.22, 1);
+  --motion-fast: 140ms;
+  --motion-base: 220ms;
+  --ease: cubic-bezier(0.28, 0, 0.22, 1);
 
-  --container-max:            1024px;
-  --container-gutter-desktop: 22px;
-  --container-gutter-tablet:  18px;
-  --container-gutter-phone:   16px;
+  /* 布局：内容列最大 640px，dock 悬浮其上 */
+  --content-max: 640px;
+  --gutter: 16px;
+  --dock-h: 60px;
+  --dock-safe: calc(var(--dock-h) + env(safe-area-inset-bottom, 0px) + 28px);
+  --header-h: 52px;
+
+  --tap: 44px; /* 最小触摸目标 */
 }
 
-/* 派生辅助变量：仅复用上方令牌，不引入任何新颜色 */
-:root {
-  --container: var(--container-max);
-  --gutter: var(--container-gutter-desktop);
-  --accent-soft:   color-mix(in oklab, var(--accent) 12%, transparent);
-  --accent-tint:   color-mix(in oklab, var(--accent) 6%, transparent);
-  --fg-soft:       color-mix(in oklab, var(--fg) 5%, transparent);
-  --fg-hair:       color-mix(in oklab, var(--fg) 9%, transparent);
-  --overlay:       color-mix(in oklab, var(--fg) 42%, transparent);
-  --shadow-card:   0 1px 2px color-mix(in oklab, var(--fg) 6%, transparent);
-  --shadow-lift:   0 16px 40px color-mix(in oklab, var(--fg) 12%, transparent);
-  --fs-h1: clamp(38px, 5.2vw, 66px);
-  --fs-h2: clamp(26px, 3vw, 38px);
+/* 深色模式：只改令牌，不改任何组件样式 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #000000;
+    --surface: #1c1c1e;
+    --surface-2: #2c2c2e;
+    --surface-warm: #161618;
+
+    --fg: #f5f5f7;
+    --fg-2: #d5d5da;
+    --muted: #9a9aa0;
+    --meta: #8a8a90;
+
+    --border: #38383c;
+    --border-soft: #2a2a2e;
+
+    --accent: #0a84ff;
+    --accent-hover: #3d9bff;
+    --accent-active: #0066cc;
+
+    --glass-bg: color-mix(in srgb, #2c2c2e 58%, transparent);
+    --glass-bg-strong: color-mix(in srgb, #2c2c2e 84%, transparent);
+    --glass-border: color-mix(in srgb, #ffffff 14%, transparent);
+    --glass-highlight: color-mix(in srgb, #ffffff 18%, transparent);
+    --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    --glass-shadow-dock: 0 10px 40px rgba(0, 0, 0, 0.55), 0 1px 0 var(--glass-highlight) inset;
+
+    --overlay: rgba(0, 0, 0, 0.6);
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-lift: 0 12px 32px rgba(0, 0, 0, 0.5);
+  }
+}
+
+/* 桌面：内容列居中，字号与留白放大一档 */
+@media (min-width: 720px) {
+  :root {
+    --gutter: 24px;
+    --text-base: 16px;
+    --dock-h: 64px;
+  }
 }

@@ -1,0 +1,32 @@
+/* 账号相关页面：主页、他人主页、设置、登录弹层。 */
+
+.me-name { font-size: var(--text-lg); font-weight: 700; margin-bottom: 4px; }
+.me-bio { margin-top: 6px; color: var(--fg-2); font-size: var(--text-sm); word-break: break-word; }
+
+/* 等级进度：细条 + 两端对齐的文字，不抢内容的注意力 */
+.me-level { margin-top: 16px; }
+.me-level-bar { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.me-level-bar span { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--accent), color-mix(in oklab, var(--accent) 55%, var(--success))); transition: width var(--motion-base) var(--ease); }
+.me-level .meta { margin-top: 6px; }
+
+.me-stats { display: flex; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border-soft); }
+.me-stat { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.me-stat strong { font-size: var(--text-md); font-variant-numeric: tabular-nums; }
+
+.me-actions { display: flex; flex-direction: column; gap: var(--space-3); margin-top: 16px; }
+
+/* 头像选择：9 宫格滚动，选中用描边而不是换图 */
+.auth-avatars { display: flex; flex-wrap: wrap; gap: 10px; }
+.auth-avatar {
+  padding: 2px; border-radius: 50%; border: 2px solid transparent;
+  transition: border-color var(--motion-fast) var(--ease), transform var(--motion-fast) var(--ease);
+}
+.auth-avatar:active { transform: scale(0.94); }
+.auth-avatar.is-active { border-color: var(--accent); }
+
+.auth-warn {
+  padding: 10px 12px; border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--warn) 12%, transparent);
+  color: var(--fg-2); font-size: var(--text-sm);
+}
+.auth-foot { display: flex; align-items: center; gap: 6px; justify-content: center; }

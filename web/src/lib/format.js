@@ -1,35 +1,49 @@
-const MIN = 60_000;
-const HOUR = 3_600_000;
-const DAY = 86_400_000;
+/** 时间与数字的展示格式（全站统一，避免每个页面各写一套）。 */
 
-/** 相对时间：与原型的 rel() 行为逐字一致 */
-export function rel(ts) {
-  const d = Date.now() - ts;
-  if (d < MIN) return '刚刚';
-  if (d < HOUR) return `${Math.floor(d / MIN)} 分钟前`;
-  if (d < DAY) return `${Math.floor(d / HOUR)} 小时前`;
-  if (d < 30 * DAY) return `${Math.floor(d / DAY)} 天前`;
-  return new Date(ts).toLocaleDateString('zh-CN');
+/** 相对时间：刚刚 / 12 分钟前 / 3 小时前 / 昨天 / 9月12日 */
+export function timeAgo(ts) {
+  const t = Number(ts) || 0;
+  if (!t) return '';
+  const diff = Date.now() - t;
+  if (diff < 60_000) return '刚刚';
+  if (diff < 3_600_000) return Math.floor(diff / 60_000) + ' 分钟前';
+  if (diff < 86_400_000) return Math.floor(diff / 3_600_000) + ' 小时前';
+  if (diff < 172_800_000) return '昨天';
+  if (diff < 2_592_000_000) return Math.floor(diff / 86_400_000) + ' 天前';
+  return formatDate(t);
 }
 
-/** 点赞数缩写：1284 → 1.3k，2310 → 2.3k，12840 → 13k */
-export function nfmt(n) {
-  const v = Number(n) || 0;
-  if (v >= 1000) return `${(v / 1000).toFixed(v >= 10000 ? 0 : 1).replace(/\.0$/, '')}k`;
-  return String(v);
+export function formatDate(ts) {
+  const d = new Date(Number(ts) || 0);
+  if (Number.isNaN(d.getTime())) return '';
+  const now = new Date();
+  const sameYear = d.getFullYear() === now.getFullYear();
+  return `${sameYear ? '' : d.getFullYear() + '年'}${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
-export function cx(...parts) {
-  return parts.filter(Boolean).join(' ');
+export function formatDateTime(ts) {
+  const d = new Date(Number(ts) || 0);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** 搜索输入防抖（原型为 160ms） */
-export function debounce(fn, wait = 160) {
-  let timer = null;
-  const wrapped = (...args) => {
-    clearTimeout(timer);
-    timer = setTimeout(() => fn(...args), wait);
-  };
-  wrapped.cancel = () => clearTimeout(timer);
-  return wrapped;
+/** 聊天气泡用的时分 */
+export function formatClock(ts) {
+  const d = new Date(Number(ts) || 0);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+export function plural(n, unit = '') {
+  return `${n}${unit}`;
+}
+
+/** 数字缩写：1200 → 1.2k */
+export function shortNumber(n) {
+  const num = Number(n) || 0;
+  if (num < 1000) return String(num);
+  if (num < 10000) return (num / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+  return (num / 10000).toFixed(1).replace(/\.0$/, '') + 'w';
 }

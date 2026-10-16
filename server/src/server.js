@@ -11,12 +11,13 @@
  *   - 默认只监听 127.0.0.1，由 Caddy/Nginx 终止 TLS（低配机器不做 TLS 握手）；
  *   - 全站安全响应头 + 进程内限流 + 请求体上限。
  *
- * 内测版本（0.9.x）说明：
- *   - 写操作闸门是**自托管**的「内测邀请码 + 一次性本地挑战」（见 gate.js），
- *     不依赖任何第三方、不出网；原先的 Cloudflare Turnstile 已整体移除；
- *   - 内测阶段不收集手机号，实名与短信相关代码已删除（需要时从 git 历史取回）；
- *   - 新增 POST /api/feedback（内测反馈）与后台反馈队列；
- *   - 后台审核接口沿用 v2.1.0 的控制台版本（队列分页/批量/详情/审核日志）。
+ * v1.0.0 说明：
+ *   - **账号体系**：邮箱验证码登录（Cloudflare Email Service 发送，见 email.js），
+ *     对外唯一标识是 uuid；学校在注册时选定且不可更改；
+ *   - **论坛**：署名讨论区（昵称/头衔/等级），与匿名表白墙刻意区分；
+ *   - **好友与私信**：请求—同意式加好友（互相添加即刻成为好友），仅好友可私信；
+ *   - **头衔与等级**：头衔由后台自定义（可自动按等级授予），等级由经验推导；
+ *   - 公告栏由后台维护，前端通过 GET /api/site 获取。
  *
  * 合规相关：
  *   - 不落盘原始 IP，只存 HMAC-SHA256 哈希（PDPO 数据最小化）；
@@ -34,10 +35,14 @@ const crypto = require("crypto");
 // 因为它们是在 require 时读取 process.env 的。
 const { LOADED: ENV_LOADED, ENV_FILE } = require("./env");
 const db = require("./db");
-const { classify } = require("./moderation");
+const { classify, classifyNickname } = require("./moderation");
 const { limit } = require("./rate-limit");
-const gate = require("./gate");
-const beta = require("./beta");
+const config = require("./config");
+const users = require("./users");
+const email = require("./email");
+const forum = require("./forum");
+const social = require("./social");
+const announce = require("./announce");
 
 /* ────────────────────────────── 配置 ────────────────────────────── */
 
@@ -100,6 +105,10 @@ const TRUST_PROXY = process.env.TRUST_PROXY === "1";
 const FORCE_HTTPS = process.env.FORCE_HTTPS === "1";
 const MAX_BODY = Number(process.env.MAX_BODY || 32768);
 const PAGE_MAX = Number(process.env.PAGE_MAX || 30);
+/** 评论字数上限（表白正文已无上限，评论仍留一个防止刷屏的长度） */
+const COMMENT_MAX = Number(process.env.COMMENT_MAX || 300);
+const FEEDBACK_MAX = Math.max(20, Math.min(4000, Number(process.env.FEEDBACK_MAX || 800)));
+const FEEDBACK_KEEP = Math.max(100, Number(process.env.FEEDBACK_KEEP || 2000));
 const LIKE_FLUSH_MS = Number(process.env.LIKE_FLUSH_MS || 1500);
 const ADMIN_RATE_LIMIT = Number(process.env.ADMIN_RATE_LIMIT || 10);
 /** 已鉴权的管理请求上限（5 分钟窗口）。只防脚本刷库，不该掐正常审核操作。 */
@@ -147,9 +156,20 @@ function fatalConfig(message) {
   process.exit(1);
 }
 
-// 内测门禁配置自检：生产环境未配置邀请码且没有显式放行时，直接终止启动。
-// 必须真的调用 —— 只 require 不调用的话，这段保护等于不存在。
-gate.logConfig({ fatal: fatalConfig });
+// 账号体系需要用同一个密钥做验证码 HMAC（与会话 token 的 SHA-256 不同，
+// 这里要的是「不可离线爆破」）。复用 IP_HASH_SECRET，避免再多一个必填项。
+users.configure({ secret: IP_SECRET });
+
+// 生产环境的邮件通道自检：不配置就等于「用户收不到验证码」，
+// 必须在启动日志里说清楚，而不是等第一个用户登录失败才发现。
+if (IS_PROD && !config.EMAIL.configured) {
+  console.warn("[warn] 未配置 Cloudflare 邮件通道（CF_ACCOUNT_ID / CF_EMAIL_TOKEN / CF_EMAIL_FROM）："
+    + "邮箱验证码不会外发，只会写入 server/data/outbox/ 与服务端日志");
+}
+// 学校名单为空 = 没人能完成注册，属于必须让运维看见的配置缺失
+if (!users.schoolList().length) {
+  console.warn("[warn] 学校名单为空：请到后台 /houtai/ 的「学校管理」添加学校，否则新用户无法完成注册");
+}
 
 /* ────────────────────────────── 工具 ────────────────────────────── */
 
@@ -157,12 +177,12 @@ const SECURITY_HEADERS = {
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "X-Frame-Options": "DENY",
-  // 内测版不该被搜索引擎收录：内容与规则都还会变，收录后反而留下历史快照。
-  // 与 index.html 的 <meta name="robots"> 双保险（meta 只管前台页，响应头覆盖 /admin）。
+  // 不收录：站内是校园用户生成内容，被搜索引擎快照下来对学生没有好处。
+  // 与 index.html 的 <meta name="robots"> 双保险（meta 只管前台页，响应头覆盖 /houtai/）。
   "X-Robots-Tag": "noindex, nofollow",
   "Permissions-Policy": "geolocation=(), camera=(), microphone=()",
   "Cross-Origin-Opener-Policy": "same-origin",
-  // 内测版没有任何第三方脚本：CSP 收紧到 'self'，不再需要为外部来源开口子。
+  // 全站没有任何第三方脚本：CSP 收紧到 'self'，不为外部来源开口子。
   // 仍保留 'unsafe-inline'，因为 React 产物是内联注入的样式；进一步加固可换成 nonce。
   "Content-Security-Policy": [
     "default-src 'self'",
@@ -409,27 +429,39 @@ function audit(action, target, note, ip) {
   ).run(action, target == null ? null : String(target), note || null, hashIp(ip), Date.now());
 }
 
-/* ─────────────────────── 门禁 / 限流 小工具 ─────────────────────── */
+/* ─────────────────────── 登录 / 限流 小工具 ─────────────────────── */
 
 /**
- * 写操作统一入口：先过内测门禁，再过限流。
+ * 写操作与个人数据的统一入口：必须有有效会话。
  *
- * 顺序很重要 —— 先挡未通过门禁的请求，再消耗限流计数，
- * 避免脚本靠打满限流把正常访客挤掉。
+ * 与旧版「内测门禁」的区别：不再是共享口令 + 答题，而是真账号。
+ * 账号带来两个直接好处：责任可追溯（后台能看到是谁发的），
+ * 以及点赞/好友/私信这类「属于某个人」的状态终于有了主体。
  *
- * 与旧实现（Turnstile）的区别：这里**完全同步**，没有出网请求，
- * 因此写路径不再有「验证服务超时」这个失败模式，也不需要 fail-open 策略。
- *
- * @returns {boolean} true 表示可以继续处理；false 表示已响应，直接返回
+ * @returns {object|null} 用户行；null 表示已响应 401，调用方直接 return
  */
-function requireGate(ctx) {
-  const result = gate.guardWrite(ctx.req, ctx);
-  if (result.ok) return true;
-  sendJson(ctx.req, ctx.res, result.status, {
-    error: result.error,
-    message: result.message
-  });
-  return false;
+function requireLogin(ctx) {
+  if (ctx.user) return ctx.user;
+  sendJson(ctx.req, ctx.res, 401, { error: "login_required", message: "请先登录" });
+  return null;
+}
+
+/** 被禁言/封禁的账号不能写内容（浏览不受影响） */
+function requireWritable(ctx, user) {
+  if (user.status === "muted") {
+    sendJson(ctx.req, ctx.res, 403, { error: "muted", message: "账号已被禁言，暂时无法发布内容" });
+    return false;
+  }
+  if (user.status === "banned") {
+    sendJson(ctx.req, ctx.res, 403, { error: "account_banned", message: "该账号已被封禁" });
+    return false;
+  }
+  return true;
+}
+
+/** 点赞/评论这类「属于用户」的行为用它做去重键：换设备仍然是同一个人 */
+function actorKey(ctx) {
+  return ctx.user ? "u:" + ctx.user.uuid : "ip:" + ctx.ipHash;
 }
 
 /* ─────────────────────── 点赞计数批量回写 ─────────────────────── */
@@ -547,93 +579,286 @@ route("GET", "/api/health", (ctx) => {
   sendJson(ctx.req, ctx.res, 200, {
     ok: true,
     now: Date.now(),
-    // 版本随健康检查下发：前端探针、监控与「内测版」标识共用同一个值
-    version: beta.VERSION,
-    tag: beta.NAME
+    // 版本随健康检查下发：前端探针、监控与发版核对共用同一个值
+    version: config.VERSION
   });
 });
 
-/* ───────────────────── 内测门禁（邀请码 + 本地挑战） ─────────────────────
- * 入口闸门：前端拉配置 → 拿一次性挑战题目 → 用户填邀请码 + 答案 →
- * POST /api/gate/verify → 服务端校验后签发短期会话 cookie。
- * 之后所有写操作只需带这个 cookie，不再重复答题。
- * 全流程在本进程内完成，没有任何出网请求。
- * ---------------------------------------------------------------------- */
+/* ───────────────────────── 站点信息 / 账号 ─────────────────────────
+ * 公开接口（不需要登录）：站点配置、公告、学校名单。
+ * 前端首屏只打一个 /api/site 就能把「版本、站名、公告、功能开关」全拿到。
+ * ------------------------------------------------------------------ */
 
-// GET /api/gate/config —— 公开配置 + 当前会话状态 + 内测版元信息
-// 前端一次请求就能决定：要不要弹门禁、首屏公告写什么、反馈入口开不开。
-route("GET", "/api/gate/config", (ctx) => {
-  sendJson(ctx.req, ctx.res, 200, Object.assign(gate.publicConfig(), {
-    verified: gate.hasSession(ctx.req, ctx.ipHash),
-    beta: beta.publicConfig()
+// GET /api/site —— 公开站点信息 + 首页公告
+route("GET", "/api/site", (ctx) => {
+  sendJson(ctx.req, ctx.res, 200, Object.assign(config.publicConfig(), {
+    announcements: announce.listActive()
   }));
 });
 
-// POST /api/gate/challenge —— 取一份一次性挑战题目（答案只存在服务端）
-route("POST", "/api/gate/challenge", (ctx) => {
-  // 题目本身很便宜，但仍要限流：避免被用来做内存增长型压测
-  const bucket = limit(`gate-challenge:${ctx.ipHash}`, 30, 10 * 60 * 1000);
-  if (!bucket.ok) {
-    return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: bucket.retryAfter });
-  }
-  if (!gate.ENABLED) {
-    // 门禁关闭时不发题，前端据此直接放行（少一次无意义往返）
-    return sendJson(ctx.req, ctx.res, 200, { enabled: false });
-  }
-  sendJson(ctx.req, ctx.res, 200, Object.assign({ enabled: true }, gate.issueChallenge(ctx.ipHash)));
+// GET /api/schools —— 注册时可选的学校（后台维护的启用名单）
+route("GET", "/api/schools", (ctx) => {
+  sendJson(ctx.req, ctx.res, 200, { items: users.schoolList() });
 });
 
-// POST /api/gate/verify  { code, challengeId, answers: string[] }
-route("POST", "/api/gate/verify", async (ctx) => {
-  // 校验接口是枚举邀请码的目标：单独限流，且比出题更严
-  const bucket = limit(`gate-verify:${ctx.ipHash}`, 20, 10 * 60 * 1000);
+/* ───────────────────────── 邮箱验证码登录 ─────────────────────────
+ * 三步：
+ *   1. POST /api/auth/code     发 6 位验证码（Cloudflare Email Service）
+ *   2. POST /api/auth/verify   校验：老用户直接建会话；新用户拿一次性注册令牌
+ *   3. POST /api/auth/register 填昵称 + 学校，建号（学校写死后不可改）
+ * ---------------------------------------------------------------- */
+
+// POST /api/auth/code  { email }
+route("POST", "/api/auth/code", async (ctx) => {
+  const payload = await readJson(ctx.req);
+  const emailAddr = users.normalizeEmail(payload.email);
+
+  if (!users.isValidEmail(emailAddr)) {
+    return sendJson(ctx.req, ctx.res, 400, { error: "invalid_email", message: "邮箱格式不正确" });
+  }
+
+  // 两层限流：按 IP 防扫号，按邮箱防轰炸同一个人
+  const ipBucket = limit(`auth-code-ip:${ctx.ipHash}`, 10, 10 * 60 * 1000);
+  if (!ipBucket.ok) {
+    return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: ipBucket.retryAfter });
+  }
+  const mailBucket = limit(`auth-code-mail:${emailAddr}`, config.CODE_HOURLY_MAX, 60 * 60 * 1000);
+  if (!mailBucket.ok) {
+    return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: mailBucket.retryAfter });
+  }
+
+  // 重发间隔：避免连点造成「收件箱里 5 封验证码，不知道填哪封」
+  const last = users.lastCodeAt(emailAddr);
+  if (last && Date.now() - last < config.CODE_RESEND_SEC * 1000) {
+    return sendJson(ctx.req, ctx.res, 429, {
+      error: "rate_limited",
+      retryAfter: Math.ceil((config.CODE_RESEND_SEC * 1000 - (Date.now() - last)) / 1000)
+    });
+  }
+
+  const existing = users.findByEmail(emailAddr);
+  if (existing && existing.status === "banned") {
+    return sendJson(ctx.req, ctx.res, 403, { error: "account_banned", message: "该账号已被封禁" });
+  }
+
+  const { code, ttlSeconds } = users.issueCode(emailAddr, { ipHash: ctx.ipHash });
+  const mail = email.codeMail({
+    code,
+    siteName: config.SITE_NAME,
+    ttlMinutes: Math.round(ttlSeconds / 60),
+    purpose: existing ? "login" : "register"
+  });
+
+  const sent = await email.sendMail({
+    to: emailAddr,
+    subject: mail.subject,
+    html: mail.html,
+    text: mail.text
+  });
+
+  // 发信失败也要把验证码留在服务端（outbox + 日志），否则用户彻底卡死；
+  // 但响应里要如实告诉前端「邮件没发出去」，不能假装成功。
+  const body = { ok: true, expiresIn: ttlSeconds, delivered: Boolean(sent.ok) };
+  if (config.CODE_ECHO) body.devCode = code;
+
+  sendJson(ctx.req, ctx.res, 200, body, { "Cache-Control": "no-store" });
+});
+
+// POST /api/auth/verify  { email, code }
+route("POST", "/api/auth/verify", async (ctx) => {
+  const bucket = limit(`auth-verify:${ctx.ipHash}`, 20, 10 * 60 * 1000);
   if (!bucket.ok) {
     return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: bucket.retryAfter });
   }
 
   const payload = await readJson(ctx.req);
-  const result = gate.verify({
-    inviteCode: payload.code,
-    challengeId: payload.challengeId,
-    answers: payload.answers,
-    ipHash: ctx.ipHash,
-    // 让 cookie 的 Secure 跟着本次请求的实际协议走：HTTP 部署下也能正常保存会话
-    secureRequest: ctx.secure
-  });
+  const emailAddr = users.normalizeEmail(payload.email);
+  if (!users.isValidEmail(emailAddr)) {
+    return sendJson(ctx.req, ctx.res, 400, { error: "invalid_email" });
+  }
 
+  const result = users.verifyCode(emailAddr, payload.code);
   if (!result.ok) {
-    return sendJson(ctx.req, ctx.res, result.status, {
-      error: result.code,
-      message: result.message,
+    const status = result.error === "code_expired" ? 410 : 401;
+    return sendJson(ctx.req, ctx.res, status, {
+      error: result.error,
+      message: result.error === "code_expired" ? "验证码已失效，请重新获取" : "验证码不正确",
       remaining: result.remaining
     });
   }
 
-  const headers = { "Cache-Control": "no-store" };
-  if (result.cookie) headers["Set-Cookie"] = result.cookie;
-  sendJson(ctx.req, ctx.res, 200, { verified: true, expiresIn: result.expiresIn }, headers);
-});
+  const user = users.findByEmail(emailAddr);
 
-// POST /api/gate/logout —— 主动结束会话（换人使用同一设备时用）
-route("POST", "/api/gate/logout", (ctx) => {
-  sendJson(ctx.req, ctx.res, 200, { verified: false }, {
-    "Set-Cookie": gate.clearCookie(ctx.secure),
+  // 新用户：不直接建号 —— 还必须选学校、起昵称。用一次性令牌承接上一步。
+  if (!user) {
+    const issued = users.issueRegisterToken(emailAddr, { ipHash: ctx.ipHash });
+    return sendJson(ctx.req, ctx.res, 200, {
+      needProfile: true,
+      token: issued.token,
+      email: emailAddr
+    }, { "Cache-Control": "no-store" });
+  }
+
+  if (user.status === "banned") {
+    return sendJson(ctx.req, ctx.res, 403, { error: "account_banned", message: "该账号已被封禁" });
+  }
+
+  const session = users.createSession(user.id, { ipHash: ctx.ipHash, uaHash: ctx.uaHash });
+  users.touchLogin(user.id);
+
+  sendJson(ctx.req, ctx.res, 200, {
+    user: users.publicUser(users.findById(user.id), { self: true, stats: users.statsFor(user.id) })
+  }, {
+    "Set-Cookie": users.sessionCookie(session.token, ctx.secure),
     "Cache-Control": "no-store"
   });
 });
 
-/* ───────────────────────── 内测反馈 ─────────────────────────
- * 内测阶段最重要的输入渠道：用户不必注册、不必留联系方式也能提交。
+// POST /api/auth/register  { token, nickname, school, avatar? }
+route("POST", "/api/auth/register", async (ctx) => {
+  const bucket = limit(`auth-register:${ctx.ipHash}`, 10, 60 * 60 * 1000);
+  if (!bucket.ok) {
+    return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: bucket.retryAfter });
+  }
+
+  const payload = await readJson(ctx.req);
+  // 先校验、后消费：中间任何一步失败（昵称不合规、学校不对）都不该让用户重走一遍验证码
+  const pending = users.peekRegisterToken(payload.token);
+  if (!pending.ok) {
+    return sendJson(ctx.req, ctx.res, 400, { error: "invalid_token", message: "注册凭证已失效，请重新获取验证码" });
+  }
+
+  const nickname = String(payload.nickname || "").trim();
+  if (nickname.length < users.NICKNAME_MIN || nickname.length > users.NICKNAME_MAX) {
+    return sendJson(ctx.req, ctx.res, 400, {
+      error: "nickname_length",
+      message: `昵称需要 ${users.NICKNAME_MIN}–${users.NICKNAME_MAX} 个字`
+    });
+  }
+
+  // 昵称本地预审：命中违禁词直接拒绝（内容命中才转人工队列，昵称不行 ——
+  // 昵称会在全站到处出现，让它先进队列等于先污染再收拾）。
+  const nickMod = classifyNickname(nickname);
+  if (nickMod.rejected) {
+    return sendJson(ctx.req, ctx.res, 400, {
+      error: "nickname_rejected",
+      message: "昵称包含不允许使用的词，请换一个",
+      flags: nickMod.flags
+    });
+  }
+
+  const school = users.normalizeSchool(payload.school);
+  if (!users.schoolList().length) {
+    return sendJson(ctx.req, ctx.res, 409, { error: "schools_unavailable", message: "管理员尚未配置学校名单" });
+  }
+  if (!users.isValidSchool(school)) {
+    return sendJson(ctx.req, ctx.res, 400, { error: "invalid_school", message: "请从列表中选择学校" });
+  }
+
+  if (users.findByEmail(pending.email)) {
+    return sendJson(ctx.req, ctx.res, 409, { error: "already_registered", message: "该邮箱已注册，请直接登录" });
+  }
+
+  const avatar = users.AVATARS.includes(payload.avatar) ? payload.avatar : "";
+  const user = users.createUser({
+    email: pending.email,
+    nickname,
+    school,
+    avatar,
+    ipHash: ctx.ipHash,
+    uaHash: ctx.uaHash
+  });
+
+  // 昵称预审只在「疑似」时才留痕：这里已经拒绝了明确命中，走到这说明是干净的，
+  // 但保留一个轻量标记便于后台发现「批量注册的相似昵称」。
+  if (nickMod.flagged) users.setNicknameFlag(user.id, nickMod.flags.join(","));
+
+  // 账号已经建好，令牌到此才作废（重放会被拒）
+  users.consumeRegisterToken(payload.token);
+
+  const session = users.createSession(user.id, { ipHash: ctx.ipHash, uaHash: ctx.uaHash });
+  sendJson(ctx.req, ctx.res, 201, {
+    user: users.publicUser(users.findById(user.id), { self: true, stats: users.statsFor(user.id) })
+  }, {
+    "Set-Cookie": users.sessionCookie(session.token, ctx.secure),
+    "Cache-Control": "no-store"
+  });
+});
+
+// POST /api/auth/logout
+route("POST", "/api/auth/logout", (ctx) => {
+  if (ctx.token) users.destroySession(ctx.token);
+  sendJson(ctx.req, ctx.res, 200, { ok: true }, {
+    "Set-Cookie": users.clearSessionCookie(ctx.secure),
+    "Cache-Control": "no-store"
+  });
+});
+
+// GET /api/auth/me —— 前端首屏判断登录态
+route("GET", "/api/auth/me", (ctx) => {
+  sendJson(ctx.req, ctx.res, 200, {
+    user: ctx.user
+      ? users.publicUser(ctx.user, { self: true, stats: users.statsFor(ctx.user.id) })
+      : null
+  }, { "Cache-Control": "no-store" });
+});
+
+// PATCH /api/me —— 账号个性化（昵称/头像/简介）。**不接受 school**，学校不可更改。
+route("PATCH", "/api/me", async (ctx) => {
+  const user = requireLogin(ctx);
+  if (!user) return;
+
+  const bucket = limit(`me-update:${user.id}`, 10, 10 * 60 * 1000);
+  if (!bucket.ok) {
+    return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: bucket.retryAfter });
+  }
+
+  const payload = await readJson(ctx.req);
+
+  if (Object.prototype.hasOwnProperty.call(payload, "nickname")) {
+    const nickname = String(payload.nickname || "").trim();
+    const nickMod = classifyNickname(nickname);
+    if (nickMod.rejected) {
+      return sendJson(ctx.req, ctx.res, 400, {
+        error: "nickname_rejected",
+        message: "昵称包含不允许使用的词，请换一个",
+        flags: nickMod.flags
+      });
+    }
+  }
+
+  const result = users.updateProfile(user.id, payload);
+  if (!result.ok) {
+    const messages = {
+      nickname_length: `昵称需要 ${users.NICKNAME_MIN}–${users.NICKNAME_MAX} 个字`,
+      nickname_cooldown: "昵称修改过于频繁，请稍后再试",
+      invalid_avatar: "头像不可用",
+      bio_too_long: `简介最多 ${users.BIO_MAX} 个字`
+    };
+    const status = result.error === "nickname_cooldown" ? 429 : 400;
+    return sendJson(ctx.req, ctx.res, status, {
+      error: result.error,
+      message: messages[result.error] || "修改失败",
+      retryAfter: result.retryAfter
+    });
+  }
+
+  const fresh = users.findById(user.id);
+  if (Object.prototype.hasOwnProperty.call(payload, "nickname")) {
+    users.setNicknameFlag(user.id, null); // 改名成功即清掉旧标记
+  }
+  sendJson(ctx.req, ctx.res, 200, {
+    user: users.publicUser(fresh, { self: true, stats: users.statsFor(user.id) })
+  });
+});
+
+/* ───────────────────────── 意见反馈 ─────────────────────────
+ * 用户不必留联系方式也能提交；登录用户会带上 user_id 便于回访。
  * 反馈只进后台队列，不会出现在公开列表里，因此不做内容预筛。
  * ---------------------------------------------------------- */
 
 // POST /api/feedback  { body, contact?, cat? }
 route("POST", "/api/feedback", async (ctx) => {
-  if (!beta.FEEDBACK_ENABLED) {
-    return sendJson(ctx.req, ctx.res, 403, { error: "feedback_disabled", message: "内测反馈入口已关闭" });
-  }
-  if (!requireGate(ctx)) return;
-
   const bucket = limit(`feedback:${ctx.ipHash}`, 5, 60 * 60 * 1000);
   if (!bucket.ok) {
     return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: bucket.retryAfter });
@@ -646,19 +871,19 @@ route("POST", "/api/feedback", async (ctx) => {
   const cat = ["bug", "idea", "other"].includes(rawCat) ? rawCat : "other";
 
   if (body.length < 4) throw httpError(400, "feedback too short");
-  if (body.length > beta.FEEDBACK_MAX) throw httpError(400, "feedback too long");
+  if (body.length > FEEDBACK_MAX) throw httpError(400, "feedback too long");
 
   const info = db.prepare(
-    `INSERT INTO feedback (cat, body, contact, status, ip_hash, ua_hash, created_at)
-     VALUES (?,?,?,?,?,?,?)`
-  ).run(cat, body, contact || null, "open", ctx.ipHash, ctx.uaHash, Date.now());
+    `INSERT INTO feedback (user_id, cat, body, contact, status, ip_hash, ua_hash, created_at)
+     VALUES (?,?,?,?,?,?,?,?)`
+  ).run(ctx.user ? ctx.user.id : null, cat, body, contact || null, "open", ctx.ipHash, ctx.uaHash, Date.now());
 
   // 只保留最近 FEEDBACK_KEEP 条已处理反馈，避免这张表无限增长
   db.prepare(
     `DELETE FROM feedback WHERE status <> 'open' AND id NOT IN (
        SELECT id FROM feedback ORDER BY id DESC LIMIT ?
      )`
-  ).run(beta.FEEDBACK_KEEP);
+  ).run(FEEDBACK_KEEP);
 
   sendJson(ctx.req, ctx.res, 201, { ok: true, id: info.lastInsertRowid });
 });
@@ -747,9 +972,11 @@ route("GET", "/api/posts", (ctx) => {
 
 // POST /api/posts  { cat, body }
 route("POST", "/api/posts", async (ctx) => {
-  if (!requireGate(ctx)) return;
+  const user = requireLogin(ctx);
+  if (!user) return;
+  if (!requireWritable(ctx, user)) return;
 
-  const bucket = limit(`post:${ctx.ipHash}`, 3, 10 * 60 * 1000);
+  const bucket = limit(`post:${user.id}`, 5, 10 * 60 * 1000);
   if (!bucket.ok) {
     return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: bucket.retryAfter });
   }
@@ -759,52 +986,61 @@ route("POST", "/api/posts", async (ctx) => {
   const body = String(payload.body || "").trim();
 
   if (!cat) throw httpError(400, "invalid category");
-  if (body.length < 6 || body.length > 500) throw httpError(400, "invalid length");
+  // **取消字数上限**：只要求非空。真正的边界由 MAX_BODY（请求体上限）兜底，
+  // 不再对「说了多少话」做产品层面的限制。
+  if (!body.length) {
+    return sendJson(ctx.req, ctx.res, 400, { error: "empty", message: "内容不能为空" });
+  }
 
   const mod = classify(body);
   const info = db
     .prepare(
-      `INSERT INTO posts (cat, body, status, flag, ip_hash, ua_hash, created_at)
-       VALUES (?,?,?,?,?,?,?)`
+      `INSERT INTO posts (user_id, cat, body, status, flag, ip_hash, ua_hash, created_at)
+       VALUES (?,?,?,?,?,?,?,?)`
     )
-    .run(cat, body, "pending", mod.flagged ? mod.flags.join(",") : null, ctx.ipHash, ctx.uaHash, Date.now());
+    .run(user.id, cat, body, "pending", mod.flagged ? mod.flags.join(",") : null, ctx.ipHash, ctx.uaHash, Date.now());
 
   sendJson(ctx.req, ctx.res, 201, { id: info.lastInsertRowid, status: "pending" });
 });
 
-// POST /api/posts/:id/like —— 幂等切换（同一 IP 再点即取消）
+// POST /api/posts/:id/like —— 幂等切换（同一个人再点即取消）
 route("POST", "/api/posts/:id/like", async (ctx) => {
-  if (!requireGate(ctx)) return;
+  const user = requireLogin(ctx);
+  if (!user) return;
 
-  const bucket = limit(`like:${ctx.ipHash}`, 120, 5 * 60 * 1000);
+  const bucket = limit(`like:${user.id}`, 200, 5 * 60 * 1000);
   if (!bucket.ok) {
     return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: bucket.retryAfter });
   }
 
   const postId = toInt(ctx.params.id, 0);
-  const post = db.prepare("SELECT id, status FROM posts WHERE id = ?").get(postId);
+  const post = db.prepare("SELECT id, status, user_id FROM posts WHERE id = ?").get(postId);
   if (!post || post.status !== "approved") throw httpError(404, "post not found");
 
+  const actor = actorKey(ctx);
+  // 别名别用 SQL 关键字：这里原来写成 `SELECT 1 AS on`，`ON` 是保留字，
+  // 于是每次点赞都 `SqliteError: near "on": syntax error`（500）。
   const existing = db
-    // 别名别用 SQL 关键字：这里原来写成 `SELECT 1 AS on`，`ON` 是保留字，
-    // 于是每次点赞都 `SqliteError: near "on": syntax error`（500）。
-    // 之所以一直没被发现：smoke 跑的是本地模式、api-smoke 用的是它自己 mock 的后端，
-    // 两者都不会碰到真实处理器；api-test 现在补了点赞全链路断言。
-    .prepare("SELECT 1 AS hit FROM likes WHERE post_id = ? AND ip_hash = ?")
-    .get(postId, ctx.ipHash);
+    .prepare("SELECT 1 AS hit FROM likes WHERE post_id = ? AND actor = ?")
+    .get(postId, actor);
 
   const toggle = db.transaction(() => {
     if (existing) {
-      db.prepare("DELETE FROM likes WHERE post_id = ? AND ip_hash = ?").run(postId, ctx.ipHash);
+      db.prepare("DELETE FROM likes WHERE post_id = ? AND actor = ?").run(postId, actor);
     } else {
-      db.prepare("INSERT INTO likes (post_id, ip_hash, created_at) VALUES (?,?,?)")
-        .run(postId, ctx.ipHash, Date.now());
+      db.prepare("INSERT INTO likes (post_id, actor, created_at) VALUES (?,?,?)")
+        .run(postId, actor, Date.now());
     }
   });
   toggle();
 
   queueLikeCount(postId); // 计数异步批量回写
   const likes = db.prepare("SELECT COUNT(*) AS n FROM likes WHERE post_id = ?").get(postId).n;
+
+  // 被点赞的人涨经验：自己点自己不算
+  if (!existing && post.user_id && post.user_id !== user.id) {
+    users.addExp(post.user_id, users.EXP.like_received);
+  }
 
   sendJson(ctx.req, ctx.res, 200, { liked: !existing, likes });
 });
@@ -825,9 +1061,11 @@ route("GET", "/api/posts/:id/comments", (ctx) => {
 
 // POST /api/posts/:id/comments  { body }
 route("POST", "/api/posts/:id/comments", async (ctx) => {
-  if (!requireGate(ctx)) return;
+  const user = requireLogin(ctx);
+  if (!user) return;
+  if (!requireWritable(ctx, user)) return;
 
-  const bucket = limit(`comment:${ctx.ipHash}`, 20, 5 * 60 * 1000);
+  const bucket = limit(`comment:${user.id}`, 30, 5 * 60 * 1000);
   if (!bucket.ok) {
     return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: bucket.retryAfter });
   }
@@ -838,7 +1076,7 @@ route("POST", "/api/posts/:id/comments", async (ctx) => {
 
   const payload = await readJson(ctx.req);
   const body = String(payload.body || "").trim();
-  if (body.length < 1 || body.length > 120) throw httpError(400, "invalid length");
+  if (body.length < 1 || body.length > COMMENT_MAX) throw httpError(400, "invalid length");
 
   const mod = classify(body);
 
@@ -848,19 +1086,20 @@ route("POST", "/api/posts/:id/comments", async (ctx) => {
   // comment_count 只在审核通过时 +1（见 applyCommentReview），因此这里不动。
   const info = db
     .prepare(
-      `INSERT INTO comments (post_id, body, status, flag, ip_hash, created_at)
-       VALUES (?,?,?,?,?,?)`
+      `INSERT INTO comments (post_id, user_id, body, status, flag, ip_hash, created_at)
+       VALUES (?,?,?,?,?,?,?)`
     )
-    .run(postId, body, "pending", mod.flagged ? mod.flags.join(",") : null, ctx.ipHash, Date.now());
+    .run(postId, user.id, body, "pending", mod.flagged ? mod.flags.join(",") : null, ctx.ipHash, Date.now());
 
   sendJson(ctx.req, ctx.res, 201, { id: info.lastInsertRowid, status: "pending" });
 });
 
 // POST /api/reports  { postId, reason }
 route("POST", "/api/reports", async (ctx) => {
-  if (!requireGate(ctx)) return;
+  const user = requireLogin(ctx);
+  if (!user) return;
 
-  const bucket = limit(`report:${ctx.ipHash}`, 10, 60 * 60 * 1000);
+  const bucket = limit(`report:${user.id}`, 10, 60 * 60 * 1000);
   if (!bucket.ok) {
     return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: bucket.retryAfter });
   }
@@ -871,16 +1110,281 @@ route("POST", "/api/reports", async (ctx) => {
   const post = db.prepare("SELECT id, status FROM posts WHERE id = ?").get(postId);
   if (!post || post.status !== "approved") throw httpError(404, "post not found");
 
-  // 同一 IP 对同一帖只记一次工单：避免重复举报把队列刷爆（也省一次写）
+  // 同一个人对同一帖只记一次工单：避免重复举报把队列刷爆（也省一次写）
   const dup = db
-    .prepare("SELECT id FROM reports WHERE post_id = ? AND ip_hash = ? AND status = 'open' LIMIT 1")
-    .get(postId, ctx.ipHash);
+    .prepare("SELECT id FROM reports WHERE post_id = ? AND reporter_id = ? AND status = 'open' LIMIT 1")
+    .get(postId, user.id);
   if (dup) return sendJson(ctx.req, ctx.res, 200, { ok: true, duplicated: true });
 
-  db.prepare("INSERT INTO reports (post_id, reason, ip_hash, created_at) VALUES (?,?,?,?)")
-    .run(postId, reason || null, ctx.ipHash, Date.now());
+  db.prepare("INSERT INTO reports (post_id, reporter_id, reason, ip_hash, created_at) VALUES (?,?,?,?,?)")
+    .run(postId, user.id, reason || null, ctx.ipHash, Date.now());
 
   sendJson(ctx.req, ctx.res, 201, { ok: true });
+});
+
+/* ───────────────────────── 用户主页 / 好友 / 私信 ─────────────────────────
+ * 这三块共享同一个「对外用户对象」（users.publicUser）：昵称、头像、学校、
+ * 头衔、等级。展示顺序由前端固定为「学校 → 头衔 → 等级」，服务端只给数据。
+ * ---------------------------------------------------------------------- */
+
+/** 把「用户行 + 关系」组装成主页需要的形状 */
+function profilePayload(viewer, target) {
+  return {
+    user: users.publicUser(target, { stats: users.statsFor(target.id) }),
+    relation: social.relationFor(viewer ? viewer.id : null, target.id)
+  };
+}
+
+// GET /api/users/:uuid —— 他人主页（未登录也能看：浏览不需要账号）
+route("GET", "/api/users/:uuid", (ctx) => {
+  const target = users.findByUuid(ctx.params.uuid);
+  if (!target || target.status === "banned") throw httpError(404, "user not found");
+  sendJson(ctx.req, ctx.res, 200, profilePayload(ctx.user, target), { "Cache-Control": "no-store" });
+});
+
+// POST /api/users/:uuid/block —— 拉黑（解除好友 + 拒收私信）
+route("POST", "/api/users/:uuid/block", (ctx) => {
+  const user = requireLogin(ctx);
+  if (!user) return;
+  const result = social.blockUser(user.id, ctx.params.uuid);
+  if (!result.ok) return sendJson(ctx.req, ctx.res, 400, { error: result.error, message: "操作失败" });
+  audit("user.block", ctx.params.uuid, null, ctx.ip);
+  sendJson(ctx.req, ctx.res, 200, { ok: true });
+});
+
+// POST /api/users/:uuid/unblock
+route("POST", "/api/users/:uuid/unblock", (ctx) => {
+  const user = requireLogin(ctx);
+  if (!user) return;
+  const result = social.unblockUser(user.id, ctx.params.uuid);
+  if (!result.ok) return sendJson(ctx.req, ctx.res, 400, { error: result.error, message: "操作失败" });
+  sendJson(ctx.req, ctx.res, 200, { ok: true });
+});
+
+/* ───────────────────────────── 论坛 ───────────────────────────── */
+
+// GET /api/forum/threads?board=&sort=new|hot&cursor=&limit=
+route("GET", "/api/forum/threads", (ctx) => {
+  if (!config.FEATURES.forum) return sendJson(ctx.req, ctx.res, 404, { error: "not_found" });
+  const result = forum.listThreads({
+    board: ctx.query.get("board") || "",
+    sort: ctx.query.get("sort") === "hot" ? "hot" : "new",
+    cursor: ctx.query.get("cursor") || "",
+    limit: clamp(toInt(ctx.query.get("limit"), 20), 1, 50),
+    viewerId: ctx.user ? ctx.user.id : null
+  });
+  sendJson(ctx.req, ctx.res, 200, Object.assign(result, { boards: forum.BOARDS }), { "Cache-Control": "no-store" });
+});
+
+// POST /api/forum/threads  { board, title, body }
+route("POST", "/api/forum/threads", async (ctx) => {
+  const user = requireLogin(ctx);
+  if (!user) return;
+  if (!requireWritable(ctx, user)) return;
+
+  const bucket = limit(`thread:${user.id}`, 3, 10 * 60 * 1000);
+  if (!bucket.ok) {
+    return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: bucket.retryAfter });
+  }
+
+  const payload = await readJson(ctx.req);
+  const title = String(payload.title || "").replace(/\s+/g, " ").trim();
+  const body = String(payload.body || "").trim();
+
+  if (title.length < forum.TITLE_MIN || title.length > forum.TITLE_MAX) {
+    return sendJson(ctx.req, ctx.res, 400, {
+      error: "invalid_title",
+      message: `标题需要 ${forum.TITLE_MIN}–${forum.TITLE_MAX} 个字`
+    });
+  }
+  if (!body.length || body.length > forum.BODY_MAX) {
+    return sendJson(ctx.req, ctx.res, 400, {
+      error: "invalid_length",
+      message: `正文最多 ${forum.BODY_MAX} 个字`
+    });
+  }
+
+  const mod = classify(title + "\n" + body);
+  const created = forum.createThread({ authorId: user.id, board: payload.board, title, body, mod });
+
+  // 直接公开的主题立刻发经验；转人工的等审核通过时再发（见 forum.reviewThread）
+  if (created.status === "approved") users.addExp(user.id, users.EXP.thread_created);
+
+  sendJson(ctx.req, ctx.res, 201, created);
+});
+
+// POST /api/forum/threads/:id/like
+route("POST", "/api/forum/threads/:id/like", (ctx) => {
+  const user = requireLogin(ctx);
+  if (!user) return;
+
+  const bucket = limit(`thread-like:${user.id}`, 200, 5 * 60 * 1000);
+  if (!bucket.ok) {
+    return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: bucket.retryAfter });
+  }
+
+  const row = forum.getThreadRow(ctx.params.id);
+  if (!row || row.status !== "approved") throw httpError(404, "thread not found");
+
+  const result = forum.toggleLike(row.id, user.id);
+  if (result.liked && row.author_id !== user.id) users.addExp(row.author_id, users.EXP.like_received);
+  sendJson(ctx.req, ctx.res, 200, result);
+});
+
+// GET /api/forum/threads/:id —— 主题 + 回复
+route("GET", "/api/forum/threads/:id", (ctx) => {
+  if (!config.FEATURES.forum) return sendJson(ctx.req, ctx.res, 404, { error: "not_found" });
+  const data = forum.getThread(ctx.params.id, ctx.user ? ctx.user.id : null);
+  if (!data) throw httpError(404, "thread not found");
+  sendJson(ctx.req, ctx.res, 200, data, { "Cache-Control": "no-store" });
+});
+
+// POST /api/forum/threads/:id/replies  { body }
+route("POST", "/api/forum/threads/:id/replies", async (ctx) => {
+  const user = requireLogin(ctx);
+  if (!user) return;
+  if (!requireWritable(ctx, user)) return;
+
+  const bucket = limit(`reply:${user.id}`, 20, 5 * 60 * 1000);
+  if (!bucket.ok) {
+    return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: bucket.retryAfter });
+  }
+
+  const threadRow = forum.getThreadRow(ctx.params.id);
+  if (!threadRow || threadRow.status !== "approved") throw httpError(404, "thread not found");
+
+  const payload = await readJson(ctx.req);
+  const body = String(payload.body || "").trim();
+  if (!body.length || body.length > forum.REPLY_MAX) {
+    return sendJson(ctx.req, ctx.res, 400, {
+      error: "invalid_length",
+      message: `回复最多 ${forum.REPLY_MAX} 个字`
+    });
+  }
+
+  const mod = classify(body);
+  const created = forum.createReply({ threadId: threadRow.id, authorId: user.id, body, mod });
+  if (created.status === "approved") users.addExp(user.id, users.EXP.reply_created);
+
+  sendJson(ctx.req, ctx.res, 201, created);
+});
+
+/* ───────────────────────── 好友 ───────────────────────── */
+
+// GET /api/friends —— 好友 + 收到/发出的请求
+route("GET", "/api/friends", (ctx) => {
+  const user = requireLogin(ctx);
+  if (!user) return;
+  sendJson(ctx.req, ctx.res, 200, social.listFriends(user.id), { "Cache-Control": "no-store" });
+});
+
+// POST /api/friends/requests  { uuid, message? }
+route("POST", "/api/friends/requests", async (ctx) => {
+  const user = requireLogin(ctx);
+  if (!user) return;
+
+  const bucket = limit(`friend-req:${user.id}`, 20, 60 * 60 * 1000);
+  if (!bucket.ok) {
+    return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: bucket.retryAfter });
+  }
+
+  const payload = await readJson(ctx.req);
+  const result = social.sendRequest(user.id, payload.uuid, payload.message);
+  if (!result.ok) {
+    const messages = {
+      not_found: "用户不存在",
+      self: "不能加自己为好友",
+      already_friends: "你们已经是好友",
+      blocked: "无法向该用户发送请求"
+    };
+    const status = result.error === "blocked" ? 403 : 400;
+    return sendJson(ctx.req, ctx.res, status, { error: result.error, message: messages[result.error] || "操作失败" });
+  }
+  sendJson(ctx.req, ctx.res, 201, result);
+});
+
+// POST /api/friends/requests/:uuid/accept | /decline
+route("POST", "/api/friends/requests/:uuid/:action", (ctx) => {
+  const user = requireLogin(ctx);
+  if (!user) return;
+
+  const action = ctx.params.action;
+  if (action !== "accept" && action !== "decline") throw httpError(404, "not found");
+
+  const result = action === "accept"
+    ? social.acceptRequest(user.id, ctx.params.uuid)
+    : social.declineRequest(user.id, ctx.params.uuid);
+
+  if (!result.ok) {
+    return sendJson(ctx.req, ctx.res, 400, { error: result.error, message: "请求不存在或已处理" });
+  }
+  sendJson(ctx.req, ctx.res, 200, { ok: true });
+});
+
+// DELETE /api/friends/:uuid —— 删除好友
+route("DELETE", "/api/friends/:uuid", (ctx) => {
+  const user = requireLogin(ctx);
+  if (!user) return;
+  const result = social.removeFriend(user.id, ctx.params.uuid);
+  if (!result.ok) return sendJson(ctx.req, ctx.res, 400, { error: result.error, message: "操作失败" });
+  sendJson(ctx.req, ctx.res, 200, { ok: true });
+});
+
+/* ───────────────────────── 私信 ───────────────────────── */
+
+// GET /api/dm/conversations —— 会话列表（必须在 /api/dm/:uuid 之前注册）
+route("GET", "/api/dm/conversations", (ctx) => {
+  const user = requireLogin(ctx);
+  if (!user) return;
+  sendJson(ctx.req, ctx.res, 200, social.conversations(user.id), { "Cache-Control": "no-store" });
+});
+
+// GET /api/dm/unread —— 未读数（底部 tab 的红点）
+route("GET", "/api/dm/unread", (ctx) => {
+  const user = requireLogin(ctx);
+  if (!user) return;
+  sendJson(ctx.req, ctx.res, 200, { count: social.unreadCount(user.id) }, { "Cache-Control": "no-store" });
+});
+
+// GET /api/dm/:uuid?cursor=&limit= —— 与某人的聊天记录（打开即标记已读）
+route("GET", "/api/dm/:uuid", (ctx) => {
+  const user = requireLogin(ctx);
+  if (!user) return;
+
+  const result = social.threadWith(user.id, ctx.params.uuid, {
+    cursor: ctx.query.get("cursor") || "",
+    limit: clamp(toInt(ctx.query.get("limit"), 30), 1, 100)
+  });
+  if (!result.ok) return sendJson(ctx.req, ctx.res, 404, { error: result.error, message: "用户不存在" });
+  sendJson(ctx.req, ctx.res, 200, result, { "Cache-Control": "no-store" });
+});
+
+// POST /api/dm/:uuid  { body }
+route("POST", "/api/dm/:uuid", async (ctx) => {
+  const user = requireLogin(ctx);
+  if (!user) return;
+  if (!requireWritable(ctx, user)) return;
+
+  const bucket = limit(`dm:${user.id}`, 60, 5 * 60 * 1000);
+  if (!bucket.ok) {
+    return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: bucket.retryAfter });
+  }
+
+  const payload = await readJson(ctx.req);
+  const result = social.sendMessage(user.id, ctx.params.uuid, payload.body);
+  if (!result.ok) {
+    const messages = {
+      not_found: "用户不存在",
+      self: "不能给自己发私信",
+      not_friends: "只有好友之间才能私信",
+      blocked: "无法向该用户发送私信",
+      empty: "内容不能为空",
+      too_long: `单条私信最多 ${social.DM_MAX} 个字`
+    };
+    const status = result.error === "blocked" ? 403 : result.error === "not_friends" ? 403 : 400;
+    return sendJson(ctx.req, ctx.res, status, { error: result.error, message: messages[result.error] || "发送失败" });
+  }
+  sendJson(ctx.req, ctx.res, 201, { id: result.id, createdAt: result.createdAt });
 });
 
 /* ───────────────────────── 管理接口（需鉴权） ───────────────────────── */
@@ -925,6 +1429,8 @@ route("GET", "/api/admin/stats", (ctx) => {
 
   const pendingPosts = one("SELECT COUNT(*) AS n FROM posts WHERE status='pending'");
   const pendingComments = one("SELECT COUNT(*) AS n FROM comments WHERE status='pending'");
+  const pendingThreads = one("SELECT COUNT(*) AS n FROM forum_threads WHERE status='pending'");
+  const pendingReplies = one("SELECT COUNT(*) AS n FROM forum_replies WHERE status='pending'");
   const openReports = one("SELECT COUNT(*) AS n FROM reports WHERE status='open'");
 
   // 队列最久等待时长：审核员最需要的一个信号。
@@ -935,23 +1441,35 @@ route("GET", "/api/admin/stats", (ctx) => {
   const oldestComment = db.prepare(
     "SELECT created_at FROM comments WHERE status='pending' ORDER BY created_at ASC, id ASC LIMIT 1"
   ).get();
-  const candidates = [oldestPost && oldestPost.created_at, oldestComment && oldestComment.created_at]
-    .filter((v) => Number.isFinite(v) && v > 0);
+  const oldestThread = db.prepare(
+    "SELECT created_at FROM forum_threads WHERE status='pending' ORDER BY created_at ASC, id ASC LIMIT 1"
+  ).get();
+  const candidates = [
+    oldestPost && oldestPost.created_at,
+    oldestComment && oldestComment.created_at,
+    oldestThread && oldestThread.created_at
+  ].filter((v) => Number.isFinite(v) && v > 0);
   const oldestPendingAt = candidates.length ? Math.min(...candidates) : null;
 
   sendJson(ctx.req, ctx.res, 200, {
     pendingPosts,
     pendingComments,
+    pendingThreads,
+    pendingReplies,
     openReports,
     approvedPosts: one("SELECT COUNT(*) AS n FROM posts WHERE status='approved'"),
-    pendingTotal: pendingPosts + pendingComments + openReports,
+    pendingTotal: pendingPosts + pendingComments + pendingThreads + pendingReplies + openReports,
     oldestPendingAt,
     generatedAt: Date.now(),
-    // 内测运营指标：还有多少反馈没处理、门禁是否开着、当前是哪个内测版本
+    // 运营指标：账号规模、讨论活跃度、待处理反馈
     openFeedback: one("SELECT COUNT(*) AS n FROM feedback WHERE status='open'"),
-    gateRequired: gate.ENABLED,
-    gateInviteRequired: gate.INVITE_REQUIRED,
-    betaVersion: beta.VERSION,
+    users: one("SELECT COUNT(*) AS n FROM users"),
+    usersToday: one("SELECT COUNT(*) AS n FROM users WHERE created_at > " + (Date.now() - 86400000)),
+    activeToday: one("SELECT COUNT(*) AS n FROM users WHERE last_seen_at > " + (Date.now() - 86400000)),
+    threads: one("SELECT COUNT(*) AS n FROM forum_threads WHERE status='approved'"),
+    replies: one("SELECT COUNT(*) AS n FROM forum_replies WHERE status='approved'"),
+    dmsToday: one("SELECT COUNT(*) AS n FROM dm_messages WHERE created_at > " + (Date.now() - 86400000)),
+    version: config.VERSION,
     // 数据库体积与可回收空间：低配 VPS 上最该盯的两个数
     db: {
       fileBytes: disk.fileBytes,
@@ -977,10 +1495,22 @@ function parseQueueCursor(raw) {
 // GET /api/admin/queue?type=posts|comments&limit=&cursor=&q=
 route("GET", "/api/admin/queue", (ctx) => {
   if (!requireAdmin(ctx)) return;
-  const type = ctx.query.get("type") === "comments" ? "comments" : "posts";
+  const rawType = String(ctx.query.get("type") || "posts");
+  const type = ["comments", "threads", "replies"].includes(rawType) ? rawType : "posts";
   const take = clamp(toInt(ctx.query.get("limit"), 50), 1, 100);
   const q = String(ctx.query.get("q") || "").trim().slice(0, 60);
   const cursor = parseQueueCursor(ctx.query.get("cursor"));
+
+  // 论坛队列复用同一个入口：审核员只需要记一个地址、一套游标规则。
+  // 论坛的队列按 id 正序（先来先审），游标语义与帖子/评论的时间游标不同，
+  // 因此这里单独走 id 游标，而不是硬套 created_at.id。
+  if (type === "threads" || type === "replies") {
+    const idCursor = toInt(ctx.query.get("cursor"), 0);
+    const data = type === "threads"
+      ? forum.queueThreads({ limit: take, cursor: idCursor })
+      : forum.queueReplies({ limit: take, cursor: idCursor });
+    return sendJson(ctx.req, ctx.res, 200, Object.assign({ type }, data));
+  }
 
   if (type === "comments") {
     // 审核评论必须看到它挂在哪个帖子上，否则无法判断上下文。
@@ -1333,6 +1863,239 @@ route("POST", "/api/admin/feedback/:id/resolve", async (ctx) => {
   sendJson(ctx.req, ctx.res, 200, { id, status: action === "done" ? "done" : "dismissed" });
 });
 
+/* ───────────────────────── 用户管理 ─────────────────────────
+ * 「后台可以看到用户全部信息」是本次的硬要求，因此这里的字段是完整的：
+ * 邮箱、uuid、昵称（含预审标记）、学校、简介、头衔、等级、经验、状态、
+ * 注册/登录时间、IP 与 UA 哈希（不可逆）、以及各项内容计数。
+ * 明文密码不存在（本站没有密码），明文 IP 也不存在（只存哈希）。
+ * ---------------------------------------------------------- */
+
+// GET /api/admin/users?q=&status=&cursor=&limit=
+route("GET", "/api/admin/users", (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  const result = users.listUsers({
+    q: String(ctx.query.get("q") || "").trim().slice(0, 40),
+    status: String(ctx.query.get("status") || "").trim(),
+    cursor: toInt(ctx.query.get("cursor"), 0),
+    limit: clamp(toInt(ctx.query.get("limit"), 30), 1, 100)
+  });
+  sendJson(ctx.req, ctx.res, 200, result);
+});
+
+// GET /api/admin/users/:id —— 单人详情 + 最近内容
+route("GET", "/api/admin/users/:id", (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  const row = users.findById(ctx.params.id);
+  if (!row) throw httpError(404, "user not found");
+
+  const recent = {
+    posts: db.prepare(
+      "SELECT id, cat, body, status, created_at FROM posts WHERE user_id = ? ORDER BY id DESC LIMIT 10"
+    ).all(row.id),
+    comments: db.prepare(
+      "SELECT id, post_id, body, status, created_at FROM comments WHERE user_id = ? ORDER BY id DESC LIMIT 10"
+    ).all(row.id),
+    threads: db.prepare(
+      "SELECT id, board, title, status, created_at FROM forum_threads WHERE author_id = ? ORDER BY id DESC LIMIT 10"
+    ).all(row.id),
+    messages: social.recentMessagesFor(row.id, 10).map((m) => ({
+      id: m.id,
+      direction: m.sender_id === row.id ? "out" : "in",
+      body: m.body,
+      createdAt: m.created_at
+    }))
+  };
+
+  sendJson(ctx.req, ctx.res, 200, { user: users.adminUser(row), recent });
+});
+
+// POST /api/admin/users/:id  { action, value }
+route("POST", "/api/admin/users/:id", async (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  const row = users.findById(ctx.params.id);
+  if (!row) throw httpError(404, "user not found");
+
+  const payload = await readJson(ctx.req);
+  const action = String(payload.action || "");
+  const value = payload.value;
+
+  let result;
+  switch (action) {
+    case "set_title":
+      result = users.setUserTitle(row.id, value);
+      break;
+    case "set_level":
+      result = users.setUserLevel(row.id, value);
+      break;
+    case "set_exp":
+      result = users.setUserExp(row.id, value);
+      break;
+    case "set_status":
+      result = users.setUserStatus(row.id, value);
+      break;
+    case "rename":
+      result = users.renameUser(row.id, value);
+      break;
+    case "clear_nickname_flag":
+      result = users.clearNicknameFlag(row.id);
+      break;
+    case "reset_exp":
+      result = users.setUserExp(row.id, 0);
+      break;
+    default:
+      return sendJson(ctx.req, ctx.res, 400, { error: "unknown_action" });
+  }
+
+  if (!result.ok) {
+    return sendJson(ctx.req, ctx.res, 400, { error: result.error, message: "操作未被接受" });
+  }
+
+  // 封禁等敏感动作留痕：谁、对谁、做了什么
+  audit("user." + action, row.uuid, JSON.stringify(value == null ? null : value).slice(0, 80), ctx.ip);
+  sendJson(ctx.req, ctx.res, 200, { ok: true, user: users.adminUser(users.findById(row.id)) });
+});
+
+/* ───────────────────────── 头衔管理 ───────────────────────── */
+
+// GET /api/admin/titles
+route("GET", "/api/admin/titles", (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  sendJson(ctx.req, ctx.res, 200, { items: users.listTitles() });
+});
+
+// POST /api/admin/titles  { name, color?, minLevel?, auto?, sort? }
+route("POST", "/api/admin/titles", async (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  const payload = await readJson(ctx.req);
+  const result = users.createTitle(payload);
+  if (!result.ok) return sendJson(ctx.req, ctx.res, 400, { error: result.error });
+  audit("title.create", String(result.id), String(payload.name || ""), ctx.ip);
+  sendJson(ctx.req, ctx.res, 201, { id: result.id, items: users.listTitles() });
+});
+
+// POST /api/admin/titles/:id  { name?, color?, minLevel?, auto?, sort? }
+route("POST", "/api/admin/titles/:id", async (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  const payload = await readJson(ctx.req);
+  const result = users.updateTitle(ctx.params.id, payload);
+  if (!result.ok) return sendJson(ctx.req, ctx.res, 400, { error: result.error });
+  audit("title.update", String(ctx.params.id), null, ctx.ip);
+  sendJson(ctx.req, ctx.res, 200, { ok: true, items: users.listTitles() });
+});
+
+// POST /api/admin/titles/:id/delete
+route("POST", "/api/admin/titles/:id/delete", (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  const result = users.deleteTitle(ctx.params.id);
+  if (!result.ok) throw httpError(404, "title not found");
+  audit("title.delete", String(ctx.params.id), null, ctx.ip);
+  sendJson(ctx.req, ctx.res, 200, { ok: true, items: users.listTitles() });
+});
+
+/* ───────────────────────── 学校管理 ─────────────────────────
+ * 学校名单由后台维护：这是本校本地的运营数据，代码与配置文件都不该写死。
+ * 删除学校**不影响**已经选了它的用户（users.school 存的是校名快照）。
+ * ---------------------------------------------------------- */
+
+// GET /api/admin/schools
+route("GET", "/api/admin/schools", (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  sendJson(ctx.req, ctx.res, 200, { items: users.listSchoolsAdmin() });
+});
+
+// POST /api/admin/schools  { name, sort? }
+route("POST", "/api/admin/schools", async (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  const payload = await readJson(ctx.req);
+  const result = users.createSchool(payload);
+  if (!result.ok) return sendJson(ctx.req, ctx.res, 400, { error: result.error });
+  audit("school.create", String(result.id), String(payload.name || ""), ctx.ip);
+  sendJson(ctx.req, ctx.res, 201, { id: result.id, items: users.listSchoolsAdmin() });
+});
+
+// POST /api/admin/schools/:id  { name?, sort?, active? }
+route("POST", "/api/admin/schools/:id", async (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  const payload = await readJson(ctx.req);
+  const result = users.updateSchool(ctx.params.id, payload);
+  if (!result.ok) return sendJson(ctx.req, ctx.res, 400, { error: result.error });
+  audit("school.update", String(ctx.params.id), null, ctx.ip);
+  sendJson(ctx.req, ctx.res, 200, { ok: true, items: users.listSchoolsAdmin() });
+});
+
+// POST /api/admin/schools/:id/delete
+route("POST", "/api/admin/schools/:id/delete", (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  const result = users.deleteSchool(ctx.params.id);
+  if (!result.ok) throw httpError(404, "school not found");
+  audit("school.delete", String(ctx.params.id), null, ctx.ip);
+  sendJson(ctx.req, ctx.res, 200, { ok: true, items: users.listSchoolsAdmin() });
+});
+
+/* ───────────────────────── 公告管理 ───────────────────────── */
+
+// GET /api/admin/announcements
+route("GET", "/api/admin/announcements", (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  sendJson(ctx.req, ctx.res, 200, { items: announce.listAll() });
+});
+
+// POST /api/admin/announcements  { body, link?, linkText?, sort?, active? }
+route("POST", "/api/admin/announcements", async (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  const payload = await readJson(ctx.req);
+  const result = announce.create(payload);
+  if (!result.ok) {
+    const messages = { empty: "公告内容不能为空", too_long: `公告最多 ${announce.BODY_MAX} 个字` };
+    return sendJson(ctx.req, ctx.res, 400, { error: result.error, message: messages[result.error] });
+  }
+  audit("announce.create", String(result.id), null, ctx.ip);
+  sendJson(ctx.req, ctx.res, 201, { id: result.id, items: announce.listAll() });
+});
+
+// POST /api/admin/announcements/:id  —— 更新 / 启停
+route("POST", "/api/admin/announcements/:id", async (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  const payload = await readJson(ctx.req);
+  const result = announce.update(ctx.params.id, payload);
+  if (!result.ok) return sendJson(ctx.req, ctx.res, 400, { error: result.error });
+  audit("announce.update", String(ctx.params.id), null, ctx.ip);
+  sendJson(ctx.req, ctx.res, 200, { ok: true, items: announce.listAll() });
+});
+
+// POST /api/admin/announcements/:id/delete
+route("POST", "/api/admin/announcements/:id/delete", (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  const result = announce.remove(ctx.params.id);
+  if (!result.ok) throw httpError(404, "announcement not found");
+  audit("announce.delete", String(ctx.params.id), null, ctx.ip);
+  sendJson(ctx.req, ctx.res, 200, { ok: true, items: announce.listAll() });
+});
+
+/* ─────────────────────── 论坛审核动作 ─────────────────────── */
+
+// POST /api/admin/threads/:id/(approve|reject|remove)
+route("POST", "/api/admin/threads/:id/:action", (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  const action = ctx.params.action;
+  if (!["approve", "reject", "remove"].includes(action)) throw httpError(404, "not found");
+  const result = forum.reviewThread(ctx.params.id, action);
+  if (!result.ok) throw httpError(404, "thread not found");
+  audit("thread." + action, String(ctx.params.id), null, ctx.ip);
+  sendJson(ctx.req, ctx.res, 200, result);
+});
+
+// POST /api/admin/replies/:id/(approve|reject|remove)
+route("POST", "/api/admin/replies/:id/:action", (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  const action = ctx.params.action;
+  if (!["approve", "reject", "remove"].includes(action)) throw httpError(404, "not found");
+  const result = forum.reviewReply(ctx.params.id, action);
+  if (!result.ok) throw httpError(404, "reply not found");
+  audit("reply." + action, String(ctx.params.id), null, ctx.ip);
+  sendJson(ctx.req, ctx.res, 200, result);
+});
+
 // POST /api/admin/shutdown —— 受控的优雅停机入口
 //
 // 为什么需要它（而不是只能靠信号）：
@@ -1492,6 +2255,11 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (ctx.pathname.startsWith("/api/")) {
+      // 会话只在 API 请求上解析：静态产物每个请求都查一次库毫无意义。
+      // 解析失败（过期/被删/被封禁）一律按未登录处理，不抛错。
+      ctx.token = users.tokenFromCookie(req.headers.cookie);
+      ctx.user = ctx.token ? users.userForToken(ctx.token) : null;
+
       if (req.method === "OPTIONS") {
         return finish(req, res, 204, Buffer.alloc(0), {
           Allow: "GET, HEAD, POST, OPTIONS",
@@ -1538,18 +2306,40 @@ const server = http.createServer(async (req, res) => {
  *   - requestTimeout 30s：请求体很小，超过这个时间的连接基本是慢速攻击，
  *     让它自然断开，不占用单核。
  */
+/**
+ * 会话与验证码清理：过期的会话行会一直留着（表不大，但没必要）。
+ * 6 小时一次，unref 不影响退出。刻意不做「每次请求顺手删」——
+ * 那是把清理成本摊到热路径上，低配机器上不划算。
+ */
+const sessionSweeper = setInterval(() => {
+  try {
+    const sessions = users.pruneSessions();
+    const codes = db.prepare("DELETE FROM auth_codes WHERE expires_at < ?").run(Date.now() - 86400000);
+    const tokens = db.prepare("DELETE FROM register_tokens WHERE expires_at < ?").run(Date.now() - 86400000);
+    const total = sessions + codes.changes + tokens.changes;
+    if (total) console.log(`[auth] 清理过期凭据 ${total} 条`);
+  } catch (err) {
+    console.warn("[auth] 清理失败：" + err.message);
+  }
+}, 6 * 60 * 60 * 1000);
+sessionSweeper.unref();
+
 server.keepAliveTimeout = 65_000;
 server.headersTimeout = 66_000;
 server.requestTimeout = 30_000;
 
 server.listen(PORT, HOST, () => {
-  console.log(`[up] 表白墙服务（${beta.NAME} ${beta.VERSION}）http://${HOST}:${PORT}`
+  console.log(`[up] ${config.SITE_NAME} v${config.VERSION} http://${HOST}:${PORT}`
     + `（端口来自 ${PORT_SOURCE}）`);
   if (ENV_LOADED) console.log(`[env] 已从 ${ENV_FILE} 读取 ${ENV_LOADED} 项配置`);
   console.log(`[up] 静态根目录 ${WEB_ROOT}`);
   console.log(`[up] 数据库 ${db.DB_PATH}（页缓存 ${db.CACHE_MB}MB）`);
-  console.log(`[up] 内测门禁 ${gate.ENABLED ? "开启" : "关闭"}`
-    + `（邀请码 ${gate.INVITE_REQUIRED ? "已配置" : "未配置"}）`);
+  console.log(`[up] 邮件通道 ${config.EMAIL.configured
+    ? "Cloudflare Email Service 已配置"
+    : "未配置（验证码写入 server/data/outbox/）"}`);
+  console.log(`[up] 学校名单 ${users.schoolList().length} 所`
+    + `｜论坛 ${config.FEATURES.forum ? "开启" : "关闭"}`
+    + `｜私信 ${config.FEATURES.dm ? "开启" : "关闭"}`);
 
   // 前端产物缺失时大声提醒：面板部署最容易漏的一步（没有 shell 跑不了 build）。
   // 没有它页面会是 404 或半成品，而日志里除了这一条没有任何线索。
@@ -1575,7 +2365,7 @@ let shuttingDown = false;
  * 而我们精心写的「干净退出标记」也就白写了。
  *
  * 事件循环能被自然排空：HTTP server 已 close、点赞定时器与维护定时器都是 unref；
- * 内测版没有任何出网请求（门禁与反馈都在本进程内完成），因此不会有悬挂的 socket。
+ * 唯一可能悬挂的是发信请求，而它自带 AbortController 超时（CF_EMAIL_TIMEOUT_MS）。
  * 留一个兜底计时器防极端情况挂住。
  */
 function shutdown(signal) {

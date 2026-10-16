@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """
-设计令牌一致性检查。
+设计系统一致性检查（v1.0.0）。
 
-`web/src/styles/tokens.css` 与单文件原型 `school-confession-wall.html` 的 `:root`
-必须逐字一致 —— 原型是 OpenDesign 的视觉基线，React 版是它的工程化实现。
-一旦有人只改了其中一边，这个脚本会直接报出来。
+原来这个脚本把 tokens.css 与单文件原型 school-confession-wall.html 逐字比对；
+v1.0.0 删掉了原型（属于示例内容），改为检查**设计系统自身的规则**：
+
+  1. tokens.css 必须定义全部必需令牌（少一个就会有组件悄悄用上浏览器默认值）；
+  2. 所有 CSS/JSX 里 var(--x) 引用的令牌都必须真实存在（防拼写错误导致样式静默失效）；
+  3. 除 tokens.css 之外，任何 CSS 文件都不许出现颜色字面量（#hex / rgb() / hsl()）
+     —— 颜色只能来自令牌，否则深色模式必然有漏网之处。
 
 用法：python scripts/check-tokens.py
-退出码：0 = 一致；1 = 有差异
+退出码：0 = 通过；1 = 有违规
 """
 from __future__ import annotations
 
@@ -15,68 +19,86 @@ import re
 import sys
 from pathlib import Path
 
-# Windows 控制台默认 GBK，先把标准输出切到 UTF-8，避免中文与符号直接抛 UnicodeEncodeError
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 ROOT = Path(__file__).resolve().parent.parent
-PROTOTYPE = ROOT / "school-confession-wall.html"
-TOKENS = ROOT / "web" / "src" / "styles" / "tokens.css"
+SRC = ROOT / "web" / "src"
+STYLES = SRC / "styles"
+TOKENS_FILE = STYLES / "tokens.css"
 
-DECL = re.compile(r"^\s*(--[a-z0-9-]+)\s*:\s*(.+?);\s*$")
-ROOT_BLOCK = re.compile(r":root\s*\{(.*?)\}", re.S)
+DECL = re.compile(r"^\s*(--[a-z0-9-]+)\s*:", re.M)
+VAR_USE = re.compile(r"var\(\s*(--[a-z0-9-]+)")
+COLOR_LITERAL = re.compile(r"#[0-9a-fA-F]{3,8}\b|\brgba?\s*\(|\bhsla?\s*\(")
+
+# 组件依赖的最小令牌集：少一个就会出现「某一处在深色模式下瞎掉」
+REQUIRED = [
+    "--bg", "--surface", "--surface-2", "--fg", "--fg-2", "--muted", "--meta",
+    "--border", "--border-soft", "--accent", "--accent-on", "--accent-hover",
+    "--success", "--warn", "--danger", "--danger-on", "--like",
+    "--glass-bg", "--glass-bg-strong", "--glass-border", "--glass-blur", "--glass-saturate",
+    "--font-body", "--font-display",
+    "--space-1", "--space-2", "--space-3", "--space-4", "--space-5", "--space-6",
+    "--radius-sm", "--radius-md", "--radius-lg", "--radius-pill",
+    "--text-xs", "--text-sm", "--text-base", "--text-md", "--text-lg",
+    "--content-max", "--gutter", "--dock-h", "--dock-safe", "--tap",
+    "--shadow-card", "--shadow-sheet", "--motion-fast", "--motion-base", "--ease",
+]
 
 
-def read_tokens(path: Path) -> dict[str, str]:
-    """
-    只取**第一个** :root 块 —— 那是 Apple 设计系统的契约层。
-    两个文件里都还有第二个 :root 块放派生变量（--container / --gutter / --accent-soft …），
-    它们允许按各自布局实现调整（例如手机端 gutter 的覆盖方式不同），不参与契约校验。
-    """
-    text = path.read_text(encoding="utf-8")
-    blocks = ROOT_BLOCK.findall(text)
-    if not blocks:
-        return {}
-    out: dict[str, str] = {}
-    for line in blocks[0].splitlines():
-        m = DECL.match(line)
-        if m:
-            out[m.group(1)] = re.sub(r"\s+", " ", m.group(2)).strip()
-    return out
+BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
+LINE_COMMENT = re.compile(r"(?m)^\s*//.*$")
+
+
+def strip_comments(text: str) -> str:
+    return LINE_COMMENT.sub("", BLOCK_COMMENT.sub("", text))
 
 
 def main() -> int:
-    for path in (PROTOTYPE, TOKENS):
-        if not path.exists():
-            print(f"[FAIL] 找不到文件：{path}")
-            return 1
+    if not TOKENS_FILE.exists():
+        print(f"[FAIL] 找不到 {TOKENS_FILE}")
+        return 1
 
-    proto = read_tokens(PROTOTYPE)
-    react = read_tokens(TOKENS)
+    defined = set(DECL.findall(TOKENS_FILE.read_text(encoding="utf-8")))
+    problems: list[str] = []
 
-    missing = sorted(set(proto) - set(react))
-    extra = sorted(set(react) - set(proto))
-    changed = sorted(k for k in set(proto) & set(react) if proto[k] != react[k])
+    missing = [name for name in REQUIRED if name not in defined]
+    if missing:
+        problems.append("tokens.css 缺少必需令牌：\n" + "\n".join(f"    {n}" for n in missing))
 
-    print(f"原型 school-confession-wall.html : {len(proto)} 个令牌")
-    print(f"React  web/src/styles/tokens.css  : {len(react)} 个令牌")
+    undefined: dict[str, set[str]] = {}
+    css_files = sorted(SRC.rglob("*.css"))
+    jsx_files = sorted(SRC.rglob("*.jsx"))
+    for path in css_files + jsx_files:
+        # 注释里出现的 var(--x) 只是说明性文字（例如「需要新变体时用 var(--x) 派生」），
+        # 不参与引用检查 —— 否则每次写示例都要被自己的检查器拦下来。
+        text = strip_comments(path.read_text(encoding="utf-8"))
+        for name in VAR_USE.findall(text):
+            if name not in defined:
+                undefined.setdefault(name, set()).add(path.relative_to(ROOT).as_posix())
+    if undefined:
+        lines = [f"    {name}  ←  {', '.join(sorted(files))}" for name, files in sorted(undefined.items())]
+        problems.append("引用了未定义的令牌：\n" + "\n".join(lines))
 
-    if not (missing or extra or changed):
-        print("[OK] 设计令牌逐字一致")
+    offenders = []
+    for path in css_files:
+        if path.name == "tokens.css":
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if COLOR_LITERAL.search(line):
+                offenders.append(f"    {path.relative_to(ROOT).as_posix()}:{lineno}  {line.strip()[:80]}")
+    if offenders:
+        problems.append("颜色字面量必须收敛到 tokens.css：\n" + "\n".join(offenders))
+
+    print(f"令牌总数：{len(defined)}（tokens.css）")
+    print(f"检查范围：{len(css_files)} 个 CSS + {len(jsx_files)} 个 JSX")
+
+    if not problems:
+        print("[OK] 设计系统检查通过")
         return 0
 
-    if missing:
-        print("\n[FAIL] React 缺少令牌：")
-        for k in missing:
-            print(f"    {k}: {proto[k]}")
-    if extra:
-        print("\n[FAIL] React 多出令牌（原型没有，属于新增设计决策，需同步回原型）：")
-        for k in extra:
-            print(f"    {k}: {react[k]}")
-    if changed:
-        print("\n[FAIL] 取值不一致：")
-        for k in changed:
-            print(f"    {k}\n      原型 : {proto[k]}\n      React: {react[k]}")
+    for block in problems:
+        print("\n[FAIL] " + block)
     return 1
 
 

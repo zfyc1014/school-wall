@@ -1,575 +1,553 @@
 "use strict";
 
 /**
- * 后端接口测试：直接对真实 server/src/server.js 发请求（不是一个 mock）。
+ * 后端 API 全链路测试（v1.0.0）。
  *
- * 覆盖：
- *   - keyset 分页（sort=new / sort=hot / 分类过滤）游标推进正确、不重不漏
- *   - 内测门禁关闭时：配置报告未启用、写接口放行、响应不含任何第三方挑战密钥
- *   - 内测门禁开启后（邀请码 + 一次性本地挑战）：无凭据写请求 403 gate_required、
- *     邀请码错误 invalid_code、答对换取会话 cookie、挑战一次性（重放 409）、
- *     答错超限即作废、伪造 cookie 被拦、登出后重新被拦
- *   - 先审后发：新帖不进公开列表，审核通过后才出现
- *   - 内测反馈：需过门禁、正文长度校验、正常落库返回 id
- *   - ETag 条件请求返回 304、管理接口鉴权、CSP 收紧到 'self'
- *   - 生产环境未配置 GATE_INVITE_CODES 时拒绝启动（启动守卫）
+ * 为什么是「一条龙」而不是按接口分散：
+ *   本站接口是有状态的 —— 必须真注册账号、真发帖、真加好友，才能验证权限、
+ *   计数、审核口径这些最容易写错的地方。用 mock 数据测不出这些。
+ *
+ * 做法：起一个真实服务进程（临时库 + 临时端口 + AUTH_CODE_ECHO），
+ * 用真实 HTTP 请求走完整流程，逐条断言；跑完删库、杀进程。
  *
  * 用法：node scripts/api-test.js
- * 全部使用临时数据库与临时端口，不会碰 data/wall.db。
  */
 
 const { spawn } = require("child_process");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const crypto = require("crypto");
 
-const PORT = 8099 + Math.floor(Math.random() * 300);
-const HOST = "127.0.0.1";
-const BASE = `http://${HOST}:${PORT}`;
-const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "od-api-test-"));
-const ADMIN_TOKEN = crypto.randomBytes(24).toString("hex");
+const ROOT = path.join(__dirname, "..");
+const PORT = 8300 + Math.floor(Math.random() * 200);
+const BASE = "http://127.0.0.1:" + PORT;
+const ADMIN_TOKEN = "test-admin-token-0123456789abcdef";
+const IP_SECRET = "test-ip-hash-secret-0123456789abcdef";
 
-/** 门禁档使用的邀请码（gate.js 要求至少 8 位，过短的会被忽略） */
-const INVITE_CODE = "API-TEST-INVITE-1";
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "wall-api-"));
+const DB_PATH = path.join(TMP, "test.db");
+const OUTBOX = path.join(TMP, "outbox");
+const BANNED = path.join(TMP, "banned.txt");
 
-const results = [];
-const ok = (name, detail = "") => { results.push(true); console.log(`  \u2713 ${name}${detail ? `  — ${detail}` : ""}`); };
-const bad = (name, detail = "") => { results.push(false); console.log(`  \u2717 ${name}${detail ? `  — ${detail}` : ""}`); };
-const check = (name, cond, detail = "") => { if (cond) ok(name, detail); else bad(name, detail); return Boolean(cond); };
+// 测试词表只放一个自造词：这样断言不依赖真实词库的内容（词库是可以被运营替换的）
+fs.writeFileSync(BANNED, "# 测试词表\n测试违禁词\n", "utf8");
 
-const env = {
-  ...process.env,
-  HOST,
-  PORT: String(PORT),
-  NODE_ENV: "development", // 允许未配置密钥启动，便于测「门禁关闭」这一档
-  DB_PATH: path.join(TMP, "wall.db"),
-  ADMIN_TOKEN,
-  IP_HASH_SECRET: crypto.randomBytes(16).toString("hex"),
-  WEB_ROOT: path.resolve(__dirname, "..", ".."), // 与 server.js 的默认一致（仓库根）
-  INDEX_FILE: "index.html",
-  LIKE_FLUSH_MS: "60",
-  FEED_CACHE_MS: "0", // 测试里关掉短时缓存，避免掩盖数据变化
-  ADMIN_RATE_LIMIT: "1000", // 测试会高频调管理接口，放宽鉴权限流
-  ADMIN_API_RATE_LIMIT: "5000", // 已鉴权请求的宽松上限（默认 600/5min），测试里放大避免误伤
-  DEBUG_EXIT: "1", // 打开退出追踪，便于定位异常退出
-  DB_CHECKPOINT_MS: "600000",
-  DB_CLEANUP_MS: "600000",
-  GATE_ENFORCE: "0", // 基础档：内测门禁关闭
-  GATE_INVITE_CODES: "",
-  // 不读 server/.env：测试结果必须只由下面这些显式变量决定，
-  // 否则开发机上那份 .env 会悄悄改变被测进程的行为（见 src/env.js）。
-  OD_SKIP_ENV_FILE: "1"
-};
+let passed = 0;
+let failed = 0;
+const failures = [];
 
-let server = null;
-/** 服务进程是否还活着 + 最近的输出，fetch 失败时用来定位原因 */
-let serverLog = () => "";
-let serverAlive = () => false;
-
-function startServer(extraEnv = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [path.join(__dirname, "..", "src", "server.js")], {
-      env: Object.assign({}, env, extraEnv),
-      stdio: ["ignore", "pipe", "pipe"]
-    });
-    let out = "";
-    let alive = true;
-    const onData = (chunk) => {
-      out += String(chunk);
-      if (/\[up\] 表白墙服务/.test(out)) {
-        serverLog = () => out;
-        serverAlive = () => alive;
-        resolve({ child, log: () => out });
-      }
-    };
-    child.stdout.on("data", onData);
-    child.stderr.on("data", onData);
-    child.on("exit", (code, signal) => {
-      alive = false;
-      serverAlive = () => false;
-      // 把退出码/信号一并报出来：原生断言失败会是 134 或 signal=SIGABRT，
-      // 与「被测试脚本主动 kill」是完全不同的两件事，必须能区分。
-      process.stderr.write(`\n[服务进程退出] pid=${child.pid} code=${code} signal=${signal}\n`);
-      reject(new Error(`服务退出 code=${code} signal=${signal}\n${out}`));
-    });
-    setTimeout(() => reject(new Error(`启动超时\n${out}`)), 20000);
-  });
+function ok(name, condition, detail) {
+  if (condition) {
+    passed += 1;
+    console.log("  ✓ " + name);
+  } else {
+    failed += 1;
+    failures.push(name);
+    console.log("  ✗ " + name + (detail === undefined ? "" : "  → " + JSON.stringify(detail)));
+  }
 }
 
-/**
- * 启动一个**应当拒绝启动**的进程，等它自己退出并收集全部输出。
- * 与 startServer 的区别：这里期待的是启动失败，所以不等待就绪日志。
- */
-function startExpectExit(extraEnv = {}, timeoutMs = 8000) {
-  return new Promise((resolve) => {
-    const child = spawn(process.execPath, [path.join(__dirname, "..", "src", "server.js")], {
-      env: Object.assign({}, env, extraEnv),
-      stdio: ["ignore", "pipe", "pipe"]
+const eq = (name, actual, expected) => ok(name, actual === expected, { actual, expected });
+const section = (title) => console.log("\n" + title);
+
+/* ───────────────────────── HTTP 客户端（带 cookie jar）───────────────────────── */
+
+function createClient() {
+  const jar = new Map();
+
+  async function request(method, url, { body, admin = false } = {}) {
+    const headers = {};
+    if (body !== undefined) headers["content-type"] = "application/json";
+    if (admin) headers.authorization = "Bearer " + ADMIN_TOKEN;
+    if (jar.size) headers.cookie = Array.from(jar).map(([k, v]) => k + "=" + v).join("; ");
+
+    const res = await fetch(BASE + url, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body)
     });
-    let out = "";
-    let settled = false;
-    const done = (result) => { if (!settled) { settled = true; resolve(result); } };
-    const onData = (chunk) => { out += String(chunk); };
-    child.stdout.on("data", onData);
-    child.stderr.on("data", onData);
-    child.on("exit", (code, signal) => done({ code, signal, out }));
-    setTimeout(() => {
-      try { child.kill("SIGKILL"); } catch { /* ignore */ }
-      done({ code: null, signal: "timeout", out });
-    }, timeoutMs);
-  });
-}
 
-async function stopServer(child) {
-  if (!child) return;
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  // 等进程真的退出：紧接着要在同一端口上起下一个进程，端口没释放会 EADDRINUSE
-  const exited = new Promise((r) => child.once("exit", r));
-  child.kill("SIGTERM");
-  await Promise.race([exited, new Promise((r) => setTimeout(r, 3000))]);
-  try { child.kill("SIGKILL"); } catch { /* ignore */ }
-  await new Promise((r) => setTimeout(r, 150));
-}
-
-async function api(pathname, options = {}) {
-  const init = Object.assign({ headers: {} }, options);
-  let res = null;
-  let lastErr = null;
-
-  // 一次重试：本脚本会在中途重启被测服务，而 Node 的 fetch（undici）会保留
-  // keep-alive 连接池，旧连接可能指向刚被替换掉的进程。这类失败是测试脚手架的
-  // 问题，不是服务的问题，重试一次即可；同时把 socket 层错误码打出来便于判断。
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      process.stderr.write(`      → ${init.method || "GET"} ${pathname}\n`);
-      res = await fetch(BASE + pathname, init);
-      process.stderr.write(`      ← ${res.status}\n`);
-      break;
-    } catch (err) {
-      lastErr = err;
-      const code = err?.cause?.code || err?.code || "";
-      const alive = serverAlive();
-      if (!alive) {
-        throw new Error(
-          `请求 ${pathname} 失败（${err.message}${code ? ` / ${code}` : ""}）；服务进程已退出`
-          + `\n--- 服务输出 ---\n${serverLog()}`
-        );
-      }
-      if (attempt === 0) {
-        await new Promise((r) => setTimeout(r, 250));
-        continue;
-      }
-      throw new Error(
-        `请求 ${pathname} 失败两次（${err.message}${code ? ` / ${code}` : ""}）；服务仍在运行`
-      );
+    const setCookies = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
+    for (const line of setCookies) {
+      const pair = line.split(";")[0];
+      const idx = pair.indexOf("=");
+      if (idx < 0) continue;
+      const name = pair.slice(0, idx).trim();
+      const value = pair.slice(idx + 1).trim();
+      if (!value || /Max-Age=0/i.test(line)) jar.delete(name);
+      else jar.set(name, value);
     }
+
+    const text = await res.text();
+    let payload = null;
+    if (text) {
+      try { payload = JSON.parse(text); } catch { payload = { raw: text }; }
+    }
+    return { status: res.status, body: payload };
   }
 
-  let body = null;
-  const text = await res.text();
-  try { body = text ? JSON.parse(text) : null; } catch { body = text; }
-  return { status: res.status, body, headers: res.headers };
+  return {
+    get: (url, o) => request("GET", url, o),
+    post: (url, body, o = {}) => request("POST", url, { ...o, body: body === undefined ? {} : body }),
+    patch: (url, body, o) => request("PATCH", url, { ...o, body }),
+    del: (url, o) => request("DELETE", url, o),
+    jar
+  };
 }
 
-/** JSON POST 的简写：测试里绝大多数写请求都是这个形状 */
-const jsonPost = (pathname, payload, extraHeaders = {}) => api(pathname, {
-  method: "POST",
-  headers: Object.assign({ "content-type": "application/json" }, extraHeaders),
-  body: JSON.stringify(payload)
+/* ───────────────────────── 服务进程 ───────────────────────── */
+
+const server = spawn(process.execPath, [path.join(ROOT, "src", "server.js")], {
+  cwd: ROOT,
+  env: {
+    ...process.env,
+    OD_SKIP_ENV_FILE: "1",
+    NODE_ENV: "test",
+    HOST: "127.0.0.1",
+    PORT: String(PORT),
+    DB_PATH,
+    OUTBOX_DIR: OUTBOX,
+    BANNED_FILE: BANNED,
+    ADMIN_TOKEN,
+    IP_HASH_SECRET: IP_SECRET,
+    AUTH_CODE_ECHO: "1",
+    FORCE_HTTPS: "0",
+    FEED_CACHE_MS: "0"
+  },
+  stdio: ["ignore", "pipe", "pipe"]
 });
 
-/**
- * 从题面算出答案。
- * 出题格式由 gate.js 的 makeItem 固定为「两位数 ± 一位数 = ?」，
- * 题面里只有题目、没有答案，所以测试必须自己解析（这也顺带证明题目确实可解）。
- */
-function solve(q) {
-  const m = /^\s*(\d+)\s*([+\-])\s*(\d+)\s*=\s*\?\s*$/.exec(String(q || ""));
-  if (!m) throw new Error(`无法解析的挑战题面：${JSON.stringify(q)}`);
-  const a = Number(m[1]);
-  const b = Number(m[3]);
-  return String(m[2] === "+" ? a + b : a - b);
+let serverLog = "";
+server.stdout.on("data", (c) => { serverLog += String(c); });
+server.stderr.on("data", (c) => { serverLog += String(c); });
+
+function cleanup() {
+  try { server.kill(); } catch { /* ignore */ }
+  try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* ignore */ }
 }
 
-const solveAll = (items) => (items || []).map((it) => solve(it.q));
-
-/** 取一份挑战并解答（答案只存在服务端，客户端只能自己算） */
-async function fetchChallenge() {
-  const res = await api("/api/gate/challenge", { method: "POST" });
-  const items = res.body.items || [];
-  return { challengeRes: res, challengeId: res.body.id, items, answers: solveAll(items) };
+async function waitForServer() {
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(BASE + "/api/health");
+      if (res.ok) return;
+    } catch { /* 还没起来 */ }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  throw new Error("服务未能在 20 秒内启动\n" + serverLog);
 }
 
-/** 完整走一遍「取题 → 填邀请码与答案 → 换会话」，返回原始 Set-Cookie */
-async function openGateSession(code) {
-  const challenge = await fetchChallenge();
-  const res = await jsonPost("/api/gate/verify", {
-    code,
-    challengeId: challenge.challengeId,
-    answers: challenge.answers
+/** 发码 → 校验 → 注册，返回 { user } 或 { error } */
+async function registerUser(client, email, nickname, school) {
+  const code = await client.post("/api/auth/code", { email });
+  if (code.status !== 200) return { error: code };
+  const verified = await client.post("/api/auth/verify", { email, code: code.body.devCode });
+  if (verified.status !== 200) return { error: verified };
+  const registered = await client.post("/api/auth/register", {
+    token: verified.body.token, nickname, school
   });
-  const setCookie = res.headers.get("set-cookie") || "";
-  return {
-    res,
-    setCookie,
-    cookie: setCookie.split(";")[0],
-    challengeId: challenge.challengeId,
-    items: challenge.items,
-    answers: challenge.answers
-  };
+  return { status: registered.status, user: registered.body.user, body: registered.body };
 }
 
-/**
- * 灌入测试数据（独立进程写库，测试进程自己不持有 SQLite 连接）。
- *
- * 失败必须立刻抛错：灌数据进程崩掉时若被忽略，后面所有分页断言都会以
- * 「列表为空」这种极具误导性的形式一起失败，排错要多花十倍时间。
- */
-function seed(count, extraEnv) {
-  const script = `
-    process.env.DB_PATH = ${JSON.stringify(env.DB_PATH)};
-    const db = require(${JSON.stringify(path.join(__dirname, "..", "src", "db.js"))});
-    const ins = db.prepare("INSERT INTO posts (cat,body,status,like_count,created_at) VALUES (?,?,?,?,?)");
-    const tx = db.transaction(() => {
-      const cats = ["表白","树洞","寻人","失物","致谢"];
-      const base = Date.now();
-      for (let i = 0; i < ${count}; i++) {
-        ins.run(cats[i % 5], "接口测试内容 " + i, "approved", ${count} - i, base - i * 1000);
-      }
-    });
-    tx();
-    console.log("seeded " + db.prepare("SELECT COUNT(*) AS n FROM posts WHERE status='approved'").get().n);
-    // 必须干净收尾：带活连接直接 process.exit 会触发 better-sqlite3 的原生断言，
-    // 进程以 SIGABRT 结束（灌数据进程崩掉不会被注意，但会污染日志与退出码判断）。
-    db.shutdown();
-    db.close();
-  `;
+/* ───────────────────────────── 用例 ───────────────────────────── */
 
-  const runOnce = () => new Promise((resolve) => {
-    const child = spawn(process.execPath, ["-e", script], {
-      env: Object.assign({}, env, extraEnv || {}),
-      stdio: ["ignore", "pipe", "pipe"]
-    });
-    let out = "";
-    child.stdout.on("data", (c) => { out += String(c); });
-    child.stderr.on("data", (c) => { out += String(c); });
-    child.on("exit", (code) => resolve({ code, out }));
-    setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* ignore */ } }, 15000);
-  });
+async function main() {
+  await waitForServer();
 
-  return async () => {
-    let last = { code: null, out: "" };
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      // 重试前先删掉可能写了一半的库文件（此时还没有服务在用它）
-      for (const suffix of ["", "-wal", "-shm"]) {
-        try { fs.rmSync(env.DB_PATH + suffix, { force: true }); } catch { /* ignore */ }
-      }
-      last = await runOnce();
-      if (last.code === 0 && last.out.includes(`seeded ${count}`)) return;
-      await new Promise((r) => setTimeout(r, 200));
-    }
-    throw new Error(`灌入测试数据失败（code=${last.code}）\n${last.out}`);
-  };
-}
+  const anon = createClient();
+  const alice = createClient();
+  const bob = createClient();
+  const carol = createClient();
+  const dave = createClient();
 
-(async () => {
-  console.log(`\n后端接口测试：${BASE}（临时库 ${env.DB_PATH}）\n`);
+  let aliceUuid = "";
+  let bobUuid = "";
+  let threadId = 0;
+  let postId = 0;
 
-  /* ── 准备：先建库灌数据，再启动服务 ── */
-  await seed(45)();
-  const started = await startServer();
-  server = started.child;
+  section("站点与健康检查");
+  {
+    const health = await anon.get("/api/health");
+    eq("GET /api/health 返回 200", health.status, 200);
+    eq("版本号是 1.0.0", health.body.version, "1.0.0");
 
-  /* ── 1. keyset 分页 ─────────────────────────────────────────── */
-  console.log("[1/7] keyset 分页（sort=new）");
-  const p1 = await api("/api/posts?sort=new&limit=20");
-  check("首屏返回 20 条且有游标", p1.status === 200 && p1.body.items.length === 20 && p1.body.nextCursor, `nextCursor=${p1.body.nextCursor}`);
+    const site = await anon.get("/api/site");
+    eq("GET /api/site 返回 200", site.status, 200);
+    ok("站点信息含 version/siteName/features/announcements",
+      Boolean(site.body.version && site.body.siteName && site.body.features && Array.isArray(site.body.announcements)),
+      site.body);
 
-  const p2 = await api(`/api/posts?sort=new&limit=20&cursor=${encodeURIComponent(p1.body.nextCursor)}`);
-  const idsPage1 = new Set(p1.body.items.map((i) => i.id));
-  const overlap = p2.body.items.filter((i) => idsPage1.has(i.id));
-  check("第二页与第一页无重叠", overlap.length === 0, `重叠 ${overlap.length} 条`);
-  check("游标格式为 created_at.id 且可推进", /^\d+\.\d+$/.test(p1.body.nextCursor), p1.body.nextCursor);
-
-  const p3 = await api(`/api/posts?sort=new&limit=20&cursor=${encodeURIComponent(p2.body.nextCursor)}`);
-  check("第三页取到剩余 5 条且到底", p3.body.items.length === 5 && p3.body.nextCursor === null, `${p3.body.items.length} 条 · cursor=${p3.body.nextCursor}`);
-
-  const all = [...p1.body.items, ...p2.body.items, ...p3.body.items];
-  const sortedDesc = all.every((it, i) => i === 0 || all[i - 1].createdAt >= it.createdAt);
-  check("跨页结果严格按时间倒序（无重复/无遗漏）", all.length === 45 && sortedDesc && new Set(all.map((i) => i.id)).size === 45, `共 ${all.length} 条`);
-
-  // 旧版纯 id 游标必须还能用（升级兼容）
-  const legacy = await api(`/api/posts?sort=new&limit=20&cursor=${p1.body.items[9].id}`);
-  check("兼容旧版纯 id 游标", legacy.status === 200 && legacy.body.items.length === 20, `返回 ${legacy.body.items.length} 条`);
-
-  // 回归：不带 limit 时必须用默认页大小。
-  // 这里踩过的坑：Number(null) === 0，如果 toInt 少了「null/空串走 fallback」这一步，
-  // 缺省 limit 会被静默吞成 0 → clamp 到 1，首屏恒定只返回 1 条内容。
-  const defaultPage = await api("/api/posts?sort=new");
-  check("缺省 limit 时按默认页大小返回（不被 Number(null)=0 吞成 1 条）",
-    defaultPage.status === 200 && defaultPage.body.items.length === 20 && Boolean(defaultPage.body.nextCursor),
-    `${defaultPage.body.items.length} 条 · cursor=${defaultPage.body.nextCursor ? "有" : "无"}`);
-
-  /* ── 2. 热榜与分类分页 ──────────────────────────────────────── */
-  console.log("\n[2/7] 分页（sort=hot 与分类过滤）");
-  const h1 = await api("/api/posts?sort=hot&limit=20");
-  const h2 = await api(`/api/posts?sort=hot&limit=20&cursor=${encodeURIComponent(h1.body.nextCursor)}`);
-  const likesDesc = [...h1.body.items, ...h2.body.items].every((it, i, arr) => i === 0 || arr[i - 1].likes >= it.likes);
-  check("热榜按点赞降序且分页无重叠", likesDesc && /^\d+\.\d+$/.test(h1.body.nextCursor), `cursor=${h1.body.nextCursor}`);
-
-  const c1 = await api("/api/posts?sort=new&limit=10&cat=" + encodeURIComponent("树洞"));
-  check("分类过滤只返回该分类", c1.body.items.length > 0 && c1.body.items.every((i) => i.cat === "树洞"), `${c1.body.items.length} 条`);
-  if (c1.body.nextCursor) {
-    const c2 = await api("/api/posts?sort=new&limit=10&cat=" + encodeURIComponent("树洞") + "&cursor=" + encodeURIComponent(c1.body.nextCursor));
-    const cIds = new Set(c1.body.items.map((i) => i.id));
-    check("分类分页无重叠", c2.body.items.every((i) => !cIds.has(i.id)), `第二页 ${c2.body.items.length} 条`);
-  } else {
-    ok("分类分页无重叠", "该分类不足一页，跳过");
+    const schools = await anon.get("/api/schools");
+    ok("学校名单初始为空（由后台维护）", Array.isArray(schools.body.items) && schools.body.items.length === 0);
   }
 
-  const q = await api("/api/posts?q=" + encodeURIComponent("接口测试内容 1"));
-  check("关键词搜索可用", q.status === 200 && Array.isArray(q.body.items), `${q.body.items.length} 条`);
-
-  /* ── 3. ETag ────────────────────────────────────────────────── */
-  console.log("\n[3/7] ETag 条件请求");
-  const e1 = await api("/api/posts?sort=new&limit=20");
-  const etag = e1.headers.get("etag");
-  check("列表响应带 ETag", Boolean(etag), etag || "(无)");
-  const e2 = await api("/api/posts?sort=new&limit=20", { headers: { "if-none-match": etag } });
-  check("带 If-None-Match 返回 304", e2.status === 304, `status=${e2.status}`);
-
-  /* ── 4. 门禁关闭时的行为（自托管门禁，不下发任何第三方密钥）─── */
-  console.log("\n[4/7] 写接口与内测门禁配置（当前门禁关闭）");
-  const cfg = await api("/api/gate/config");
-  check("配置接口可用且标记门禁未启用",
-    cfg.status === 200 && cfg.body.enabled === false && cfg.body.required === false,
-    JSON.stringify(cfg.body));
-
-  // 反向断言：自托管门禁不下发 siteKey 之类的第三方挑战密钥。
-  // 一旦有人把 Turnstile/reCAPTCHA 的密钥字段加回来，这条会立刻失败。
-  const cfgText = JSON.stringify(cfg.body);
-  check("配置响应不含任何第三方挑战密钥字段",
-    !/siteKey|site_key|turnstile|recaptcha|hcaptcha/i.test(cfgText),
-    cfgText.slice(0, 140) + "…");
-
-  const wrote = await jsonPost("/api/posts", { cat: "表白", body: "接口测试：这条应该进入审核队列。" });
-  check("未启用门禁时写接口放行（返回 pending）", wrote.status === 201 && wrote.body.status === "pending", JSON.stringify(wrote.body));
-
-  const fbOpen = await jsonPost("/api/feedback", { body: "门禁关闭时反馈入口应当可用。", cat: "other" });
-  check("门禁关闭时反馈可直接提交并返回 id",
-    fbOpen.status === 201 && fbOpen.body.ok === true && Number(fbOpen.body.id) > 0, JSON.stringify(fbOpen.body));
-
-  /* ── 5. 先审后发 ────────────────────────────────────────────── */
-  console.log("\n[5/7] 先审后发与审核流转");
-  const feedAfterPost = await api("/api/posts?sort=new&limit=50");
-  const leaked = feedAfterPost.body.items.some((i) => String(i.id) === String(wrote.body.id));
-  check("未审核的新帖不出现在公开列表", !leaked);
-
-  const stats = await api("/api/admin/stats", { headers: { authorization: `Bearer ${ADMIN_TOKEN}` } });
-  check("管理统计可读且包含数据库体积", stats.status === 200 && stats.body.pendingPosts >= 1 && stats.body.db && stats.body.db.fileBytes > 0,
-    `pending=${stats.body.pendingPosts} · db=${Math.round((stats.body.db?.fileBytes || 0) / 1024)}KB`);
-
-  const unauth = await api("/api/admin/stats");
-  check("管理接口未鉴权被拒", unauth.status === 401, `status=${unauth.status}`);
-
-  const approve = await api(`/api/admin/posts/${wrote.body.id}/approve`, { method: "POST", headers: { authorization: `Bearer ${ADMIN_TOKEN}` } });
-  check("审核通过成功", approve.status === 200 && approve.body.status === "approved", JSON.stringify(approve.body));
-
-  const feedAfterApprove = await api("/api/posts?sort=new&limit=50");
-  check("审核通过后出现在公开列表", feedAfterApprove.body.items.some((i) => String(i.id) === String(wrote.body.id)));
-
-  /* ── 6. 开启内测门禁后的服务端闸门 ─────────────────────────── */
-  console.log("\n[6/7] 开启内测门禁后的服务端闸门（邀请码 + 一次性挑战）");
-  await stopServer(server);
-  server = null;
-  const started2 = await startServer({
-    GATE_ENFORCE: "1",
-    GATE_INVITE_CODES: INVITE_CODE,
-    GATE_COOKIE_SECURE: "0", // 本地是明文 HTTP；这里只验证服务端签发的 cookie 属性
-    GATE_MAX_ATTEMPTS: "2"   // 压到 2 次，几条请求就能验证「答错超限即作废」
-  });
-  server = started2.child;
-
-  const cfg2 = await api("/api/gate/config");
-  check("配置接口报告门禁必需",
-    cfg2.status === 200 && cfg2.body.enabled === true && cfg2.body.required === true && cfg2.body.inviteRequired === true,
-    JSON.stringify(cfg2.body));
-
-  const blocked = await jsonPost("/api/posts", { cat: "表白", body: "没有门禁凭据的请求，必须被拦下。" });
-  check("没有凭据的写请求被 403 拦下", blocked.status === 403 && blocked.body.error === "gate_required", JSON.stringify(blocked.body));
-
-  const wrongInvite = await jsonPost("/api/gate/verify", { code: "NOT-A-VALID-CODE", challengeId: "x", answers: [] });
-  check("邀请码错误返回 403 invalid_code",
-    wrongInvite.status === 403 && wrongInvite.body.error === "invalid_code", JSON.stringify(wrongInvite.body));
-
-  const session = await openGateSession(INVITE_CODE);
-  check("正确邀请码 + 正确挑战答案换取会话",
-    session.res.status === 200 && session.res.body.verified === true && /od_gate=/.test(session.setCookie),
-    `status=${session.res.status} · ${JSON.stringify(session.res.body)}`);
-  check("会话 cookie 为 HttpOnly + SameSite=Lax + Path=/",
-    /HttpOnly/i.test(session.setCookie) && /SameSite=Lax/i.test(session.setCookie) && /Path=\//.test(session.setCookie),
-    session.setCookie);
-  const cookie = session.cookie;
-
-  const withSession = await jsonPost("/api/posts", { cat: "树洞", body: "带门禁会话的请求应该被放行。" }, { cookie });
-  check("带会话 cookie 的写请求放行（进入待审）",
-    withSession.status === 201 && withSession.body.status === "pending", JSON.stringify(withSession.body));
-
-  const cfgWithCookie = await api("/api/gate/config", { headers: { cookie } });
-  check("配置接口反映当前会话已验证", cfgWithCookie.body.verified === true, `verified=${cfgWithCookie.body.verified}`);
-
-  /* ── 点赞全链路：先审后发 → 审核通过 → 点赞 → 取消 ──────────────
-   * 这段曾经完全没有覆盖（smoke 走本地模式、api-smoke 用自带 mock 后端），
-   * 结果 SQL 里一个保留字别名（`SELECT 1 AS on`）让点赞接口在真实后端上一直是 500。
-   * ------------------------------------------------------------------ */
-  const pendingId = withSession.body.id;
-  const likeBeforeApprove = await jsonPost(`/api/posts/${pendingId}/like`, {}, { cookie });
-  check("待审帖子不可点赞（404，先审后发对外生效）",
-    likeBeforeApprove.status === 404, `status=${likeBeforeApprove.status}`);
-
-  const approved = await api(`/api/admin/posts/${pendingId}/approve`, {
-    method: "POST", headers: { authorization: `Bearer ${ADMIN_TOKEN}` }
-  });
-  check("管理接口把待审帖子置为 approved", approved.status === 200, `status=${approved.status}`);
-
-  const liked = await jsonPost(`/api/posts/${pendingId}/like`, {}, { cookie });
-  check("点赞成功并返回权威计数（回归：别名踩 SQL 关键字曾整条 500）",
-    liked.status === 200 && liked.body.liked === true && liked.body.likes === 1,
-    `status=${liked.status} · ${JSON.stringify(liked.body)}`);
-
-  const unliked = await jsonPost(`/api/posts/${pendingId}/like`, {}, { cookie });
-  check("再次点击取消点赞（同一 IP 幂等切换）",
-    unliked.status === 200 && unliked.body.liked === false && unliked.body.likes === 0,
-    `status=${unliked.status} · ${JSON.stringify(unliked.body)}`);
-
-  const likeNoGate = await jsonPost(`/api/posts/${pendingId}/like`, {});
-  check("不带门禁会话的点赞被 403 拦下",
-    likeNoGate.status === 403 && likeNoGate.body.error === "gate_required", JSON.stringify(likeNoGate.body));
-
-  // 一次性：答对后服务端立刻作废该挑战，不给重放留窗口
-  const replay = await jsonPost("/api/gate/verify", {
-    code: INVITE_CODE, challengeId: session.challengeId, answers: session.answers
-  });
-  check("挑战一次性：同 id + 同答案重放返回 409 challenge_expired",
-    replay.status === 409 && replay.body.error === "challenge_expired", JSON.stringify(replay.body));
-
-  // 答错上限：本档 GATE_MAX_ATTEMPTS=2
-  const ch2 = await fetchChallenge();
-  const wrong1 = await jsonPost("/api/gate/verify", { code: INVITE_CODE, challengeId: ch2.challengeId, answers: ["-1"] });
-  check("答错一次返回剩余可试次数",
-    wrong1.status === 403 && wrong1.body.error === "challenge_failed" && wrong1.body.remaining === 1,
-    JSON.stringify(wrong1.body));
-  await jsonPost("/api/gate/verify", { code: INVITE_CODE, challengeId: ch2.challengeId, answers: ["-1"] });
-  const overLimit = await jsonPost("/api/gate/verify", { code: INVITE_CODE, challengeId: ch2.challengeId, answers: ch2.answers });
-  check("答错超过 GATE_MAX_ATTEMPTS 后挑战作废（答案正确也不放行）",
-    overLimit.status === 403 && overLimit.body.error === "challenge_failed" && /错误次数过多/.test(overLimit.body.message || ""),
-    JSON.stringify(overLimit.body));
-  const afterVoid = await jsonPost("/api/gate/verify", { code: INVITE_CODE, challengeId: ch2.challengeId, answers: ch2.answers });
-  check("作废后的挑战彻底失效（再提交返回 409）",
-    afterVoid.status === 409 && afterVoid.body.error === "challenge_expired", JSON.stringify(afterVoid.body));
-
-  // 伪造 cookie：签名尾部改一位，长度不变但校验必然不等
-  const eq = cookie.indexOf("=");
-  const rawValue = cookie.slice(eq + 1);
-  const dot = rawValue.indexOf(".");
-  const tampered = cookie.slice(0, eq + 1)
-    + rawValue.slice(0, dot + 1)
-    + rawValue.slice(dot + 1, -1)
-    + (rawValue.endsWith("A") ? "B" : "A");
-  const forged = await jsonPost("/api/posts", { cat: "表白", body: "篡改过的会话 cookie 不应该被放行。" }, { cookie: tampered });
-  check("伪造/篡改的 od_gate cookie 仍被 403 拦下",
-    forged.status === 403 && forged.body.error === "gate_required", JSON.stringify(forged.body));
-
-  const reportBlocked = await jsonPost("/api/reports", { postId: 1, reason: "没有门禁凭据的举报" });
-  check("不带会话 cookie 的举报被 403 拦下",
-    reportBlocked.status === 403 && reportBlocked.body.error === "gate_required", JSON.stringify(reportBlocked.body));
-  const reportOk = await jsonPost("/api/reports", { postId: 1, reason: "带门禁会话的举报" }, { cookie });
-  check("带会话 cookie 的举报放行（落一条新工单）", reportOk.status === 201, `status=${reportOk.status} · ${JSON.stringify(reportOk.body)}`);
-
-  // 反馈同样受门禁约束（先过门禁，再看限流与长度）
-  const fbBlocked = await jsonPost("/api/feedback", { body: "没有门禁凭据的反馈不应该入库。" });
-  check("门禁开启时反馈也需要先过门禁",
-    fbBlocked.status === 403 && fbBlocked.body.error === "gate_required", JSON.stringify(fbBlocked.body));
-  const fbShort = await jsonPost("/api/feedback", { body: "短" }, { cookie });
-  check("反馈正文过短返回 400", fbShort.status === 400, `status=${fbShort.status}`);
-  const fbLong = await jsonPost("/api/feedback", { body: "长".repeat(900) }, { cookie });
-  check("反馈正文超过 FEEDBACK_MAX 返回 400", fbLong.status === 400, `status=${fbLong.status}`);
-  const fbOk = await jsonPost("/api/feedback", { body: "内测反馈：门禁题目建议多出一点。", contact: "tester@example.com", cat: "idea" }, { cookie });
-  check("反馈正常落库并返回 id",
-    fbOk.status === 201 && fbOk.body.ok === true && Number(fbOk.body.id) > 0, JSON.stringify(fbOk.body));
-
-  const logout = await api("/api/gate/logout", { method: "POST" });
-  const cleared = logout.headers.get("set-cookie") || "";
-  check("登出接口返回未验证并清除 cookie",
-    logout.status === 200 && logout.body.verified === false && /Max-Age=0/i.test(cleared),
-    `${JSON.stringify(logout.body)} · ${cleared}`);
-  const afterLogout = await jsonPost("/api/posts", { cat: "失物", body: "登出后不应该还能写入内容。" });
-  check("登出后写请求重新被 403 拦下",
-    afterLogout.status === 403 && afterLogout.body.error === "gate_required", JSON.stringify(afterLogout.body));
-
-  // CSP 反向断言：内测版没有任何第三方脚本，安全头必须收紧
-  const csp = (await api("/api/health")).headers.get("content-security-policy") || "";
-  check("CSP 不再放行第三方脚本（script-src 'self' 且不含 challenges.cloudflare.com）",
-    /script-src[^;]*'self'/.test(csp) && !/challenges\.cloudflare\.com/.test(csp), csp.slice(0, 120) + "…");
-  check("CSP 禁止外部框架嵌入（frame-src 'none'）", /frame-src[^;]*'none'/.test(csp), csp.slice(0, 120) + "…");
-
-  /* ── 7. 管理限流只掐「鉴权失败」 ─────────────────────────────── */
-  console.log("\n[7/8] 管理接口限流：已鉴权的正常使用不该被掐");
-  await stopServer(server);
-  server = null;
-  // 故意把防爆破配额压到 3：后台一进页面就要打 6 个接口，旧实现必然立刻 429
-  server = await startServer({ ADMIN_RATE_LIMIT: "3", ADMIN_API_RATE_LIMIT: "500" });
-
-  let adminOk = 0;
-  for (let i = 0; i < 12; i += 1) {
-    const r = await api("/api/admin/stats", { headers: { authorization: `Bearer ${ADMIN_TOKEN}` } });
-    if (r.status === 200) adminOk += 1;
+  section("后台：学校管理");
+  {
+    eq("未带令牌访问后台被拒", (await anon.get("/api/admin/users")).status, 401);
+    eq("新增学校返回 201", (await anon.post("/api/admin/schools", { name: "示例大学", sort: 1 }, { admin: true })).status, 201);
+    await anon.post("/api/admin/schools", { name: "第二大学" }, { admin: true });
+    eq("同名学校被拒绝", (await anon.post("/api/admin/schools", { name: "示例大学" }, { admin: true })).body.error, "duplicate_name");
+    eq("公开学校列表返回 2 所", (await anon.get("/api/schools")).body.items.length, 2);
   }
-  check("连续 12 次已鉴权请求不会被防爆破限流掐掉（旧实现第 4 次起 429）",
-    adminOk === 12, `成功 ${adminOk}/12（ADMIN_RATE_LIMIT=3）`);
 
-  let saw401 = 0;
-  let saw429 = 0;
-  for (let i = 0; i < 6; i += 1) {
-    const r = await api("/api/admin/stats", {
-      headers: { authorization: "Bearer definitely-wrong-token-000000000000" }
+  section("注册：邮箱验证码 + 强制选学校 + 昵称预审");
+  {
+    eq("非法邮箱被拒", (await alice.post("/api/auth/code", { email: "not-an-email" })).status, 400);
+
+    const code = await alice.post("/api/auth/code", { email: "alice@example.com" });
+    eq("发送验证码成功", code.status, 200);
+    ok("验证码是 6 位数字", /^\d{6}$/.test(code.body.devCode || ""), code.body);
+    eq("60 秒内重复发码被限流", (await alice.post("/api/auth/code", { email: "alice@example.com" })).status, 429);
+
+    const wrong = await alice.post("/api/auth/verify", { email: "alice@example.com", code: "000000" });
+    ok("错误验证码被拒", wrong.status === 401, wrong.body);
+
+    const verified = await alice.post("/api/auth/verify", { email: "alice@example.com", code: code.body.devCode });
+    eq("验证通过且要求补资料", verified.body.needProfile, true);
+    const token = verified.body.token;
+
+    eq("不在名单里的学校被拒",
+      (await alice.post("/api/auth/register", { token, nickname: "小满", school: "野鸡大学" })).body.error,
+      "invalid_school");
+
+    const registered = await alice.post("/api/auth/register", { token, nickname: "小满", school: "示例大学" });
+    eq("注册成功", registered.status, 201);
+    aliceUuid = registered.body.user.uuid;
+    ok("uuid 由服务端生成且是标准 UUID", /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(aliceUuid), aliceUuid);
+    eq("学校写入了资料", registered.body.user.school, "示例大学");
+    eq("新用户等级为 1", registered.body.user.level, 1);
+    ok("注册响应带会话 cookie", alice.jar.size > 0, Array.from(alice.jar.keys()));
+
+    const me = await alice.get("/api/auth/me");
+    eq("会话生效", me.body.user && me.body.user.nickname, "小满");
+    eq("本人可见邮箱", me.body.user.email, "alice@example.com");
+
+    eq("注册令牌一次性（重放被拒）",
+      (await carol.post("/api/auth/register", { token, nickname: "重放", school: "示例大学" })).body.error,
+      "invalid_token");
+  }
+
+  section("昵称预审：冒名与违禁词直接拒绝");
+  {
+    const code = await carol.post("/api/auth/code", { email: "carol@example.com" });
+    const verified = await carol.post("/api/auth/verify", { email: "carol@example.com", code: code.body.devCode });
+    const t = verified.body.token;
+
+    eq("冒充管理员被拒",
+      (await carol.post("/api/auth/register", { token: t, nickname: "管理员小助手", school: "示例大学" })).body.error,
+      "nickname_rejected");
+    eq("命中词表被拒",
+      (await carol.post("/api/auth/register", { token: t, nickname: "测试违禁词甲", school: "示例大学" })).body.error,
+      "nickname_rejected");
+    eq("过短昵称被拒",
+      (await carol.post("/api/auth/register", { token: t, nickname: "甲", school: "示例大学" })).body.error,
+      "nickname_length");
+    eq("昵称里塞手机号被拒",
+      (await carol.post("/api/auth/register", { token: t, nickname: "联系13800138000", school: "示例大学" })).body.error,
+      "nickname_rejected");
+
+    const carolOk = await carol.post("/api/auth/register", { token: t, nickname: "卡罗", school: "示例大学" });
+    eq("被拒几次后换个正常昵称仍可注册（令牌没被提前作废）", carolOk.status, 201);
+
+    const daveResult = await registerUser(dave, "dave@example.com", "戴夫", "示例大学");
+    eq("换个正常昵称就能注册", daveResult.status, 201);
+  }
+
+  section("第二个账号");
+  {
+    const result = await registerUser(bob, "bob@example.com", "阿波", "示例大学");
+    eq("注册成功", result.status, 201);
+    bobUuid = result.user.uuid;
+    ok("两个账号 uuid 不同", aliceUuid !== bobUuid);
+  }
+
+  section("表白墙：匿名、先审后发、字数不限");
+  {
+    eq("未登录发帖被拒", (await anon.post("/api/posts", { cat: "表白", body: "未登录也想发" })).status, 401);
+
+    const longBody = "这是一条很长的表白，".repeat(200); // 2000 字，远超旧版的 500 字上限
+    const created = await alice.post("/api/posts", { cat: "表白", body: longBody });
+    eq("超长正文可以发布（已取消字数限制）", created.status, 201);
+    eq("先审后发：状态是 pending", created.body.status, "pending");
+
+    eq("空内容被拒", (await alice.post("/api/posts", { cat: "表白", body: "   " })).body.error, "empty");
+    eq("非法分类被 400", (await alice.post("/api/posts", { cat: "不存在的分类", body: "内容" })).status, 400);
+    eq("未审核的内容不出现在列表里", (await anon.get("/api/posts")).body.items.length, 0);
+
+    const queue = await anon.get("/api/admin/queue?type=posts", { admin: true });
+    eq("后台队列里能看到待审帖子", queue.body.items.length, 1);
+    postId = queue.body.items[0].id;
+
+    await anon.post("/api/admin/posts/" + postId + "/approve", {}, { admin: true });
+    const feed = await anon.get("/api/posts");
+    eq("审核通过后出现在列表里", feed.body.items.length, 1);
+    const item = feed.body.items[0];
+    ok("信息流不返回任何作者字段",
+      !("nickname" in item) && !("user" in item) && !("uuid" in item) && !("userId" in item),
+      Object.keys(item));
+    ok("超长正文完整返回（未截断）", String(item.body).length === longBody.length, { got: String(item.body).length });
+
+    eq("未登录不能点赞", (await anon.post("/api/posts/" + postId + "/like", {})).status, 401);
+    eq("点赞成功", (await alice.post("/api/posts/" + postId + "/like", {})).body.liked, true);
+    eq("再点一次取消（按用户去重）", (await alice.post("/api/posts/" + postId + "/like", {})).body.liked, false);
+    eq("第三次又点赞且计数为 1", (await alice.post("/api/posts/" + postId + "/like", {})).body.likes, 1);
+
+    eq("评论先审后发", (await alice.post("/api/posts/" + postId + "/comments", { body: "加油" })).body.status, "pending");
+    eq("未审核的评论不公开", (await anon.get("/api/posts/" + postId + "/comments")).body.items.length, 0);
+
+    const cQueue = await anon.get("/api/admin/queue?type=comments", { admin: true });
+    eq("评论进后台队列", cQueue.body.items.length, 1);
+    await anon.post("/api/admin/comments/" + cQueue.body.items[0].id + "/approve", {}, { admin: true });
+    eq("通过后评论可见", (await anon.get("/api/posts/" + postId + "/comments")).body.items.length, 1);
+    eq("帖子评论数已累加", (await anon.get("/api/posts")).body.items[0].comments, 1);
+
+    eq("登录用户可以举报", (await bob.post("/api/reports", { postId, reason: "测试举报" })).status, 201);
+  }
+
+  section("论坛：署名讨论（昵称 / 学校 / 头衔 / 等级）");
+  {
+    const created = await bob.post("/api/forum/threads", {
+      board: "study", title: "期末复习资料共享", body: "大家把笔记发到这里吧"
     });
-    if (r.status === 401) saw401 += 1;
-    else if (r.status === 429) saw429 += 1;
+    eq("发主题成功", created.status, 201);
+    eq("正常内容直接公开（命中预筛才转人工）", created.body.status, "approved");
+    threadId = created.body.id;
+
+    const detail = await alice.get("/api/forum/threads/" + threadId);
+    eq("主题详情可读（无需登录）", detail.status, 200);
+    eq("主题带作者昵称", detail.body.thread.author.nickname, "阿波");
+    eq("主题带作者学校", detail.body.thread.author.school, "示例大学");
+    ok("作者对象含等级", typeof detail.body.thread.author.level === "number");
+    ok("作者对象含头衔字段", "title" in detail.body.thread.author);
+
+    eq("回复成功且直接公开",
+      (await alice.post("/api/forum/threads/" + threadId + "/replies", { body: "我有高数笔记" })).body.status,
+      "approved");
+
+    const detail2 = await alice.get("/api/forum/threads/" + threadId);
+    eq("回复计数累加", detail2.body.thread.replyCount, 1);
+    eq("回复带作者昵称", detail2.body.replies[0].author.nickname, "小满");
+    ok("浏览数已累加", detail2.body.thread.viewCount >= 1);
+
+    eq("主题点赞成功", (await alice.post("/api/forum/threads/" + threadId + "/like", {})).body.liked, true);
+    eq("详情里带「我点过赞」标记", (await alice.get("/api/forum/threads/" + threadId)).body.thread.liked, true);
+
+    const list = await anon.get("/api/forum/threads?board=study");
+    eq("版块筛选返回该主题", list.body.items.length, 1);
+    ok("列表带版块清单", Array.isArray(list.body.boards) && list.body.boards.length >= 4);
+    ok("列表项带作者信息（署名）", list.body.items[0].author && list.body.items[0].author.nickname === "阿波");
+
+    eq("过短标题被拒", (await bob.post("/api/forum/threads", { board: "study", title: "短", body: "内容" })).body.error, "invalid_title");
+    eq("不存在的主题返回 404", (await anon.get("/api/forum/threads/99999")).status, 404);
+    eq("未登录不能发主题", (await anon.post("/api/forum/threads", { board: "study", title: "标题", body: "内容" })).status, 401);
   }
-  check("错误令牌先返回 401、超出配额后才 429（防爆破仍然有效）",
-    saw401 >= 3 && saw429 >= 1, `401×${saw401} · 429×${saw429}`);
 
-  /* ── 8. 生产环境启动守卫 ───────────────────────────────────── */
-  console.log("\n[8/8] 生产环境启动守卫（未配置邀请码时拒绝启动）");
-  await stopServer(server);
-  server = null;
+  section("好友：请求 / 同意 / 互相添加");
+  {
+    eq("未登录访问好友列表被拒", (await anon.get("/api/friends")).status, 401);
 
-  const guard = await startExpectExit({
-    NODE_ENV: "production",
-    PORT: String(PORT + 2),
-    GATE_ENFORCE: "",        // 等价于未配置：生产 + 无邀请码 + 无逃生开关
-    GATE_INVITE_CODES: ""
-  });
-  check("生产环境未配置邀请码时拒绝启动", guard.code === 1, `code=${guard.code} signal=${guard.signal}`);
-  const fatalLine = (guard.out.match(/\[fatal\][^\n]*/) || [""])[0];
-  check("拒绝启动时点明原因并给出可执行的修复说明",
-    /GATE_INVITE_CODES/.test(guard.out)
-      && /修复：设置 GATE_INVITE_CODES=/.test(guard.out)
-      && /GATE_ALLOW_DISABLED/.test(guard.out),
-    fatalLine);
-})()
-  .catch((err) => bad("接口测试异常中断", err?.message || String(err)))
-  .finally(async () => {
-    await stopServer(server);
-    try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* ignore */ }
-    const failed = results.filter((r) => !r).length;
-    console.log(`\n${"─".repeat(64)}`);
-    console.log(`后端接口测试：${results.length - failed}/${results.length} 通过`);
-    if (failed) {
-      console.log("失败项需要在合并前修掉。");
-    }
-    console.log(`${"─".repeat(64)}\n`);
-    process.exit(failed ? 1 : 0);
-  });
+    eq("发起好友请求", (await alice.post("/api/friends/requests", { uuid: bobUuid, message: "同班同学" })).body.status, "pending");
+    eq("不能加自己", (await alice.post("/api/friends/requests", { uuid: aliceUuid })).body.error, "self");
+
+    const bobFriends = await bob.get("/api/friends");
+    eq("对方能看到待处理请求", bobFriends.body.incoming.length, 1);
+    eq("请求带留言", bobFriends.body.incoming[0].message, "同班同学");
+
+    const aliceFriends0 = await alice.get("/api/friends");
+    eq("发起方看到「等待验证」", aliceFriends0.body.outgoing.length, 1);
+    eq("此时还不是好友", aliceFriends0.body.friends.length, 0);
+
+    eq("同意请求", (await bob.post("/api/friends/requests/" + aliceUuid + "/accept", {})).status, 200);
+    const aliceFriends = await alice.get("/api/friends");
+    eq("双方都成为好友", aliceFriends.body.friends.length, 1);
+    eq("好友对象带学校", aliceFriends.body.friends[0].user.school, "示例大学");
+
+    eq("重复添加提示已经是好友", (await alice.post("/api/friends/requests", { uuid: bobUuid })).body.error, "already_friends");
+    eq("陌生人（卡罗）看主页的关系是 none", (await carol.get("/api/users/" + bobUuid)).body.relation, "none");
+    eq("好友看主页的关系是 friend", (await alice.get("/api/users/" + bobUuid)).body.relation, "friend");
+
+    // 反方向：bob 先对 dave 发起，dave 再对 bob 发起 → 直接成为好友（微信/QQ 的「互相添加」）
+    const daveUuid = (await dave.get("/api/auth/me")).body.user.uuid;
+    await bob.post("/api/friends/requests", { uuid: daveUuid });
+    const mutual = await dave.post("/api/friends/requests", { uuid: bobUuid });
+    eq("对方已发过请求时，我这边一按即成为好友", mutual.body.status, "accepted");
+    eq("双方好友数都 +1", (await bob.get("/api/friends")).body.friends.length, 2);
+  }
+
+  section("私信：仅好友可发");
+  {
+    eq("非好友不能私信", (await carol.post("/api/dm/" + bobUuid, { body: "你好" })).status, 403);
+
+    eq("好友之间可以私信", (await alice.post("/api/dm/" + bobUuid, { body: "笔记发我一份呗" })).status, 201);
+
+    const conv = await bob.get("/api/dm/conversations");
+    eq("会话列表显示未读 1", conv.body.unread, 1);
+    eq("会话对方昵称正确", conv.body.items[0].peer.nickname, "小满");
+    eq("最后一条消息带 mine 标记", conv.body.items[0].last.mine, false);
+    eq("未读数接口", (await bob.get("/api/dm/unread")).body.count, 1);
+
+    const thread = await bob.get("/api/dm/" + aliceUuid);
+    eq("拉到聊天记录", thread.body.items.length, 1);
+    eq("记录里标记了对方发的", thread.body.items[0].mine, false);
+    eq("记录带对方资料", thread.body.peer.nickname, "小满");
+    eq("打开会话即已读", (await bob.get("/api/dm/unread")).body.count, 0);
+  }
+
+  section("拉黑：解除好友 + 拒收私信");
+  {
+    eq("拉黑成功", (await alice.post("/api/users/" + bobUuid + "/block", {})).status, 200);
+    eq("拉黑后好友关系解除", (await alice.get("/api/friends")).body.friends.length, 0);
+    eq("拉黑后不能私信", (await alice.post("/api/dm/" + bobUuid, { body: "还能发吗" })).status, 403);
+    eq("被拉黑方看到 blocked_by", (await bob.get("/api/users/" + aliceUuid)).body.relation, "blocked_by");
+    await alice.post("/api/users/" + bobUuid + "/unblock", {});
+    eq("解除拉黑后关系回到 none", (await alice.get("/api/users/" + bobUuid)).body.relation, "none");
+  }
+
+  section("账号个性化：学校不可改");
+  {
+    const updated = await alice.patch("/api/me", { bio: "喜欢在图书馆四楼靠窗", avatar: "leaf" });
+    eq("修改简介与头像成功", updated.status, 200);
+    eq("头像已保存", updated.body.user.avatar, "leaf");
+    eq("改学校无效（该字段被忽略）", (await alice.patch("/api/me", { school: "第二大学" })).body.user.school, "示例大学");
+    eq("非法头像被拒", (await alice.patch("/api/me", { avatar: "不存在的头像" })).body.error, "invalid_avatar");
+    eq("首次改昵称不被冷却拦住", (await alice.patch("/api/me", { nickname: "小满满" })).status, 200);
+    eq("紧接着再改就撞上冷却", (await alice.patch("/api/me", { nickname: "小满满满" })).body.error, "nickname_cooldown");
+    eq("简介超长被拒", (await alice.patch("/api/me", { bio: "字".repeat(80) })).body.error, "bio_too_long");
+  }
+
+  section("头衔与等级");
+  {
+    const created = await anon.post("/api/admin/titles", {
+      name: "学长", color: "#0071e3", minLevel: 1, auto: true, sort: 1
+    }, { admin: true });
+    eq("后台新建头衔", created.status, 201);
+
+    const me = await alice.get("/api/auth/me");
+    eq("达到条件自动获得头衔", me.body.user.title && me.body.user.title.name, "学长");
+    eq("头衔带自定义颜色", me.body.user.title.color, "#0071e3");
+
+    const manual = await anon.post("/api/admin/titles", { name: "版主", minLevel: 1, auto: false }, { admin: true });
+    await anon.post("/api/admin/users/1", { action: "set_title", value: manual.body.id }, { admin: true });
+    eq("手动指定优先于自动头衔", (await alice.get("/api/auth/me")).body.user.title.name, "版主");
+
+    eq("重名头衔被拒", (await anon.post("/api/admin/titles", { name: "版主" }, { admin: true })).body.error, "duplicate_name");
+    eq("非法颜色被拒", (await anon.post("/api/admin/titles", { name: "彩色", color: "red" }, { admin: true })).body.error, "invalid_color");
+
+    await anon.post("/api/admin/titles/" + manual.body.id + "/delete", {}, { admin: true });
+    eq("删除后回落到自动头衔", (await alice.get("/api/auth/me")).body.user.title.name, "学长");
+
+    await anon.post("/api/admin/users/1", { action: "set_exp", value: 49 }, { admin: true });
+    eq("49 经验仍是 1 级", (await anon.get("/api/admin/users/1", { admin: true })).body.user.level, 1);
+    await anon.post("/api/admin/users/1", { action: "set_exp", value: 50 }, { admin: true });
+    eq("50 经验升到 2 级", (await anon.get("/api/admin/users/1", { admin: true })).body.user.level, 2);
+    await anon.post("/api/admin/users/1", { action: "set_level", value: 5 }, { admin: true });
+    eq("直接设等级会同步经验", (await anon.get("/api/admin/users/1", { admin: true })).body.user.exp, 500);
+  }
+
+  section("后台：用户信息完整可见");
+  {
+    const users = await anon.get("/api/admin/users", { admin: true });
+    eq("用户列表返回 4 人", users.body.items.length, 4);
+    const one = users.body.items[0];
+    ok("含邮箱", typeof one.email === "string" && one.email.includes("@"));
+    ok("含 uuid", typeof one.uuid === "string" && one.uuid.length === 36);
+    ok("含学校", typeof one.school === "string" && one.school.length > 0);
+    ok("含昵称预审标记字段", "nicknameFlagged" in one);
+    ok("含注册/登录时间", one.createdAt > 0);
+    ok("含 IP / UA 哈希（非明文）", typeof one.ipHash === "string");
+    ok("含各项内容计数", Boolean(one.counts) && typeof one.counts.posts === "number" && typeof one.counts.friends === "number");
+
+    const detail = await anon.get("/api/admin/users/" + one.id, { admin: true });
+    ok("详情含最近帖子/评论/主题/私信",
+      Boolean(detail.body.recent) && Array.isArray(detail.body.recent.posts)
+      && Array.isArray(detail.body.recent.comments) && Array.isArray(detail.body.recent.messages));
+
+    eq("按邮箱搜索命中 1 人", (await anon.get("/api/admin/users?q=alice", { admin: true })).body.items.length, 1);
+
+    eq("改名成功", (await anon.post("/api/admin/users/1", { action: "rename", value: "满同学" }, { admin: true })).status, 200);
+    eq("后台改名不受前端冷却限制", (await anon.get("/api/admin/users/1", { admin: true })).body.user.nickname, "满同学");
+    eq("后台改名会清掉昵称预审标记", (await anon.get("/api/admin/users/1", { admin: true })).body.user.nicknameFlagged, "");
+  }
+
+  section("后台：公告 / 学校 / 统计 / 队列");
+  {
+    const ann = await anon.post("/api/admin/announcements", {
+      body: "期末周互助帖已开放", link: "/forum", linkText: "去看看"
+    }, { admin: true });
+    eq("发布公告", ann.status, 201);
+    const site = await anon.get("/api/site");
+    eq("公告出现在站点信息里", site.body.announcements.length, 1);
+    eq("公告链接正确", site.body.announcements[0].link, "/forum");
+
+    await anon.post("/api/admin/announcements", { body: "危险链接", link: "javascript:alert(1)" }, { admin: true });
+    const site2 = await anon.get("/api/site");
+    ok("javascript: 链接被过滤", site2.body.announcements.every((a) => !String(a.link).startsWith("javascript:")));
+
+    await anon.post("/api/admin/announcements/" + ann.body.id, { active: false }, { admin: true });
+    ok("下线后不再下发", (await anon.get("/api/site")).body.announcements.every((a) => a.id !== ann.body.id));
+
+    const schools = await anon.get("/api/admin/schools", { admin: true });
+    ok("学校列表带使用人数", schools.body.items.some((s) => s.userCount >= 3), schools.body.items);
+
+    await anon.post("/api/admin/schools/" + schools.body.items.find((s) => s.name === "第二大学").id, { active: false }, { admin: true });
+    eq("停用后不再出现在注册列表", (await anon.get("/api/schools")).body.items.length, 1);
+
+    const stats = await anon.get("/api/admin/stats", { admin: true });
+    eq("统计里的用户数", stats.body.users, 4);
+    eq("统计里的版本号", stats.body.version, "1.0.0");
+    ok("统计含活跃/论坛/私信指标",
+      typeof stats.body.activeToday === "number" && typeof stats.body.threads === "number" && typeof stats.body.dmsToday === "number");
+
+    const q1 = await anon.get("/api/admin/queue?type=threads", { admin: true });
+    eq("主题队列可读", q1.body.type, "threads");
+    const q2 = await anon.get("/api/admin/queue?type=replies", { admin: true });
+    eq("回复队列可读", q2.body.type, "replies");
+  }
+
+  section("审核：命中预筛的论坛内容进队列");
+  {
+    // 用测试词表里的词触发预筛 → 主题应为 pending
+    const flagged = await bob.post("/api/forum/threads", {
+      board: "general", title: "测试违禁词", body: "正文里也带上测试违禁词"
+    });
+    eq("命中预筛的主题转人工", flagged.body.status, "pending");
+    const queue = await anon.get("/api/admin/queue?type=threads", { admin: true });
+    eq("出现在主题队列里", queue.body.items.length, 1);
+    eq("队列项带命中标记", Boolean(queue.body.items[0].flag), true);
+    eq("队列项带作者信息（便于判断）", queue.body.items[0].author.nickname, "阿波");
+
+    await anon.post("/api/admin/threads/" + flagged.body.id + "/approve", {}, { admin: true });
+    eq("审核通过后公开", (await anon.get("/api/forum/threads/" + flagged.body.id)).status, 200);
+
+    const flaggedReply = await bob.post("/api/forum/threads/" + threadId + "/replies", { body: "测试违禁词回复" });
+    eq("命中预筛的回复转人工", flaggedReply.body.status, "pending");
+    await anon.post("/api/admin/replies/" + flaggedReply.body.id + "/remove", {}, { admin: true });
+    eq("下架的回复不出现在详情里",
+      (await anon.get("/api/forum/threads/" + threadId)).body.replies.every((r) => r.id !== flaggedReply.body.id),
+      true);
+  }
+
+  section("退出登录与反馈");
+  {
+    eq("退出成功", (await alice.post("/api/auth/logout", {})).status, 200);
+    eq("退出后会话失效", (await alice.get("/api/auth/me")).body.user, null);
+    eq("未登录也能提交反馈", (await anon.post("/api/feedback", { cat: "idea", body: "希望支持深色模式" })).status, 201);
+    eq("反馈进入后台队列", (await anon.get("/api/admin/feedback", { admin: true })).body.items.length, 1);
+  }
+
+  console.log("\n=== 通过 " + passed + " / 失败 " + failed + " ===");
+  if (failed) {
+    console.log("失败用例：" + failures.join("、"));
+    console.log("\n服务端日志（尾部）：\n" + serverLog.split("\n").slice(-30).join("\n"));
+  }
+  cleanup();
+  process.exit(failed ? 1 : 0);
+}
+
+main().catch((err) => {
+  console.error("测试崩溃：" + ((err && err.stack) || err));
+  console.log("\n服务端日志（尾部）：\n" + serverLog.split("\n").slice(-40).join("\n"));
+  cleanup();
+  process.exit(1);
+});

@@ -1,12 +1,67 @@
 # 更新日志
 
-本文件记录校园表白墙的版本变更，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
+本文件记录校园墙的版本变更，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
 > 说明：仓库在 `0.9.0-beta.1` 之前没有 `CHANGELOG.md`，因此 `2.0.0` 与 `2.1.0` 两条
 > 是依据 git 历史（`ebb0c36`、`bd5d85e`）与当时的 `README.md` / `DEPLOY.md` 回溯整理的，
 > 粒度为「主要能力」而非逐条提交。
 
 ---
+
+## [1.0.0] — 2026-10-16 · 正式版
+
+**从内测转正式：引入账号体系，删掉全部内测与示例内容。** 版本号统一为 `1.0.0`。
+
+这一版的核心变化是「有身份」：表白墙依旧是匿名的，但发帖的人有账号、有学校、有头衔与等级，
+并且能在论坛里署名讨论、加好友、私信。同时把内测期所有临时设施（邀请码门禁、内测标识、
+本地演示数据、单文件原型）整体删除。
+
+### Added
+
+- **账号系统**（`server/src/users.js`）：邮箱验证码登录（无密码）、`uuid` 作为对外唯一标识、
+  会话 cookie（HttpOnly + SameSite=Lax，token 只存 SHA-256）。
+- **Cloudflare Email Service 发信**（`server/src/email.js`）：走 REST 接口
+  `POST /accounts/{id}/email/sending/send`；未配置凭据时降级为服务端日志 + `server/data/outbox/`，
+  且只在非生产环境回带验证码。部署文档给出 `wrangler email sending enable` 的准备步骤。
+- **昵称本地预审**（`moderation.classifyNickname`）：命中违禁词、联系方式、冒名官方（管理员/客服/官方…）
+  **直接拒绝注册或改名**；内容侧仍保持「命中转人工」。
+- **论坛**（`server/src/forum.js` + `web/src/forum/`）：四个版块、主题/回复/点赞；
+  **署名展示「学校 · 头衔 · Lv.N」**；默认「命中预筛才转人工」，`FORUM_PREMOD=1` 可切回全量先审。
+- **好友与私信**（`server/src/social.js` + `web/src/social/`）：请求—同意式加好友
+  （互相添加即刻成为好友）、拉黑（解除好友 + 拒收私信）、会话列表与未读红点、单聊。
+- **头衔与等级**：头衔由后台自定义（名称/颜色/是否按等级自动授予），手动指定优先；
+  等级由经验推导（L2=50、L3=150、L4=300…），来源为发帖、评论、被点赞与每日登录。
+- **首页公告栏**（`server/src/announce.js`）：后台增删改与启停，前端通过 `GET /api/site` 获取。
+- **学校管理**：改由后台维护（数据库表 `schools`，不再用文件生成）；
+  **登录时强制选择学校，选定后不可更改**，并显示在用户主页最前面。
+- **后台新增视图**：用户（完整信息 + 设头衔/等级/经验/改名/封禁）、头衔、公告、学校；
+  待审队列扩展为「帖子 / 评论 / 主题 / 回复」四类。
+
+### Changed
+
+- **界面重构为移动优先**：主界面只保留站名、公告、分类与信息流；
+  底部 dock 改为**液态玻璃**（半透明 + 模糊饱和 + 内高光），新增深色模式（跟随系统）。
+- **取消表白正文字数上限**：只要求非空，长文在信息流里默认折叠 8 行。
+- 点赞去重主体从「IP 哈希」升级为「登录用户」（`likes.ip_hash` → `likes.actor`），
+  换设备仍是同一个人。
+- 前端不再有任何本地演示数据与数据源回落：只连真实后端。
+
+### Removed
+
+- **内测门禁整体删除**：`server/src/gate.js`、`web/src/context/GateContext.jsx`、`web/src/lib/gate.js`
+  与 `GATE_*` 全部配置项。
+- **内测标识与元信息**：`server/src/beta.js`、`BETA_*` 配置、首屏内测公告与版本横幅。
+- **示例与演示内容**：单文件原型 `school-confession-wall.html`（及其 artifact 清单）、
+  本地演示数据 `web/src/lib/seed.js`、`server/data/banned.txt.example`、旧截图，
+  以及库里遗留的实名时代表（`identities` / `identity_codes`）。
+- 「内测反馈」更名为「意见反馈」（功能保留）。
+
+### Migration
+
+- 旧库（0.9）可直接升级：启动时自动补 `posts.user_id` / `comments.user_id` /
+  `reports.reporter_id` / `feedback.user_id` 列，重命名 `likes.ip_hash → actor`，
+  并清理实名时代遗留对象；历史内容没有作者，留空即可（前台本来也不展示作者）。
+- 升级后请到后台补两件事：**添加学校名单**、配置 **Cloudflare 邮件通道**。
 
 ## [0.9.0-beta.1] — 2026-09-30 · 内测版
 

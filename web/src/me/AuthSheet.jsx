@@ -1,0 +1,265 @@
+import { useCallback, useEffect, useState } from 'react';
+import { api } from '../api/client.js';
+import { useAuth } from '../context/AuthContext.jsx';
+import { useToast } from '../context/ToastContext.jsx';
+import { Sheet } from '../components/Sheet.jsx';
+import { Avatar, AVATAR_KEYS } from '../components/Avatar.jsx';
+import { IconLock, IconSchool } from '../components/icons.jsx';
+
+/**
+ * 登录 / 注册（邮箱验证码，无密码）。
+ *
+ * 三步一条流水线：
+ *   1. 填邮箱 → 发验证码（Cloudflare Email Service 发送，未配置时落 outbox + 服务端日志）
+ *   2. 填验证码 → 老用户直接建会话；新用户拿到一次性注册令牌
+ *   3. 新用户补昵称 + **学校**（选定不可更改）+ 头像
+ *
+ * 学校是必选且不可改的，所以第三步的按钮在没选学校时是禁用的 ——
+ * 与其让服务端返回 400，不如一开始就不让点。
+ */
+export function AuthSheet() {
+  const { authOpen, closeAuth, completeAuth } = useAuth();
+  const toast = useToast();
+
+  const [step, setStep] = useState('email');
+  const [email, setEmail] = useState('');
+  const [code, setCode] = useState('');
+  const [token, setToken] = useState('');
+  const [nickname, setNickname] = useState('');
+  const [school, setSchool] = useState('');
+  const [avatar, setAvatar] = useState('');
+  const [schools, setSchools] = useState([]);
+  const [schoolsLoaded, setSchoolsLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
+
+  // 打开时重置：上次填到一半的邮箱/验证码不应该被下一个人看到
+  useEffect(() => {
+    if (!authOpen) return;
+    setStep('email');
+    setCode('');
+    setToken('');
+    setBusy(false);
+  }, [authOpen]);
+
+  // 重发倒计时：服务端 60 秒内只允许发一次，前端跟着走，避免用户白点
+  useEffect(() => {
+    if (cooldown <= 0) return undefined;
+    const timer = setTimeout(() => setCooldown((v) => v - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [cooldown]);
+
+  const loadSchools = useCallback(async () => {
+    if (schoolsLoaded) return;
+    try {
+      const data = await api.schools();
+      setSchools(Array.isArray(data.items) ? data.items : []);
+    } catch {
+      setSchools([]);
+    } finally {
+      setSchoolsLoaded(true);
+    }
+  }, [schoolsLoaded]);
+
+  const sendCode = async () => {
+    const value = email.trim();
+    if (!value) return;
+    setBusy(true);
+    try {
+      const result = await api.auth.requestCode(value);
+      setStep('code');
+      setCooldown(60);
+      if (result && result.devCode) {
+        // 未配置邮件通道的开发/自托管环境：服务端会把验证码回带，直接填上
+        setCode(result.devCode);
+        toast('开发模式：验证码已自动填入');
+      } else {
+        toast('验证码已发送，请查收邮件');
+      }
+    } catch (err) {
+      toast(err.message || '发送失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const verify = async () => {
+    if (code.trim().length !== 6) {
+      toast('请输入 6 位验证码');
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await api.auth.verify(email.trim(), code.trim());
+      if (result && result.user) {
+        completeAuth(result.user);
+        toast('欢迎回来');
+        return;
+      }
+      setToken(result.token);
+      setStep('profile');
+      loadSchools();
+    } catch (err) {
+      toast(err.message || '验证失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const register = async () => {
+    if (!school) {
+      toast('请先选择学校');
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await api.auth.register({
+        token,
+        nickname: nickname.trim(),
+        school,
+        avatar
+      });
+      completeAuth(result.user);
+      toast('注册成功，欢迎');
+    } catch (err) {
+      toast(err.message || '注册失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!authOpen) return null;
+
+  const title = step === 'email' ? '登录 / 注册' : step === 'code' ? '输入验证码' : '完善资料';
+
+  return (
+    <Sheet open={authOpen} onClose={closeAuth} title={title}>
+      {step === 'email' ? (
+        <div className="stack-lg">
+          <div className="field">
+            <label className="field-label" htmlFor="auth-email">邮箱</label>
+            <input
+              id="auth-email"
+              className="input"
+              type="email"
+              inputMode="email"
+              autoComplete="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              onKeyDown={(event) => { if (event.key === 'Enter') sendCode(); }}
+            />
+            <p className="meta">用邮箱验证码登录，没有密码，也不需要手机号。</p>
+          </div>
+          <button className="btn btn-primary btn-block" type="button" disabled={busy || !email.trim()} onClick={sendCode}>
+            {busy ? '发送中…' : '获取验证码'}
+          </button>
+        </div>
+      ) : null}
+
+      {step === 'code' ? (
+        <div className="stack-lg">
+          <div className="field">
+            <label className="field-label" htmlFor="auth-code">验证码</label>
+            <input
+              id="auth-code"
+              className="input"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              placeholder="6 位数字"
+              value={code}
+              onChange={(event) => setCode(event.target.value.replace(/\D/g, ''))}
+              onKeyDown={(event) => { if (event.key === 'Enter') verify(); }}
+            />
+            <p className="meta">已发送到 {email}</p>
+          </div>
+          <button className="btn btn-primary btn-block" type="button" disabled={busy} onClick={verify}>
+            {busy ? '验证中…' : '登录'}
+          </button>
+          <button
+            className="btn btn-ghost btn-block"
+            type="button"
+            disabled={cooldown > 0}
+            onClick={sendCode}
+          >
+            {cooldown > 0 ? `${cooldown} 秒后可重新发送` : '重新发送'}
+          </button>
+        </div>
+      ) : null}
+
+      {step === 'profile' ? (
+        <div className="stack-lg">
+          <div className="field">
+            <label className="field-label" htmlFor="auth-nickname">昵称（{nickname.length}/16）</label>
+            <input
+              id="auth-nickname"
+              className="input"
+              maxLength={16}
+              placeholder="2–16 个字，全站可见"
+              value={nickname}
+              onChange={(event) => setNickname(event.target.value)}
+            />
+          </div>
+
+          <div className="field">
+            <label className="field-label" htmlFor="auth-school">
+              <IconSchool size={14} /> 学校（选定后不可更改）
+            </label>
+            {schoolsLoaded && schools.length === 0 ? (
+              <p className="auth-warn">管理员还没有配置学校名单，暂时无法完成注册。</p>
+            ) : (
+              <select
+                id="auth-school"
+                className="select"
+                value={school}
+                onChange={(event) => setSchool(event.target.value)}
+              >
+                <option value="">请选择学校</option>
+                {schools.map((item) => <option key={item} value={item}>{item}</option>)}
+              </select>
+            )}
+            <p className="meta">学校会显示在你的主页最前面，并且不能修改，请如实选择。</p>
+          </div>
+
+          <div className="field">
+            <span className="field-label">头像</span>
+            <div className="auth-avatars">
+              <button
+                type="button"
+                className={'auth-avatar' + (avatar === '' ? ' is-active' : '')}
+                onClick={() => setAvatar('')}
+                aria-label="使用默认头像"
+              >
+                <Avatar user={{ uuid: email, nickname }} size={44} />
+              </button>
+              {AVATAR_KEYS.map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  className={'auth-avatar' + (avatar === key ? ' is-active' : '')}
+                  onClick={() => setAvatar(key)}
+                  aria-label={'头像 ' + key}
+                >
+                  <Avatar user={{ uuid: email, nickname, avatar: key }} size={44} />
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button
+            className="btn btn-primary btn-block"
+            type="button"
+            disabled={busy || !school || nickname.trim().length < 2}
+            onClick={register}
+          >
+            {busy ? '创建中…' : '完成注册'}
+          </button>
+          <p className="meta auth-foot"><IconLock size={13} /> 我们不存密码，只有邮箱与你自己填的资料。</p>
+        </div>
+      ) : null}
+    </Sheet>
+  );
+}
+
+export default AuthSheet;

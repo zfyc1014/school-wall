@@ -311,6 +311,18 @@ a { color: var(--accent); }
 .field input { height: 42px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 12px; background: var(--bg); }
 .field input:focus { border-color: var(--accent); }
 
+/* 表单补全：select / textarea / 开关 / 色块，全部复用上面的令牌与 .field 结构 */
+.field select, .field textarea { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 12px; background: var(--bg); }
+.field select { height: 42px; }
+.field textarea { padding: 10px 12px; min-height: 84px; resize: vertical; line-height: 1.5; }
+.field select:focus, .field textarea:focus { border-color: var(--accent); }
+.field .switch { display: flex; align-items: center; gap: 8px; font-size: var(--text-sm); font-weight: 500; min-height: 32px; }
+.field .switch input { width: 18px; height: 18px; accent-color: var(--accent); }
+.swatch { display: inline-block; width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--border); vertical-align: -2px; flex: none; }
+.swatch-lg { width: 22px; height: 22px; border-radius: 6px; }
+.pager { display: flex; align-items: center; gap: var(--space-2); }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0 var(--space-4); }
+
 .detail-body { display: flex; flex-direction: column; gap: var(--space-5); }
 .detail-quote { background: var(--surface); border-radius: var(--radius-md); padding: var(--space-4); font-size: var(--text-base); overflow-wrap: anywhere; }
 .detail-list { display: flex; flex-direction: column; }
@@ -363,7 +375,7 @@ a { color: var(--accent); }
       <span class="brand-mark" aria-hidden="true">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg>
       </span>
-      <span class="brand-text"><strong>校园表白墙</strong><span>审核后台 · 内测版控制台</span></span>
+      <span class="brand-text"><strong>校园表白墙</strong><span>审核后台 · v1.0</span></span>
     </div>
 
     <nav class="nav-rail" aria-label="审核功能">
@@ -379,13 +391,29 @@ a { color: var(--accent); }
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 20h20L12 3Z"/><path d="M12 9v5"/><path d="M12 17.5h.01"/></svg>
         <span class="nav-label">举报工单</span><span class="nav-count" data-count="reports"></span>
       </button>
+      <button class="nav-item" type="button" data-view="users">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/></svg>
+        <span class="nav-label">用户</span><span class="nav-count" data-count="users"></span>
+      </button>
+      <button class="nav-item" type="button" data-view="titles">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l2.5 5.1 5.6.8-4.1 4 1 5.6L12 16.3 6.9 19l1-5.6-4-4 5.6-.8Z"/></svg>
+        <span class="nav-label">头衔</span><span class="nav-count" data-count="titles"></span>
+      </button>
+      <button class="nav-item" type="button" data-view="announcements">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5v3.5l11 4.5V6L4 10.5Z"/><path d="M15 9a3.2 3.2 0 0 1 0 6.4"/><path d="M6.8 13.6V18"/></svg>
+        <span class="nav-label">公告</span><span class="nav-count" data-count="announcements"></span>
+      </button>
+      <button class="nav-item" type="button" data-view="schools">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20V9.5l9-5 9 5V20"/><path d="M9.5 20v-6h5v6"/><path d="M3 20h18"/></svg>
+        <span class="nav-label">学校</span><span class="nav-count" data-count="schools"></span>
+      </button>
       <button class="nav-item" type="button" data-view="audit">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg>
         <span class="nav-label">审核日志</span><span class="nav-count" data-count="audit"></span>
       </button>
       <button class="nav-item" type="button" data-view="feedback">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0-3.4 10.9V17h6.8v-3.1A6 6 0 0 0 12 3Z"/><path d="M9.8 20h4.4"/></svg>
-        <span class="nav-label">内测反馈</span><span class="nav-count" data-count="feedback"></span>
+        <span class="nav-label">意见反馈</span><span class="nav-count" data-count="feedback"></span>
       </button>
     </nav>
 
@@ -393,8 +421,8 @@ a { color: var(--accent); }
       <div class="conn" id="conn" data-mode="demo">
         <span class="dot" aria-hidden="true"></span><span id="connText">演示模式</span>
       </div>
-      <div class="conn" id="gate" data-mode="demo">
-        <span class="dot" aria-hidden="true"></span><span id="gateText">门禁：未启用</span>
+      <div class="conn" id="version" data-mode="live">
+        <span class="dot" aria-hidden="true"></span><span id="versionText">版本 —</span>
       </div>
       <button class="btn btn-secondary btn-block" type="button" id="openSettings">连接后端</button>
     </div>
@@ -428,6 +456,10 @@ a { color: var(--accent); }
       <section class="view" id="view-overview" data-od-id="view-overview"></section>
       <section class="view" id="view-queue" data-od-id="view-queue" hidden></section>
       <section class="view" id="view-reports" data-od-id="view-reports" hidden></section>
+      <section class="view" id="view-users" data-od-id="view-users" hidden></section>
+      <section class="view" id="view-titles" data-od-id="view-titles" hidden></section>
+      <section class="view" id="view-announcements" data-od-id="view-announcements" hidden></section>
+      <section class="view" id="view-schools" data-od-id="view-schools" hidden></section>
       <section class="view" id="view-audit" data-od-id="view-audit" hidden></section>
       <section class="view" id="view-feedback" data-od-id="view-feedback" hidden></section>
     </div>
@@ -452,11 +484,28 @@ a { color: var(--accent); }
 
   const VIEW_META = {
     overview: { title: '概览', sub: '待办、数据库体检与最近审核' },
-    queue: { title: '待审队列', sub: '先审后发：通过之后才会出现在公开墙' },
+    queue: { title: '待审队列', sub: '帖子 / 评论 / 主题 / 回复：通过之后才会公开' },
     reports: { title: '举报工单', sub: '通知—移除流程：可下架内容或驳回工单' },
+    users: { title: '用户', sub: '账号全量信息、等级经验与封禁处置' },
+    titles: { title: '头衔', sub: '达到等级自动授予，管理员手动指定优先' },
+    announcements: { title: '公告', sub: '首页公告栏内容，可排序与启停' },
+    schools: { title: '学校', sub: '可注册学校名单，登录时强制选择且不可更改' },
     audit: { title: '审核日志', sub: '每一次审核动作都留痕，便于追责与合规' },
-    feedback: { title: '内测反馈', sub: '内测用户提交的问题与建议，处理后归档' }
+    feedback: { title: '意见反馈', sub: '用户提交的问题与建议，处理后归档' }
   };
+
+  // 视图顺序即导航顺序：setView 用它做显隐与标题分发
+  const VIEW_IDS = ['overview', 'queue', 'reports', 'users', 'titles', 'announcements', 'schools', 'audit', 'feedback'];
+  // 队列四类型：帖子 / 评论（表白墙）与 主题 / 回复（论坛）共用同一个视图
+  const QUEUE_TABS = [['posts', '帖子'], ['comments', '评论'], ['threads', '主题'], ['replies', '回复']];
+  const FORUM_TYPES = ['threads', 'replies'];
+
+  const USER_STATUS_LABEL = { active: '正常', muted: '禁言', banned: '封禁' };
+  // 沿用既有 .badge 的三档配色：绿=正常，黄=禁言，红=封禁
+  const USER_STATUS_TONE = { active: 'actioned', muted: 'pending', banned: 'open' };
+  const BOARD_LABEL = { general: '综合', study: '学习', life: '生活', lost: '失物' };
+  const USER_STATUS_TABS = [['', '全部'], ['active', '正常'], ['muted', '禁言'], ['banned', '封禁']];
+  const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 
   const STATUS_LABEL = {
     pending: '待审', approved: '已通过', rejected: '已驳回', removed: '已下架',
@@ -480,6 +529,35 @@ a { color: var(--accent); }
     'post.approve': 'ok', 'comment.approve': 'ok', 'report.dismiss': 'ok', 'feedback.done': 'ok',
     'post.remove': 'danger', 'post.reject': 'danger', 'comment.reject': 'danger', 'report.takedown': 'danger'
   };
+
+  // 头衔颜色来自后台输入：只接受 #RRGGBB，其余一律当空值，绝不把任意字符串送进 style
+  const safeColor = (c) => (HEX_RE.test(String(c == null ? '' : c)) ? String(c) : '');
+  function swatchHtml(color, big) {
+    const c = safeColor(color);
+    if (!c) return '<span class="meta-dim">未设置</span>';
+    return '<span class="swatch' + (big ? ' swatch-lg' : '') + '" style="background:' + c + '"></span>'
+      + '<span class="mono meta">' + esc(c) + '</span>';
+  }
+  function titleChip(title) {
+    if (!title || !title.name) return '';
+    const color = safeColor(title.color);
+    return '<span class="chip"' + (color ? ' style="color:' + color + ';background:color-mix(in oklab,' + color + ' 12%,transparent)"' : '') + '>'
+      + esc(title.name) + '</span>';
+  }
+  // 论坛内容是署名的：昵称 · 学校 · 头衔 · 等级（顺序与前台一致）
+  function authorHtml(u) {
+    if (!u) return '<span class="meta">作者已注销</span>';
+    return '<span class="meta">' + esc(u.nickname) + (u.school ? ' · ' + esc(u.school) : '') + '</span>'
+      + titleChip(u.title)
+      + '<span class="meta od-nowrap">Lv.' + esc(u.level == null ? 1 : u.level) + '</span>';
+  }
+  function boardLabel(key) {
+    return BOARD_LABEL[key] || key || '综合';
+  }
+  function kvRow(k, v, h) {
+    return '<div class="od-field"><span class="k">' + esc(k) + '</span><span class="v od-nowrap">' + esc(v == null || v === '' ? '—' : v) + '</span>'
+      + (h ? '<span class="h">' + esc(h) + '</span>' : '') + '</div>';
+  }
 
   function flagLabel(flag) {
     if (!flag) return '';
@@ -526,6 +604,81 @@ a { color: var(--accent); }
   const MIN = 60e3, HOUR = 60 * MIN, DAY = 24 * HOUR;
   const now = Date.now();
 
+  /* v1.0 新增后台数据的演示版本：字段与 /api/admin/* 下发的结构完全一致，
+     演示模式下同样能走完搜索、筛选、改头衔、封禁、增删学校等完整流程。 */
+  const demoCounts = (o) => Object.assign({ posts: 0, comments: 0, threads: 0, replies: 0, dmsSent: 0, friends: 0 }, o || {});
+  const nextId = (list) => list.reduce((m, x) => Math.max(m, Number(x.id) || 0), 0) + 1;
+
+  const DEMO_TITLES = [
+    { id: 1, name: '新生', color: '#16a34a', minLevel: 1, auto: true, sort: 0, createdAt: now - 200 * DAY },
+    { id: 2, name: '学长', color: '#0071e3', minLevel: 5, auto: true, sort: 1, createdAt: now - 180 * DAY },
+    { id: 3, name: '荣誉墙主', color: '#dc2626', minLevel: 1, auto: false, sort: 2, createdAt: now - 30 * DAY }
+  ];
+
+  const DEMO_SCHOOLS = [
+    { id: 1, name: '示例大学', sort: 0, active: true, createdAt: now - 220 * DAY },
+    { id: 2, name: '示例师范大学', sort: 1, active: true, createdAt: now - 220 * DAY },
+    { id: 3, name: '示例职业技术学院', sort: 2, active: false, createdAt: now - 120 * DAY }
+  ];
+
+  const DEMO_ANNOUNCEMENTS = [
+    { id: 2, body: '论坛已开放：可以发帖讨论，回复请遵守社区规范。', link: '/forum', linkText: '去论坛', active: true, sort: 0, createdAt: now - 3 * DAY, updatedAt: now - 6 * HOUR },
+    { id: 1, body: '期末周互助帖征集已结束，感谢参与的同学们。', link: '', linkText: '', active: false, sort: 1, createdAt: now - 20 * DAY, updatedAt: now - 12 * DAY }
+  ];
+
+  const DEMO_USERS = [
+    { id: 3, uuid: '8f1c4a72-2b95-4d3e-9a10-6c7d51e0b4a8', email: 'xiaoman@example.edu', nickname: '小满', nicknameFlagged: 'social',
+      school: '示例大学', avatar: '', bio: '喜欢在图书馆四楼靠窗', titleId: 2, title: null, level: 7, exp: 1560, status: 'active',
+      mutedUntil: 0, lastNicknameAt: 0, createdAt: now - 96 * DAY, lastLoginAt: now - 2 * HOUR, lastSeenAt: now - 25 * MIN,
+      ipHash: 'a1b2c3d4e5f60718', uaHash: '90f8e7d6c5b4a321', counts: demoCounts({ posts: 3, comments: 12, threads: 4, replies: 9, dmsSent: 31, friends: 6 }) },
+    { id: 2, uuid: '3c07be15-9d84-4f61-8b2c-1e5a7d902f36', email: 'azhe@example.edu', nickname: '夜跑的阿哲', nicknameFlagged: '',
+      school: '示例师范大学', avatar: '', bio: '每晚绕操场十圈', titleId: null, title: null, level: 4, exp: 320, status: 'muted',
+      mutedUntil: now + 2 * DAY, lastNicknameAt: now - 12 * DAY, createdAt: now - 41 * DAY, lastLoginAt: now - 9 * HOUR, lastSeenAt: now - 9 * HOUR,
+      ipHash: '5be0c1a97f2d4386', uaHash: '1122aabbccddeeff', counts: demoCounts({ posts: 1, comments: 4, threads: 2, replies: 15, dmsSent: 7, friends: 3 }) },
+    { id: 1, uuid: 'd41f8a06-77c2-4a53-b0e9-2a6c8f13d7b5', email: 'spam@example.edu', nickname: '代办刷分', nicknameFlagged: 'banned',
+      school: '示例职业技术学院', avatar: '', bio: '', titleId: null, title: null, level: 1, exp: 0, status: 'banned',
+      mutedUntil: 0, lastNicknameAt: 0, createdAt: now - 6 * DAY, lastLoginAt: now - 3 * DAY, lastSeenAt: now - 3 * DAY,
+      ipHash: 'ffeeddccbbaa0099', uaHash: '0102030405060708', counts: demoCounts({ posts: 0, comments: 1, threads: 0, replies: 0, dmsSent: 0, friends: 0 }) }
+  ];
+
+  const DEMO_USER_RECENT = {
+    3: {
+      posts: [{ id: 1015, cat: '树洞', body: '图书馆四楼靠窗的位置真的绝，推荐给备考的同学们，插座也多。', status: 'approved', created_at: now - 20 * HOUR }],
+      comments: [{ id: 5521, post_id: 1015, body: '同意，而且那边的插座真的多，可以待一整天。', status: 'pending', created_at: now - 3 * MIN }],
+      threads: [{ id: 12, board: 'study', title: '期末复习组队（图书馆四楼）', status: 'pending', created_at: now - 40 * MIN }],
+      messages: [{ id: 91, direction: 'out', body: '明天七点图书馆见？', createdAt: now - 5 * HOUR }]
+    },
+    2: {
+      posts: [],
+      comments: [{ id: 5512, post_id: 1009, body: '我好像在失物招领处见过。', status: 'approved', created_at: now - 1 * HOUR }],
+      threads: [{ id: 11, board: 'lost', title: '体育馆看台捡到黑色蓝牙耳机', status: 'pending', created_at: now - 4 * HOUR }],
+      messages: [{ id: 88, direction: 'in', body: '耳机还在吗？', createdAt: now - 3 * HOUR }]
+    },
+    1: { posts: [], comments: [{ id: 5480, post_id: 1002, body: '加微信 wall_helper 代刷。', status: 'rejected', created_at: now - 5 * DAY }], threads: [], messages: [] }
+  };
+
+  const DEMO_THREADS = [
+    { id: 12, kind: 'thread', board: 'study', title: '期末复习组队（图书馆四楼）', flag: 'cn_phone',
+      body: '想找两三个一起复习的同学，晚上七点到十点，图书馆四楼靠窗。可以加我 138 0013 8000 拉个群。',
+      author: { uuid: DEMO_USERS[0].uuid, nickname: '小满', school: '示例大学', avatar: '', title: { name: '学长', color: '#0071e3' }, level: 7 },
+      createdAt: now - 40 * MIN },
+    { id: 11, kind: 'thread', board: 'lost', title: '体育馆看台捡到黑色蓝牙耳机', flag: '',
+      body: '周三晚在体育馆看台捡到一副黑色蓝牙耳机，充电盒上有贴纸。失主可以回复我，或发邮件到 lianxi@example.edu。',
+      author: { uuid: DEMO_USERS[1].uuid, nickname: '夜跑的阿哲', school: '示例师范大学', avatar: '', title: null, level: 4 },
+      createdAt: now - 4 * HOUR }
+  ];
+
+  const DEMO_REPLIES = [
+    { id: 33, kind: 'reply', threadId: 9, threadTitle: '图书馆四楼真的适合自习吗', flag: 'social',
+      body: '同问，我一般去三楼，但那边插座少。可以加我 qq: 88123456 一起。',
+      author: { uuid: DEMO_USERS[1].uuid, nickname: '夜跑的阿哲', school: '示例师范大学', avatar: '', title: null, level: 4 },
+      createdAt: now - 55 * MIN },
+    { id: 31, kind: 'reply', threadId: 8, threadTitle: '这周六的社团招新在哪里', flag: '',
+      body: '周六上午九点，体育馆门口集合，别迟到。',
+      author: { uuid: DEMO_USERS[0].uuid, nickname: '小满', school: '示例大学', avatar: '', title: { name: '学长', color: '#0071e3' }, level: 7 },
+      createdAt: now - 6 * HOUR }
+  ];
+
   const demoState = {
     approvedBase: 128,
     approvedDelta: 0,
@@ -559,18 +712,34 @@ a { color: var(--accent); }
       { id: 8830, action: 'post.remove', target: '980', note: 'from:approved', created_at: now - 1 * DAY },
       { id: 8824, action: 'comment.approve', target: '5481', note: 'post:1015 delta:1', created_at: now - 2 * DAY }
     ],
-    // 内测反馈：分类各一条，一条带联系方式、一条 200 字以上（演示折叠/展开）
+    // 意见反馈：分类各一条，一条带联系方式、一条 200 字以上（演示折叠/展开）
     feedback: [
       { id: 77, cat: 'bug', status: 'open', contact: null, created_at: now - 42 * MIN, resolved_at: null,
         body: '在 iPhone SE 上打开首页，点「加载更多」之后页面会跳一下，偶尔同一条内容会重复出现两次，刷新后才恢复正常。' },
       { id: 74, cat: 'idea', status: 'open', contact: '微信：wall_helper', created_at: now - 5 * HOUR, resolved_at: null,
-        body: '希望表白墙能给每条内容加上「学院 / 年级」的可选筛选，现在内容多了以后翻起来有点累，想找同院同学发的内容要翻很久。另外建议在发布页把字数上限直接写在输入框旁边，我上次写到一半才被提示超长，前面的内容全白写了，如果能实时显示「已输入多少字 / 上限多少字」会好很多。还有一个小想法：如果能在个人页看到自己发过的内容当前是待审、已通过还是被驳回，就不用反复刷新首页确认了；被驳回时最好也能给一句简短的原因。另外希望举报之后能收到处理结果的通知，不然不知道到底有没有人管。最后谢谢维护的同学，内测期间反馈响应很快，也祝这面墙越做越好。' },
+        body: '希望表白墙能给每条内容加上「学院 / 年级」的可选筛选，现在内容多了以后翻起来有点累，想找同院同学发的内容要翻很久。另外建议在发布页把字数上限直接写在输入框旁边，我上次写到一半才被提示超长，前面的内容全白写了，如果能实时显示「已输入多少字 / 上限多少字」会好很多。还有一个小想法：如果能在个人页看到自己发过的内容当前是待审、已通过还是被驳回，就不用反复刷新首页确认了；被驳回时最好也能给一句简短的原因。另外希望举报之后能收到处理结果的通知，不然不知道到底有没有人管。最后谢谢维护的同学，反馈响应很快，也祝这面墙越做越好。' },
       { id: 69, cat: 'other', status: 'dismissed', contact: null, created_at: now - 2 * DAY, resolved_at: now - 1 * DAY,
         body: '只是想谢谢维护这个墙的同学，考试周还看到内容在正常更新，很安心。' }
     ],
+    titles: DEMO_TITLES,
+    users: DEMO_USERS,
+    userRecent: DEMO_USER_RECENT,
+    announcements: DEMO_ANNOUNCEMENTS,
+    schools: DEMO_SCHOOLS,
+    threads: DEMO_THREADS,
+    replies: DEMO_REPLIES,
     db: { fileBytes: 3565158, reclaimableBytes: 262144, walBytes: 0, cacheMb: 16, pageSize: 4096, pageCount: 870, freelistPages: 64, autoVacuum: 2 },
     nextAuditId: 8842
   };
+
+  // 用户身上的 title 是快照：头衔一改，持有它的用户要同步看到新名字与新颜色
+  function demoLinkTitles() {
+    demoState.users.forEach((u) => {
+      const t = demoState.titles.filter((x) => x.id === u.titleId)[0];
+      u.title = t ? { name: t.name, color: t.color } : null;
+    });
+  }
+  demoLinkTitles();
 
   const postById = (id) => demoState.posts.find((p) => p.id === id);
 
@@ -579,25 +748,34 @@ a { color: var(--accent); }
     const pendingComments = demoState.comments.filter((c) => c.status === 'pending');
     const openReports = demoState.reports.filter((r) => r.status === 'open');
     const openFeedback = demoState.feedback.filter((f) => f.status === 'open');
+    const pendingThreads = demoState.threads.filter((t) => t.status !== 'approved');
+    const pendingReplies = demoState.replies.filter((r) => r.status !== 'approved');
     const oldest = [].concat(
       pendingPosts.map((p) => p.created_at),
       pendingComments.map((c) => c.created_at),
-      openReports.map((r) => r.created_at)
+      openReports.map((r) => r.created_at),
+      pendingThreads.map((t) => t.createdAt)
     );
     const approvedPosts = demoState.approvedBase + demoState.approvedDelta;
     return {
       pendingPosts: pendingPosts.length,
       pendingComments: pendingComments.length,
+      pendingThreads: pendingThreads.length,
+      pendingReplies: pendingReplies.length,
       openReports: openReports.length,
       approvedPosts,
-      pendingTotal: pendingPosts.length + pendingComments.length + openReports.length,
+      pendingTotal: pendingPosts.length + pendingComments.length + pendingThreads.length + pendingReplies.length + openReports.length,
       oldestPendingAt: oldest.length ? Math.min.apply(null, oldest) : null,
       generatedAt: Date.now(),
-      // 内测运营指标：与 GET /api/admin/stats 同名字段，演示模式下同样可用
+      // 运营指标：与 GET /api/admin/stats 同名字段，演示模式下同样可用
       openFeedback: openFeedback.length,
-      gateRequired: true,
-      gateInviteRequired: true,
-      betaVersion: '0.9.0-beta.1（演示）',
+      users: demoState.users.length + 214,
+      usersToday: 3,
+      activeToday: 12,
+      threads: demoState.threads.filter((t) => t.status === 'approved').length + 46,
+      replies: demoState.replies.filter((r) => r.status === 'approved').length + 318,
+      dmsToday: 27,
+      version: '1.0.0（演示）',
       db: {
         fileBytes: demoState.db.fileBytes,
         reclaimableBytes: demoState.db.reclaimableBytes,
@@ -611,14 +789,42 @@ a { color: var(--accent); }
           likes: 3120,
           reports: demoState.reports.length + 27,
           feedback: demoState.feedback.length + 11,
-          audit: demoState.audit.length + 279
+          audit: demoState.audit.length + 279,
+          users: demoState.users.length + 214,
+          threads: demoState.threads.length + 46,
+          replies: demoState.replies.length + 318,
+          messages: 640
         }
       }
     };
   }
 
+  // 论坛队列的游标是纯数字 id（先来先审），与帖子/评论的 created_at.id 语义不同
+  function demoForumQueue(type) {
+    const list = type === 'threads' ? demoState.threads : demoState.replies;
+    const items = list.filter((x) => !x.status).sort((a, b) => a.createdAt - b.createdAt || a.id - b.id);
+    return { type, items, nextCursor: null };
+  }
+
+  function demoReviewThread(id, action) {
+    const item = demoState.threads.filter((t) => t.id === id)[0];
+    if (!item) throw new Error('not_found');
+    item.status = action === 'approve' ? 'approved' : 'removed';
+    pushAudit('thread.' + action, id, null);
+    return { ok: true, status: item.status };
+  }
+
+  function demoReviewReply(id, action) {
+    const item = demoState.replies.filter((r) => r.id === id)[0];
+    if (!item) throw new Error('not_found');
+    item.status = action === 'approve' ? 'approved' : 'removed';
+    pushAudit('reply.' + action, id, null);
+    return { ok: true, status: item.status };
+  }
+
   function demoQueue(type, q) {
     const query = String(q || '').toLowerCase();
+    if (type === 'threads' || type === 'replies') return demoForumQueue(type);
     if (type === 'comments') {
       const items = demoState.comments
         .filter((c) => c.status === 'pending')
@@ -767,6 +973,174 @@ a { color: var(--accent); }
     };
   }
 
+  /* ─────────────── 演示实现：用户 / 头衔 / 公告 / 学校 ─────────────── */
+
+  function demoLevelFromExp(exp) {
+    const e = Math.max(0, Math.floor(Number(exp) || 0));
+    return Math.max(1, Math.min(99, Math.floor((Math.sqrt(1 + (8 * e) / 50) - 1) / 2) + 1));
+  }
+
+  function demoUsers(query, status, cursor) {
+    const q = String(query || '').toLowerCase();
+    const rows = demoState.users
+      .filter((u) => !status || u.status === status)
+      .filter((u) => !q || [u.nickname, u.email, u.school, u.uuid].join(' ').toLowerCase().indexOf(q) >= 0)
+      .sort((a, b) => b.id - a.id)
+      .filter((u) => !cursor || u.id < Number(cursor));
+    const page = rows.slice(0, 30);
+    return { items: page, nextCursor: rows.length > 30 && page.length ? page[page.length - 1].id : null };
+  }
+
+  function demoUserDetail(id) {
+    const user = demoState.users.filter((u) => u.id === Number(id))[0];
+    if (!user) throw new Error('not_found');
+    return { user, recent: demoState.userRecent[user.id] || { posts: [], comments: [], threads: [], messages: [] } };
+  }
+
+  function demoUserAction(id, action, value) {
+    const user = demoState.users.filter((u) => u.id === Number(id))[0];
+    if (!user) throw new Error('not_found');
+    if (action === 'set_title') {
+      const t = demoState.titles.filter((x) => x.id === Number(value))[0];
+      if (value != null && value !== '' && !t) throw new Error('title_not_found');
+      user.titleId = t ? t.id : null;
+      user.title = t ? { name: t.name, color: t.color } : null;
+    } else if (action === 'set_level') {
+      user.level = Math.max(1, Math.min(99, Number(value) || 1));
+    } else if (action === 'set_exp') {
+      user.exp = Math.max(0, Math.floor(Number(value) || 0));
+      user.level = demoLevelFromExp(user.exp);
+    } else if (action === 'reset_exp') {
+      user.exp = 0;
+      user.level = 1;
+    } else if (action === 'set_status') {
+      if (['active', 'muted', 'banned'].indexOf(value) < 0) throw new Error('invalid_status');
+      user.status = value;
+    } else if (action === 'rename') {
+      const clean = String(value == null ? '' : value).trim();
+      if (clean.length < 2 || clean.length > 16) throw new Error('nickname_length');
+      user.nickname = clean;
+      user.nicknameFlagged = '';
+      user.lastNicknameAt = Date.now();
+    } else if (action === 'clear_nickname_flag') {
+      user.nicknameFlagged = '';
+    } else {
+      throw new Error('unknown_action');
+    }
+    pushAudit('user.' + action, user.uuid, null);
+    return { ok: true, user };
+  }
+
+  function demoTitles() {
+    return demoState.titles
+      .map((t) => Object.assign({}, t, { userCount: demoState.users.filter((u) => u.titleId === t.id).length }))
+      .sort((a, b) => a.sort - b.sort || a.minLevel - b.minLevel || a.id - b.id);
+  }
+
+  function demoSaveTitle(id, patch) {
+    const clean = String(patch.name == null ? '' : patch.name).trim().slice(0, 12);
+    if (!clean) throw new Error('invalid_name');
+    const color = String(patch.color || '');
+    if (color && !HEX_RE.test(color)) throw new Error('invalid_color');
+    const dup = demoState.titles.filter((t) => t.name === clean && t.id !== Number(id))[0];
+    if (dup) throw new Error('duplicate_name');
+    const minLevel = Math.max(1, Math.min(99, Number(patch.minLevel) || 1));
+    const sort = Number(patch.sort) || 0;
+    let row = demoState.titles.filter((t) => t.id === Number(id))[0];
+    if (!row) {
+      row = { id: nextId(demoState.titles), createdAt: Date.now() };
+      demoState.titles.push(row);
+    }
+    row.name = clean;
+    row.color = color;
+    row.minLevel = minLevel;
+    row.auto = Boolean(patch.auto);
+    row.sort = sort;
+    demoLinkTitles();
+    pushAudit(id ? 'title.update' : 'title.create', String(row.id), clean);
+    return { ok: true, id: row.id };
+  }
+
+  function demoDeleteTitle(id) {
+    const idx = demoState.titles.map((t) => t.id).indexOf(Number(id));
+    if (idx < 0) throw new Error('not_found');
+    demoState.titles.splice(idx, 1);
+    demoState.users.forEach((u) => { if (u.titleId === Number(id)) u.titleId = null; });
+    demoLinkTitles();
+    pushAudit('title.delete', String(id), null);
+    return { ok: true };
+  }
+
+  function demoAnnouncements() {
+    return demoState.announcements.slice().sort((a, b) => a.sort - b.sort || b.id - a.id);
+  }
+
+  function demoNormalizeLink(raw) {
+    const link = String(raw == null ? '' : raw).trim().slice(0, 200);
+    if (!link) return '';
+    if (link.indexOf('#/') === 0 || link.indexOf('/') === 0) return link;
+    if (/^https:\/\//i.test(link)) return link;
+    return '';
+  }
+
+  function demoSaveAnnouncement(id, patch) {
+    const body = String(patch.body == null ? '' : patch.body).replace(/\s+/g, ' ').trim();
+    if (!body) throw new Error('empty');
+    if (body.length > 120) throw new Error('too_long');
+    let row = demoState.announcements.filter((a) => a.id === Number(id))[0];
+    if (!row) {
+      row = { id: nextId(demoState.announcements), createdAt: Date.now(), active: true };
+      demoState.announcements.push(row);
+    }
+    if (patch.body != null) row.body = body;
+    if (patch.link != null) row.link = demoNormalizeLink(patch.link);
+    if (patch.linkText != null) row.linkText = String(patch.linkText || '').trim().slice(0, 12);
+    if (patch.active != null) row.active = Boolean(patch.active);
+    if (patch.sort != null) row.sort = Number(patch.sort) || 0;
+    row.updatedAt = Date.now();
+    pushAudit(id ? 'announce.update' : 'announce.create', String(row.id), null);
+    return { ok: true, id: row.id };
+  }
+
+  function demoDeleteAnnouncement(id) {
+    const idx = demoState.announcements.map((a) => a.id).indexOf(Number(id));
+    if (idx < 0) throw new Error('not_found');
+    demoState.announcements.splice(idx, 1);
+    pushAudit('announce.delete', String(id), null);
+    return { ok: true };
+  }
+
+  function demoSchools() {
+    return demoState.schools
+      .map((s) => Object.assign({}, s, { userCount: demoState.users.filter((u) => u.school === s.name).length }))
+      .sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name, 'zh'));
+  }
+
+  function demoSaveSchool(id, patch) {
+    const clean = String(patch.name == null ? '' : patch.name).trim().slice(0, 30);
+    if (patch.name != null && clean.length < 2) throw new Error('invalid_name');
+    const dup = demoState.schools.filter((s) => s.name === clean && s.id !== Number(id))[0];
+    if (dup) throw new Error('duplicate_name');
+    let row = demoState.schools.filter((s) => s.id === Number(id))[0];
+    if (!row) {
+      row = { id: nextId(demoState.schools), active: true, sort: 0, createdAt: Date.now() };
+      demoState.schools.push(row);
+    }
+    if (patch.name != null) row.name = clean;
+    if (patch.sort != null) row.sort = Number(patch.sort) || 0;
+    if (patch.active != null) row.active = Boolean(patch.active);
+    pushAudit(id ? 'school.update' : 'school.create', String(row.id), row.name);
+    return { ok: true, id: row.id };
+  }
+
+  function demoDeleteSchool(id) {
+    const idx = demoState.schools.map((s) => s.id).indexOf(Number(id));
+    if (idx < 0) throw new Error('not_found');
+    demoState.schools.splice(idx, 1);
+    pushAudit('school.delete', String(id), null);
+    return { ok: true };
+  }
+
   /* ───────────────────────── 状态 / 接口层 ───────────────────────── */
 
   const LS_TOKEN = 'od_admin_token';
@@ -781,13 +1155,24 @@ a { color: var(--accent); }
     queueType: 'posts',
     queueQuery: '',
     queueSel: new Set(),
-    queueExtra: [],
+    queueItems: [],
+    queueNext: null,
+    queueTotal: null,
     reportStatus: 'open',
     feedbackStatus: 'open',
     feedbackExpanded: new Set(),
     auditAction: '',
+    // 用户列表：游标分页，usersStack 保存来路上的游标，用于「上一页」
+    usersQuery: '',
+    usersStatus: '',
+    usersCursor: 0,
+    usersStack: [],
+    usersNext: null,
+    usersItems: [],
+    userDetail: null,
+    titleOptions: [],
     stats: null,
-    cache: { overview: null, queue: null, reports: null, audit: null, feedback: null }
+    cache: { overview: null, queue: null, reports: null, audit: null, feedback: null, users: null, titles: null, announcements: null, schools: null }
   };
 
   function authHeaders(extra) {
@@ -814,15 +1199,81 @@ a { color: var(--accent); }
       err.status = 429; err.code = 'rate_limited'; err.retryAfter = wait;
       throw err;
     }
-    if (!res.ok) { const err = new Error((data && data.error) || ('HTTP ' + res.status)); err.status = res.status; throw err; }
+    if (!res.ok) {
+      const err = new Error((data && data.error) || ('HTTP ' + res.status));
+      err.status = res.status;
+      err.code = (data && data.error) || '';
+      throw err;
+    }
     return data;
+  }
+
+  // 服务端返回的是机器可读的 error 码，这里翻成一句人话再上屏
+  const API_ERROR_TEXT = {
+    unauthorized: '管理员令牌无效或已过期',
+    rate_limited: '请求太频繁，请稍后重试',
+    invalid_name: '名称不合法（学校 2–30 字，头衔 1–12 字）',
+    invalid_color: '颜色需为 #RRGGBB 格式',
+    duplicate_name: '同名记录已存在',
+    not_found: '记录不存在或已被删除',
+    invalid_status: '状态值不合法',
+    title_not_found: '所选头衔不存在，请刷新后重试',
+    nickname_length: '昵称需为 2–16 字',
+    unknown_action: '不支持的操作',
+    empty: '内容不能为空',
+    too_long: '内容超出长度上限',
+    empty_ids: '没有选中任何内容'
+  };
+  function errText(e) {
+    if (!e) return '请稍后重试';
+    return API_ERROR_TEXT[e.code] || API_ERROR_TEXT[e.message] || e.message || '请稍后重试';
   }
 
   const store = {
     stats: () => (state.mode === 'live' ? api('/api/admin/stats') : Promise.resolve(demoStats())),
-    queue: (type, q) => (state.mode === 'live'
-      ? api('/api/admin/queue?type=' + type + '&limit=50' + (q ? '&q=' + encodeQ(q) : ''))
+    // 论坛队列的 cursor 是纯数字 id，帖子/评论是 created_at.id；这里原样透传，由服务端解释
+    queue: (type, q, cursor) => (state.mode === 'live'
+      ? api('/api/admin/queue?type=' + type + '&limit=50' + (q ? '&q=' + encodeQ(q) : '') + (cursor ? '&cursor=' + encodeQ(cursor) : ''))
       : Promise.resolve(demoQueue(type, q))),
+    reviewThread: (id, action) => (state.mode === 'live'
+      ? api('/api/admin/threads/' + id + '/' + action, { method: 'POST' })
+      : Promise.resolve(demoReviewThread(id, action))),
+    reviewReply: (id, action) => (state.mode === 'live'
+      ? api('/api/admin/replies/' + id + '/' + action, { method: 'POST' })
+      : Promise.resolve(demoReviewReply(id, action))),
+    users: (opts) => {
+      const o = opts || {};
+      if (state.mode !== 'live') return Promise.resolve(demoUsers(o.q, o.status, o.cursor));
+      return api('/api/admin/users?limit=30'
+        + (o.q ? '&q=' + encodeQ(o.q) : '')
+        + (o.status ? '&status=' + encodeQ(o.status) : '')
+        + (o.cursor ? '&cursor=' + encodeQ(o.cursor) : ''));
+    },
+    userDetail: (id) => (state.mode === 'live' ? api('/api/admin/users/' + id) : Promise.resolve(demoUserDetail(id))),
+    userAction: (id, action, value) => (state.mode === 'live'
+      ? api('/api/admin/users/' + id, { method: 'POST', body: JSON.stringify({ action: action, value: value }) })
+      : Promise.resolve(demoUserAction(id, action, value))),
+    titles: () => (state.mode === 'live' ? api('/api/admin/titles') : Promise.resolve({ items: demoTitles() })),
+    saveTitle: (id, patch) => (state.mode === 'live'
+      ? api('/api/admin/titles' + (id ? '/' + id : ''), { method: 'POST', body: JSON.stringify(patch) })
+      : Promise.resolve(demoSaveTitle(id, patch))),
+    deleteTitle: (id) => (state.mode === 'live'
+      ? api('/api/admin/titles/' + id + '/delete', { method: 'POST' })
+      : Promise.resolve(demoDeleteTitle(id))),
+    announcements: () => (state.mode === 'live' ? api('/api/admin/announcements') : Promise.resolve({ items: demoAnnouncements() })),
+    saveAnnouncement: (id, patch) => (state.mode === 'live'
+      ? api('/api/admin/announcements' + (id ? '/' + id : ''), { method: 'POST', body: JSON.stringify(patch) })
+      : Promise.resolve(demoSaveAnnouncement(id, patch))),
+    deleteAnnouncement: (id) => (state.mode === 'live'
+      ? api('/api/admin/announcements/' + id + '/delete', { method: 'POST' })
+      : Promise.resolve(demoDeleteAnnouncement(id))),
+    schools: () => (state.mode === 'live' ? api('/api/admin/schools') : Promise.resolve({ items: demoSchools() })),
+    saveSchool: (id, patch) => (state.mode === 'live'
+      ? api('/api/admin/schools' + (id ? '/' + id : ''), { method: 'POST', body: JSON.stringify(patch) })
+      : Promise.resolve(demoSaveSchool(id, patch))),
+    deleteSchool: (id) => (state.mode === 'live'
+      ? api('/api/admin/schools/' + id + '/delete', { method: 'POST' })
+      : Promise.resolve(demoDeleteSchool(id))),
     reports: (status) => (state.mode === 'live'
       ? api('/api/admin/reports?status=' + encodeQ(status) + '&limit=200')
       : Promise.resolve(demoReports(status))),
@@ -949,8 +1400,10 @@ a { color: var(--accent); }
     const tiles = [
       { label: '待审帖子', value: stats.pendingPosts, cap: '等待人工复核', tone: stats.pendingPosts > 0 ? 'accent' : null },
       { label: '待审评论', value: stats.pendingComments, cap: '命中规则或需复核', tone: stats.pendingComments > 0 ? 'warn' : null },
+      { label: '待审主题', value: stats.pendingThreads || 0, cap: '论坛主题', tone: stats.pendingThreads > 0 ? 'warn' : null },
+      { label: '待审回复', value: stats.pendingReplies || 0, cap: '论坛回复', tone: stats.pendingReplies > 0 ? 'warn' : null },
       { label: '待处理举报', value: stats.openReports, cap: '通知—移除工单', tone: stats.openReports > 0 ? 'danger' : null },
-      { label: '待处理反馈', value: stats.openFeedback, cap: '内测用户提交的问题与建议', tone: stats.openFeedback > 0 ? 'accent' : null },
+      { label: '待处理反馈', value: stats.openFeedback, cap: '用户提交的问题与建议', tone: stats.openFeedback > 0 ? 'accent' : null },
       { label: '已通过帖子', value: stats.approvedPosts, cap: '当前对访客可见', tone: null }
     ];
     let tileHtml = '<div class="tiles">';
@@ -972,20 +1425,26 @@ a { color: var(--accent); }
       ['可回收空间', fmtBytes(db.reclaimableBytes), 'VACUUM 可回收'],
       ['WAL 体积', fmtBytes(db.walBytes), '应有界增长'],
       ['页缓存', (db.cacheMb || 0) + ' MB', '按内存自动定档'],
-      ['内测版本', stats.betaVersion || '—', '服务端 BETA_VERSION']
+      ['服务端版本', stats.version || '—', 'package.json version']
     ];
-    let kvHtml = '<div class="kv">';
-    kv.forEach((row) => {
-      kvHtml += '<div class="od-field"><span class="k">' + esc(row[0]) + '</span><span class="v od-nowrap">' + esc(row[1]) + '</span><span class="h">' + esc(row[2]) + '</span></div>';
-    });
-    kvHtml += '</div>';
+    const kvHtml = '<div class="kv">' + kv.map((row) => kvRow(row[0], row[1], row[2])).join('') + '</div>';
 
-    const countPairs = [['帖子', counts.posts], ['评论', counts.comments], ['点赞', counts.likes], ['工单', counts.reports], ['反馈', counts.feedback], ['审核留痕', counts.audit]];
-    let countHtml = '<div class="kv">';
-    countPairs.forEach((row) => {
-      countHtml += '<div class="od-field"><span class="k">' + esc(row[0]) + '</span><span class="v od-nowrap">' + esc(row[1] == null ? '—' : row[1]) + '</span></div>';
-    });
-    countHtml += '</div>';
+    const ops = [
+      ['用户总数', stats.users, '含被封禁的账号'],
+      ['今日新增', stats.usersToday, '最近 24 小时注册'],
+      ['今日活跃', stats.activeToday, '最近 24 小时有活动'],
+      ['论坛主题', stats.threads, '已通过'],
+      ['论坛回复', stats.replies, '已通过'],
+      ['今日私信', stats.dmsToday, '最近 24 小时发送']
+    ];
+    const opsHtml = '<div class="kv">' + ops.map((row) => kvRow(row[0], row[1], row[2])).join('') + '</div>';
+
+    const countPairs = [
+      ['帖子', counts.posts], ['评论', counts.comments], ['主题', counts.threads], ['回复', counts.replies],
+      ['用户', counts.users], ['私信', counts.messages], ['点赞', counts.likes], ['工单', counts.reports],
+      ['反馈', counts.feedback], ['审核留痕', counts.audit]
+    ];
+    const countHtml = '<div class="kv">' + countPairs.map((row) => kvRow(row[0], row[1])).join('') + '</div>';
 
     let auditHtml = '';
     if (!audit.items.length) {
@@ -1013,6 +1472,9 @@ a { color: var(--accent); }
       + '<div class="card-pad">' + auditHtml + '</div></div>'
       + '</div>'
       + '<div class="card" style="margin-top:var(--space-5)">'
+      + '<div class="card-head"><h2>运营概览</h2><span class="sub">账号规模与讨论活跃度</span></div>'
+      + '<div class="card-pad">' + opsHtml + '</div></div>'
+      + '<div class="card" style="margin-top:var(--space-5)">'
       + '<div class="card-head"><h2>内容总量</h2><span class="sub">来自统计接口</span></div>'
       + '<div class="card-pad">' + countHtml + '</div></div>';
   }
@@ -1024,11 +1486,11 @@ a { color: var(--accent); }
       const results = await Promise.all([store.stats(), store.audit('')]);
       state.stats = results[0];
       updateNavCounts();
-      setGateStatus(results[0]);
+      setVersionStatus(results[0]);
       el.innerHTML = overviewHtml(results[0], results[1]);
     } catch (e) {
       if (handleApiError(e)) return;
-      el.innerHTML = errorState(e.message);
+      el.innerHTML = errorState(errText(e));
     }
   }
 
@@ -1073,20 +1535,71 @@ a { color: var(--accent); }
       + '</div></li>';
   }
 
-  function queueListHtml(res) {
-    if (!res.items.length) {
-      return emptyState('队列已清空', state.queueQuery ? '没有匹配「' + state.queueQuery + '」的待审内容。' : '当前没有等待人工复核的内容。');
+  // 论坛主题：署名内容，审核员要能一眼看到作者与命中标记
+  function threadRowHtml(t) {
+    return '<li class="q-row" data-od-id="thread-' + t.id + '" style="grid-template-columns:minmax(0,1fr) auto">'
+      + '<div class="q-main">'
+      + '<div class="q-head"><span class="chip chip-soft">主题</span><span class="chip">' + esc(boardLabel(t.board)) + '</span>'
+      + flagChips(t.flag)
+      + '<span class="meta od-nowrap">#' + t.id + '</span>'
+      + '<span class="meta od-nowrap" title="' + fmtDate(t.createdAt) + '">' + timeAgo(t.createdAt) + '</span></div>'
+      + '<p class="q-body"><strong>' + esc(t.title) + '</strong></p>'
+      + '<p class="q-body">' + esc(t.body) + '</p>'
+      + '<div class="q-foot">' + authorHtml(t.author) + '</div>'
+      + '</div>'
+      + '<div class="q-actions">'
+      + '<button class="btn btn-primary btn-sm" type="button" data-act="thread.approve" data-id="' + t.id + '">通过</button>'
+      + '<button class="btn btn-secondary btn-sm" type="button" data-act="thread.reject" data-id="' + t.id + '">驳回</button>'
+      + '<button class="btn btn-danger-ghost btn-sm" type="button" data-act="thread.remove" data-id="' + t.id + '">删除</button>'
+      + '</div></li>';
+  }
+
+  // 回复必须带上所属主题，否则无法判断上下文
+  function replyRowHtml(r) {
+    const ctx = r.threadTitle ? '主题：' + r.threadTitle : '所属主题 #' + r.threadId + '（标题不可用）';
+    return '<li class="q-row" data-od-id="reply-' + r.id + '" style="grid-template-columns:minmax(0,1fr) auto">'
+      + '<div class="q-main">'
+      + '<div class="q-head"><span class="chip chip-soft">回复</span>' + flagChips(r.flag)
+      + '<span class="meta od-nowrap">#' + r.id + '</span>'
+      + '<span class="meta od-nowrap" title="' + fmtDate(r.createdAt) + '">' + timeAgo(r.createdAt) + '</span></div>'
+      + '<p class="q-body">' + esc(r.body) + '</p>'
+      + '<p class="q-context od-clamp-2">' + esc(ctx) + '</p>'
+      + '<div class="q-foot">' + authorHtml(r.author) + '</div>'
+      + '</div>'
+      + '<div class="q-actions">'
+      + '<button class="btn btn-primary btn-sm" type="button" data-act="reply.approve" data-id="' + r.id + '">通过</button>'
+      + '<button class="btn btn-secondary btn-sm" type="button" data-act="reply.reject" data-id="' + r.id + '">驳回</button>'
+      + '<button class="btn btn-danger-ghost btn-sm" type="button" data-act="reply.remove" data-id="' + r.id + '">删除</button>'
+      + '</div></li>';
+  }
+
+  function queueRowHtml(item) {
+    if (state.queueType === 'comments') return commentRowHtml(item);
+    if (state.queueType === 'threads') return threadRowHtml(item);
+    if (state.queueType === 'replies') return replyRowHtml(item);
+    return postRowHtml(item);
+  }
+
+  function queueListHtml() {
+    if (!state.queueItems.length) {
+      const forum = FORUM_TYPES.indexOf(state.queueType) >= 0;
+      const body = state.queueQuery
+        ? '没有匹配「' + state.queueQuery + '」的待审内容。'
+        : (forum ? '论坛默认命中预筛才转人工，当前没有等待复核的内容。' : '当前没有等待人工复核的内容。');
+      return emptyState('队列已清空', body);
     }
     let html = '<ul class="q-list">';
-    res.items.forEach((item) => { html += state.queueType === 'comments' ? commentRowHtml(item) : postRowHtml(item); });
+    state.queueItems.forEach((item) => { html += queueRowHtml(item); });
     html += '</ul>';
-    if (res.nextCursor) {
+    if (state.queueNext) {
       html += '<div style="display:flex;justify-content:center;margin-top:var(--space-5)"><button class="btn btn-secondary" type="button" data-act="load-more">加载更多</button></div>';
     }
     return html;
   }
 
   function bulkBarHtml() {
+    // 论坛主题/回复没有批量接口，宁可不显示，也不给一个点了没用的按钮
+    if (FORUM_TYPES.indexOf(state.queueType) >= 0) return '';
     const n = state.queueSel.size;
     if (!n) return '';
     const isPosts = state.queueType === 'posts';
@@ -1100,28 +1613,41 @@ a { color: var(--accent); }
       + '</div>';
   }
 
-  function queueHtml(res) {
-    const tabs = '<div class="seg" role="tablist" aria-label="队列类型">'
-      + '<button role="tab" type="button" data-qtype="posts" aria-selected="' + (state.queueType === 'posts') + '">帖子</button>'
-      + '<button role="tab" type="button" data-qtype="comments" aria-selected="' + (state.queueType === 'comments') + '">评论</button>'
-      + '</div>';
-    const meta = '<span class="meta">共 ' + esc(res.total != null ? res.total : res.items.length) + ' 条待审</span>';
+  function queueHtml() {
+    const forum = FORUM_TYPES.indexOf(state.queueType) >= 0;
+    const tabs = '<div class="seg" role="tablist" aria-label="队列类型">' + QUEUE_TABS.map((t) =>
+      '<button role="tab" type="button" data-qtype="' + t[0] + '" aria-selected="' + (state.queueType === t[0]) + '">' + t[1] + '</button>'
+    ).join('') + '</div>';
+    // 论坛队列不返回 total，且游标是纯数字 id：如实说明本页条数，不编造「共 N 条」
+    const count = state.queueTotal != null ? '共 ' + state.queueTotal + ' 条待审' : '本页 ' + state.queueItems.length + ' 条';
+    const meta = '<span class="meta">' + esc(count) + '</span>'
+      + (forum ? '<span class="meta-dim">按 id 正序 · 先来先审</span>' : '');
     return '<div class="toolbar">' + tabs + meta + '<span class="spacer"></span>'
       + (state.mode === 'live' ? '' : '<span class="meta-dim">演示数据</span>')
-      + '</div>' + queueListHtml(res) + bulkBarHtml();
+      + '</div>' + queueListHtml() + bulkBarHtml();
   }
 
-  async function renderQueue() {
+  async function renderQueue(more) {
     const el = $('#view-queue');
-    el.innerHTML = skeleton(4);
+    if (!more) {
+      state.queueItems = [];
+      state.queueNext = null;
+      state.queueTotal = null;
+      el.innerHTML = skeleton(4);
+    }
     try {
-      const res = await store.queue(state.queueType, state.queueQuery);
+      const res = await store.queue(state.queueType, state.queueQuery, more ? state.queueNext : null);
       state.cache.queue = res;
-      el.innerHTML = queueHtml(res);
+      state.queueTotal = res.total != null ? res.total : null;
+      state.queueNext = res.nextCursor || null;
+      state.queueItems = more ? state.queueItems.concat(res.items) : res.items;
+      if (more && !res.items.length) toast('没有更多待审内容', 'warn');
+      el.innerHTML = queueHtml();
       updateNavCounts();
     } catch (e) {
       if (handleApiError(e)) return;
-      el.innerHTML = errorState(e.message);
+      if (more) { toast('加载更多失败：' + errText(e), 'danger'); return; }
+      el.innerHTML = errorState(errText(e));
     }
   }
 
@@ -1170,7 +1696,7 @@ a { color: var(--accent); }
       updateNavCounts();
     } catch (e) {
       if (handleApiError(e)) return;
-      el.innerHTML = errorState(e.message);
+      el.innerHTML = errorState(errText(e));
     }
   }
 
@@ -1206,11 +1732,11 @@ a { color: var(--accent); }
       el.innerHTML = auditHtml(res);
     } catch (e) {
       if (handleApiError(e)) return;
-      el.innerHTML = errorState(e.message);
+      el.innerHTML = errorState(errText(e));
     }
   }
 
-  /* ───────────────────────── 渲染：内测反馈 ───────────────────────── */
+  /* ───────────────────────── 渲染：意见反馈 ───────────────────────── */
 
   // 超过这个长度的正文默认折叠：一条长文会把后面的反馈全挤出首屏
   const FEEDBACK_CLAMP_AT = 200;
@@ -1269,7 +1795,7 @@ a { color: var(--accent); }
     if (res.items.length) {
       body = '<ul class="q-list">' + res.items.map(feedbackRowHtml).join('') + '</ul>';
     } else if (state.feedbackStatus === 'open') {
-      body = emptyState('暂无待处理反馈', '内测用户在公开页提交的问题与建议会进入这里，处理完请点「标记已处理」或「忽略」。');
+      body = emptyState('暂无待处理反馈', '用户在公开页提交的问题与建议会进入这里，处理完请点「标记已处理」或「忽略」。');
     } else {
       body = emptyState(state.feedbackStatus === 'all' ? '暂无反馈' : '没有符合条件的反馈', '切换上方筛选可以查看其它状态的反馈。');
     }
@@ -1289,7 +1815,535 @@ a { color: var(--accent); }
       updateNavCounts();
     } catch (e) {
       if (handleApiError(e)) return;
-      el.innerHTML = errorState(e.message);
+      el.innerHTML = errorState(errText(e));
+    }
+  }
+
+  /* ───────────────────────── 渲染：用户 ───────────────────────── */
+
+  // 列表工具条只渲染一次：搜索框在里面，重绘列表时不能把它一起换掉，否则输入焦点会丢
+  function usersToolbarHtml() {
+    const seg = '<div class="seg" role="tablist" aria-label="账号状态">' + USER_STATUS_TABS.map((s) =>
+      '<button role="tab" type="button" data-ustatus="' + s[0] + '" aria-selected="' + (state.usersStatus === s[0]) + '">' + s[1] + '</button>'
+    ).join('') + '</div>';
+    return '<div class="toolbar">'
+      + '<label class="search" style="min-width:240px">'
+      + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>'
+      + '<input id="userSearch" type="search" placeholder="昵称 / 邮箱 / 学校 / uuid" autocomplete="off" value="' + esc(state.usersQuery) + '">'
+      + '</label>'
+      + seg
+      + '<span class="spacer"></span>'
+      + '<span class="meta" id="usersMeta"></span>'
+      + '<div class="pager">'
+      + '<button class="btn btn-secondary btn-sm" type="button" data-act="users-prev">上一页</button>'
+      + '<button class="btn btn-secondary btn-sm" type="button" data-act="users-next">下一页</button>'
+      + '</div></div>'
+      + '<p class="meta-dim" style="margin:-8px 0 var(--space-4)">用户通过邮箱验证码自行注册；封禁会立即踢下线，改名与删除类操作均可在审核日志里追溯。</p>'
+      + '<div data-od-id="users-list"></div>';
+  }
+
+  function userRowHtml(u) {
+    const c = u.counts || {};
+    const counts = '帖 ' + (c.posts || 0) + ' · 评 ' + (c.comments || 0) + ' · 题 ' + (c.threads || 0) + ' · 回 ' + (c.replies || 0);
+    return '<li class="q-row" data-od-id="user-' + u.id + '" style="grid-template-columns:minmax(0,1fr) auto">'
+      + '<div class="q-main">'
+      + '<div class="q-head"><strong>' + esc(u.nickname) + '</strong>'
+      + (u.nicknameFlagged ? '<span class="flag">昵称待复核</span>' : '')
+      + titleChip(u.title)
+      + '<span class="chip">Lv.' + esc(u.level) + '</span>'
+      + '<span class="badge" data-status="' + esc(USER_STATUS_TONE[u.status] || '') + '">' + esc(USER_STATUS_LABEL[u.status] || u.status) + '</span>'
+      + '<span class="meta-dim od-nowrap">#' + esc(u.id) + '</span></div>'
+      + '<p class="q-context od-truncate">' + esc(u.email) + (u.school ? ' · ' + esc(u.school) : ' · 未设学校') + '</p>'
+      + '<div class="q-foot">'
+      + '<span class="meta">经验 ' + esc(u.exp) + '</span>'
+      + '<span class="meta" title="帖子 / 评论 / 主题 / 回复">内容 ' + esc(counts) + '</span>'
+      + '<span class="meta od-nowrap">注册 ' + fmtDate(u.createdAt) + '</span>'
+      + '<span class="meta od-nowrap">最近登录 ' + timeAgo(u.lastLoginAt) + '</span>'
+      + '</div></div>'
+      + '<div class="q-actions">'
+      + '<button class="btn btn-secondary btn-sm" type="button" data-act="user.open" data-id="' + esc(u.id) + '">详情</button>'
+      + '</div></li>';
+  }
+
+  function usersListHtml(res) {
+    if (!res.items.length) {
+      return (state.usersQuery || state.usersStatus)
+        ? emptyState('没有匹配的用户', '换个关键字，或把状态筛选切回「全部」。')
+        : emptyState('还没有注册用户', '用户通过邮箱验证码完成注册后会出现在这里。');
+    }
+    return '<ul class="q-list">' + res.items.map(userRowHtml).join('') + '</ul>';
+  }
+
+  function updateUsersBar(res) {
+    $$('#view-users [data-ustatus]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.ustatus === state.usersStatus)));
+    const meta = $('#usersMeta');
+    if (meta) {
+      meta.textContent = '第 ' + (state.usersStack.length + 1) + ' 页 · 本页 ' + res.items.length + ' 条'
+        + (state.usersQuery ? ' · 关键字「' + state.usersQuery + '」' : '');
+    }
+    const prev = $('#view-users [data-act="users-prev"]');
+    const next = $('#view-users [data-act="users-next"]');
+    if (prev) prev.disabled = state.usersStack.length === 0;
+    if (next) next.disabled = !state.usersNext;
+  }
+
+  async function fetchUsers() {
+    const res = await store.users({ q: state.usersQuery, status: state.usersStatus, cursor: state.usersCursor });
+    state.usersItems = res.items;
+    state.usersNext = res.nextCursor || null;
+    state.cache.users = res;
+    return res;
+  }
+
+  async function renderUsers() {
+    const el = $('#view-users');
+    if (!$('#userSearch')) el.innerHTML = usersToolbarHtml();
+    const list = $('#view-users [data-od-id="users-list"]');
+    list.innerHTML = skeleton(4);
+    try {
+      const res = await fetchUsers();
+      list.innerHTML = usersListHtml(res);
+      updateUsersBar(res);
+    } catch (e) {
+      if (handleApiError(e)) return;
+      list.innerHTML = errorState(errText(e));
+    }
+  }
+
+  // 游标分页：来路游标入栈，上一页就是出栈；翻页不重排已有数据
+  function pageUsers(next) {
+    if (next) {
+      if (!state.usersNext) return;
+      state.usersStack.push(state.usersCursor);
+      state.usersCursor = state.usersNext;
+    } else {
+      if (!state.usersStack.length) return;
+      state.usersCursor = state.usersStack.pop();
+    }
+    state.usersNext = null;
+    return renderUsers();
+  }
+
+  // 操作之后只刷新列表，不重建工具条（保住搜索关键字与页码）
+  async function refreshUsersList() {
+    if (state.view !== 'users') return;
+    const list = $('#view-users [data-od-id="users-list"]');
+    if (!list) return;
+    try {
+      const res = await fetchUsers();
+      list.innerHTML = usersListHtml(res);
+      updateUsersBar(res);
+    } catch (e) {
+      toast('列表刷新失败：' + errText(e), 'danger');
+    }
+  }
+
+  function detailItem(k, v, sub) {
+    return '<div class="detail-item"><span class="meta">' + esc(k) + '</span><div>' + esc(v == null || v === '' ? '—' : v) + '</div>'
+      + (sub ? '<div class="sub">' + esc(sub) + '</div>' : '') + '</div>';
+  }
+
+  function recentBlockHtml(title, items, render) {
+    const head = '<h3 style="font-size:var(--text-sm);font-weight:600;margin-bottom:8px">' + esc(title) + '（' + (items ? items.length : 0) + '）</h3>';
+    if (!items || !items.length) return '<div>' + head + '<p class="meta">暂无记录。</p></div>';
+    return '<div>' + head + '<div class="detail-list">' + items.map(render).join('') + '</div></div>';
+  }
+
+  function userActionsHtml(u) {
+    const options = '<option value="">不指定</option>' + state.titleOptions.map((t) =>
+      '<option value="' + esc(t.id) + '"' + (u.titleId === t.id ? ' selected' : '') + '>' + esc(t.name)
+      + (t.auto ? '（Lv.' + esc(t.minLevel) + ' 起自动）' : '（仅手动）') + '</option>'
+    ).join('');
+    const statusOptions = USER_STATUS_TABS.filter((s) => s[0]).map((s) =>
+      '<option value="' + s[0] + '"' + (u.status === s[0] ? ' selected' : '') + '>' + s[1] + '</option>'
+    ).join('');
+    return '<div><h3 style="font-size:var(--text-sm);font-weight:600;margin-bottom:8px">管理操作</h3><div class="form-grid">'
+      + '<div class="field"><label for="opTitle">头衔</label><div class="od-row"><select id="opTitle" class="od-fill">' + options + '</select>'
+      + '<button class="btn btn-secondary" type="button" data-act="user.apply" data-op="set_title" data-id="' + esc(u.id) + '">保存</button></div>'
+      + '<span class="hint">手动指定优先于等级自动授予；选「不指定」则回到自动规则。</span></div>'
+      + '<div class="field"><label for="opLevel">等级</label><div class="od-row"><input id="opLevel" class="od-fill" type="number" min="1" max="99" step="1" value="' + esc(u.level) + '">'
+      + '<button class="btn btn-secondary" type="button" data-act="user.apply" data-op="set_level" data-id="' + esc(u.id) + '">保存</button></div>'
+      + '<span class="hint">1–99，写入时同步把经验设为该等级的下限。</span></div>'
+      + '<div class="field"><label for="opExp">经验</label><div class="od-row"><input id="opExp" class="od-fill" type="number" min="0" step="1" value="' + esc(u.exp) + '">'
+      + '<button class="btn btn-secondary" type="button" data-act="user.apply" data-op="set_exp" data-id="' + esc(u.id) + '">保存</button>'
+      + '<button class="btn btn-danger-ghost" type="button" data-act="user.apply" data-op="reset_exp" data-id="' + esc(u.id) + '">重置</button></div>'
+      + '<span class="hint">等级由经验换算：L2=50、L3=150、L4=300。</span></div>'
+      + '<div class="field"><label for="opName">昵称</label><div class="od-row"><input id="opName" class="od-fill" maxlength="16" value="' + esc(u.nickname) + '">'
+      + '<button class="btn btn-danger-ghost" type="button" data-act="user.apply" data-op="rename" data-id="' + esc(u.id) + '">改名</button></div>'
+      + '<span class="hint">2–16 字；改名会顺带清除昵称预审标记。</span></div>'
+      + '<div class="field"><label for="opStatus">状态</label><div class="od-row"><select id="opStatus" class="od-fill">' + statusOptions + '</select>'
+      + '<button class="btn btn-secondary" type="button" data-act="user.apply" data-op="set_status" data-id="' + esc(u.id) + '">应用</button></div>'
+      + '<span class="hint">封禁会立即让该账号的全部会话失效。</span></div>'
+      + '<div class="field"><label>昵称预审</label><div class="od-row">'
+      + (u.nicknameFlagged
+        ? '<span class="flag">命中 ' + esc(u.nicknameFlagged) + '</span>'
+          + '<button class="btn btn-secondary" type="button" data-act="user.apply" data-op="clear_nickname_flag" data-id="' + esc(u.id) + '">清除标记</button>'
+        : '<span class="meta">未命中</span>')
+      + '</div><span class="hint">清除即视为人工放行；用户自己改名也会自动清除。</span></div>'
+      + '</div></div>';
+  }
+
+  function userDetailHtml(data) {
+    const u = data.user || {};
+    const c = u.counts || {};
+    const recent = data.recent || {};
+    const head = '<div class="modal-head"><div><h2 id="modalTitle">用户详情</h2>'
+      + '<p class="sub">#' + esc(u.id) + ' · ' + esc(u.nickname) + '</p></div>'
+      + '<button class="iconbtn" type="button" data-close aria-label="关闭">' + CLOSE_ICON + '</button></div>';
+
+    const identity = '<div class="od-cluster"><strong id="userModalName" style="font-size:var(--text-lg)">' + esc(u.nickname) + '</strong>'
+      + (u.nicknameFlagged ? '<span class="flag">昵称预审命中</span>' : '')
+      + titleChip(u.title)
+      + '<span class="chip">Lv.' + esc(u.level) + '</span>'
+      + '<span class="badge" data-status="' + esc(USER_STATUS_TONE[u.status] || '') + '">' + esc(USER_STATUS_LABEL[u.status] || u.status) + '</span></div>';
+
+    const countsHtml = '<div class="kv">'
+      + kvRow('帖子', c.posts) + kvRow('评论', c.comments)
+      + kvRow('主题', c.threads) + kvRow('回复', c.replies)
+      + kvRow('已发私信', c.dmsSent) + kvRow('好友', c.friends) + '</div>';
+
+    const fields = [
+      ['UUID', u.uuid],
+      ['邮箱', u.email],
+      ['昵称', u.nickname, u.nicknameFlagged ? '预审命中：' + u.nicknameFlagged : '预审未命中'],
+      ['学校', u.school, '注册时锁定，不可更改'],
+      ['简介', u.bio || '（空）', '上限 60 字'],
+      ['头衔', (u.title && u.title.name) || '不指定', u.titleId ? '#' + u.titleId + (u.title && u.title.color ? ' · ' + u.title.color : '') : '按等级自动授予'],
+      ['等级 / 经验', 'Lv.' + u.level + ' · ' + u.exp, '经验来源：内容通过审核、被点赞、每日首次登录'],
+      ['状态', USER_STATUS_LABEL[u.status] || u.status, u.mutedUntil ? '禁言至 ' + fmtDate(u.mutedUntil) : ''],
+      ['注册时间', fmtDate(u.createdAt)],
+      ['最近登录', u.lastLoginAt ? fmtDate(u.lastLoginAt) + ' · ' + timeAgo(u.lastLoginAt) : '从未登录'],
+      ['最近活跃', u.lastSeenAt ? fmtDate(u.lastSeenAt) + ' · ' + timeAgo(u.lastSeenAt) : '—'],
+      ['最近改名', u.lastNicknameAt ? fmtDate(u.lastNicknameAt) : '—', '改名有 7 天冷却'],
+      ['IP 哈希', u.ipHash || '—', '不可逆，仅用于风控比对'],
+      ['UA 哈希', u.uaHash || '—', '不可逆，仅用于风控比对']
+    ];
+    const detail = '<div class="detail-list">' + fields.map((f) => detailItem(f[0], f[1], f[2])).join('') + '</div>';
+
+    const recentHtml = recentBlockHtml('最近帖子', recent.posts, (p) =>
+      detailItem('#' + p.id + ' · ' + (p.cat || ''), p.body, (STATUS_LABEL[p.status] || p.status) + ' · ' + fmtDate(p.created_at)))
+      + recentBlockHtml('最近评论', recent.comments, (m) =>
+        detailItem('#' + m.id + ' → 帖子 #' + m.post_id, m.body, (STATUS_LABEL[m.status] || m.status) + ' · ' + fmtDate(m.created_at)))
+      + recentBlockHtml('最近主题', recent.threads, (t) =>
+        detailItem('#' + t.id + ' · ' + boardLabel(t.board), t.title, (STATUS_LABEL[t.status] || t.status) + ' · ' + fmtDate(t.created_at)))
+      + recentBlockHtml('最近私信', recent.messages, (m) =>
+        detailItem((m.direction === 'out' ? '发出' : '收到') + ' #' + m.id, m.body, fmtDate(m.createdAt)));
+
+    return head + '<div class="modal-body"><div class="detail-body">'
+      + identity + countsHtml + detail + recentHtml + userActionsHtml(u)
+      + '</div></div>'
+      + '<div class="modal-foot"><button class="btn btn-secondary" type="button" data-close>关闭</button></div>';
+  }
+
+  function userModalShell() {
+    return '<div class="modal-head"><div><h2 id="modalTitle">用户详情</h2><p class="sub">加载中…</p></div>'
+      + '<button class="iconbtn" type="button" data-close aria-label="关闭">' + CLOSE_ICON + '</button></div>'
+      + '<div class="modal-body">' + skeleton(2) + '</div>';
+  }
+
+  async function openUserDetail(id, trigger) {
+    state.detailTrigger = trigger || null;
+    openModal(userModalShell());
+    await loadUserDetail(Number(id));
+  }
+
+  async function loadUserDetail(id) {
+    const jobs = [store.userDetail(id)];
+    if (!state.titleOptions.length) {
+      jobs.push(store.titles().then((r) => { state.titleOptions = r.items || []; }).catch(() => null));
+    }
+    try {
+      const data = (await Promise.all(jobs))[0];
+      state.userDetail = data;
+      if ($('#modal').hidden) return;
+      $('#modalCard').innerHTML = userDetailHtml(data);
+    } catch (e) {
+      if (handleApiError(e)) { closeModal(); return; }
+      if ($('#modal').hidden) return;
+      $('#modalCard').innerHTML = '<div class="modal-head"><div><h2 id="modalTitle">用户详情</h2></div>'
+        + '<button class="iconbtn" type="button" data-close aria-label="关闭">' + CLOSE_ICON + '</button></div>'
+        + '<div class="modal-body">' + errorState(errText(e)) + '</div>';
+    }
+  }
+
+  /* ───────────────────────── 渲染：头衔 ───────────────────────── */
+
+  function titleRowHtml(t) {
+    return '<li class="q-row" data-od-id="title-' + t.id + '" style="grid-template-columns:minmax(0,1fr) auto">'
+      + '<div class="q-main">'
+      + '<div class="q-head"><strong>' + esc(t.name) + '</strong>' + swatchHtml(t.color)
+      + '<span class="chip">Lv.' + esc(t.minLevel) + ' 起</span>'
+      + '<span class="badge"' + (t.auto ? ' data-status="actioned"' : '') + '>' + (t.auto ? '自动授予' : '仅手动指定') + '</span>'
+      + '<span class="meta od-nowrap">排序 ' + esc(t.sort) + '</span>'
+      + '<span class="meta-dim od-nowrap">#' + esc(t.id) + '</span></div>'
+      + '<div class="q-foot"><span class="meta">持有 ' + esc(t.userCount) + ' 人</span></div>'
+      + '</div>'
+      + '<div class="q-actions">'
+      + '<button class="btn btn-secondary btn-sm" type="button" data-act="title.edit" data-id="' + esc(t.id) + '">编辑</button>'
+      + '<button class="btn btn-danger-ghost btn-sm" type="button" data-act="title.delete" data-id="' + esc(t.id) + '">删除</button>'
+      + '</div></li>';
+  }
+
+  function titlesHtml(res) {
+    const items = res.items || [];
+    const head = '<div class="toolbar"><span class="meta">共 ' + items.length + ' 个头衔</span><span class="spacer"></span>'
+      + '<button class="btn btn-primary btn-sm" type="button" data-act="title.new">新建头衔</button></div>'
+      + '<p class="meta-dim" style="margin:-8px 0 var(--space-4)">勾选「自动授予」的头衔在用户达到最低等级时自动获得；'
+      + '管理员在「用户 → 详情」里手动指定的头衔优先于自动授予。展示顺序固定为 学校 → 头衔 → 等级。</p>';
+    const body = items.length
+      ? '<ul class="q-list">' + items.map(titleRowHtml).join('') + '</ul>'
+      : emptyState('还没有头衔', '新建第一个头衔，达到等级的用户会自动获得它。');
+    return head + body;
+  }
+
+  async function renderTitles() {
+    const el = $('#view-titles');
+    el.innerHTML = skeleton(3);
+    try {
+      const res = await store.titles();
+      state.cache.titles = res;
+      state.titleOptions = res.items || [];
+      el.innerHTML = titlesHtml(res);
+    } catch (e) {
+      if (handleApiError(e)) return;
+      el.innerHTML = errorState(errText(e));
+    }
+  }
+
+  function titleFormHtml(t) {
+    const row = t || { name: '', color: '', minLevel: 1, auto: true, sort: 0 };
+    return '<div class="modal-head"><div><h2 id="modalTitle">' + (t ? '编辑头衔' : '新建头衔') + '</h2>'
+      + '<p class="sub">' + (t ? '#' + esc(row.id) : '保存后立即对全部用户生效') + '</p></div>'
+      + '<button class="iconbtn" type="button" data-close aria-label="关闭">' + CLOSE_ICON + '</button></div>'
+      + '<div class="modal-body">'
+      + '<div class="field"><label for="tName">名称</label><input id="tName" maxlength="12" value="' + esc(row.name) + '" placeholder="最长 12 字">'
+      + '<span class="hint">显示在昵称之后、等级之前。</span></div>'
+      + '<div class="form-grid">'
+      + '<div class="field"><label for="tColor">颜色</label><div class="od-row"><input id="tColor" class="od-fill" value="' + esc(row.color) + '" placeholder="#0071e3">'
+      + '<span class="swatch swatch-lg" id="tSwatch" style="background:' + (safeColor(row.color) || 'transparent') + '"></span></div>'
+      + '<span class="hint">只接受 #RRGGBB；留空表示不指定颜色。</span></div>'
+      + '<div class="field"><label for="tMinLevel">最低等级</label><input id="tMinLevel" type="number" min="1" max="99" step="1" value="' + esc(row.minLevel) + '">'
+      + '<span class="hint">1–99，达到该等级即满足自动授予条件。</span></div>'
+      + '<div class="field"><label for="tSort">排序</label><input id="tSort" type="number" step="1" value="' + esc(row.sort) + '">'
+      + '<span class="hint">数字越小越靠前。</span></div>'
+      + '</div>'
+      + '<div class="field"><label class="switch"><input id="tAuto" type="checkbox"' + (row.auto ? ' checked' : '') + '> 达到最低等级自动授予</label>'
+      + '<span class="hint">不勾选 = 只能由管理员在用户详情里手动指定。</span></div>'
+      + '</div>'
+      + '<div class="modal-foot">'
+      + '<button class="btn btn-secondary" type="button" data-close>取消</button>'
+      + '<button class="btn btn-primary" type="button" data-act="title.save" data-id="' + (t ? esc(row.id) : '') + '">保存</button>'
+      + '</div>';
+  }
+
+  function findCached(cacheKey, id) {
+    const c = state.cache[cacheKey];
+    return c && c.items ? c.items.filter((x) => x.id === Number(id))[0] : null;
+  }
+
+  async function saveTitle(id) {
+    const payload = {
+      name: String(($('#tName') || {}).value || '').trim(),
+      color: String(($('#tColor') || {}).value || '').trim(),
+      minLevel: Number(($('#tMinLevel') || {}).value),
+      auto: Boolean($('#tAuto') && $('#tAuto').checked),
+      sort: Number(($('#tSort') || {}).value) || 0
+    };
+    if (!payload.name) return toast('头衔名称不能为空', 'danger');
+    if (payload.name.length > 12) return toast('头衔名称最多 12 字', 'danger');
+    if (payload.color && !HEX_RE.test(payload.color)) return toast('颜色需为 #RRGGBB 格式，或留空', 'danger');
+    if (!(payload.minLevel >= 1 && payload.minLevel <= 99)) return toast('最低等级需为 1–99', 'danger');
+    try {
+      await store.saveTitle(id ? Number(id) : 0, payload);
+      toast(id ? '头衔已更新' : '头衔已创建', 'ok');
+      closeModal();
+      await refreshAfterAction();
+    } catch (e) {
+      toast('保存失败：' + errText(e), 'danger');
+    }
+  }
+
+  /* ───────────────────────── 渲染：公告 ───────────────────────── */
+
+  const ANN_BODY_MAX = 120;
+
+  function annRowHtml(a) {
+    return '<li class="q-row" data-od-id="ann-' + a.id + '" style="grid-template-columns:minmax(0,1fr) auto">'
+      + '<div class="q-main">'
+      + '<div class="q-head"><span class="badge"' + (a.active ? ' data-status="actioned"' : '') + '>' + (a.active ? '启用中' : '已停用') + '</span>'
+      + '<span class="meta od-nowrap">#' + esc(a.id) + '</span>'
+      + '<span class="meta od-nowrap">排序 ' + esc(a.sort) + '</span>'
+      + '<span class="meta od-nowrap" title="' + fmtDate(a.updatedAt) + '">更新 ' + timeAgo(a.updatedAt) + '</span></div>'
+      + '<p class="q-body">' + esc(a.body) + '</p>'
+      + '<p class="q-context">' + (a.link
+        ? '链接：' + esc(a.link) + ' · 文字：' + (a.linkText ? esc(a.linkText) : '（未填，前台用默认文案）')
+        : '无链接') + '</p>'
+      + '</div>'
+      + '<div class="q-actions">'
+      + '<button class="btn btn-secondary btn-sm" type="button" data-act="ann.toggle" data-id="' + esc(a.id) + '">' + (a.active ? '停用' : '启用') + '</button>'
+      + '<button class="btn btn-secondary btn-sm" type="button" data-act="ann.edit" data-id="' + esc(a.id) + '">编辑</button>'
+      + '<button class="btn btn-danger-ghost btn-sm" type="button" data-act="ann.delete" data-id="' + esc(a.id) + '">删除</button>'
+      + '</div></li>';
+  }
+
+  function annHtml(res) {
+    const items = (res.items || []).slice().sort((a, b) => a.sort - b.sort || b.id - a.id);
+    const activeCount = items.filter((a) => a.active).length;
+    const head = '<div class="toolbar"><span class="meta">启用中 ' + activeCount + ' / ' + items.length + ' 条</span><span class="spacer"></span>'
+      + '<button class="btn btn-primary btn-sm" type="button" data-act="ann.new">新建公告</button></div>'
+      + '<p class="meta-dim" style="margin:-8px 0 var(--space-4)">首页最多展示 5 条启用中的公告，按排序升序、新公告在前。'
+      + '链接只接受 /xxx、#/xxx 或 https 链接，其它值服务端会过滤为空。</p>';
+    const body = items.length
+      ? '<ul class="q-list">' + items.map(annRowHtml).join('') + '</ul>'
+      : emptyState('还没有公告', '新建一条公告并保持启用，首页就会显示。');
+    return head + body;
+  }
+
+  async function renderAnnouncements() {
+    const el = $('#view-announcements');
+    el.innerHTML = skeleton(3);
+    try {
+      const res = await store.announcements();
+      state.cache.announcements = res;
+      el.innerHTML = annHtml(res);
+    } catch (e) {
+      if (handleApiError(e)) return;
+      el.innerHTML = errorState(errText(e));
+    }
+  }
+
+  function annFormHtml(a) {
+    const row = a || { body: '', link: '', linkText: '', sort: 0, active: true };
+    return '<div class="modal-head"><div><h2 id="modalTitle">' + (a ? '编辑公告' : '新建公告') + '</h2>'
+      + '<p class="sub">' + (a ? '#' + esc(row.id) : '保存后立即出现在首页') + '</p></div>'
+      + '<button class="iconbtn" type="button" data-close aria-label="关闭">' + CLOSE_ICON + '</button></div>'
+      + '<div class="modal-body">'
+      + '<div class="field"><label for="aBody">内容</label>'
+      + '<textarea id="aBody" maxlength="' + ANN_BODY_MAX + '" placeholder="一句话说清，最多 ' + ANN_BODY_MAX + ' 字">' + esc(row.body) + '</textarea>'
+      + '<span class="hint"><span id="aCount">' + String(row.body || '').length + '</span> / ' + ANN_BODY_MAX + ' 字；提交时会合并连续空白。</span></div>'
+      + '<div class="form-grid">'
+      + '<div class="field"><label for="aLink">链接</label><input id="aLink" value="' + esc(row.link) + '" placeholder="/forum 或 https://...">'
+      + '<span class="hint">只接受 /xxx、#/xxx 或 https 链接，其它值会被丢弃。</span></div>'
+      + '<div class="field"><label for="aLinkText">链接文字</label><input id="aLinkText" maxlength="12" value="' + esc(row.linkText) + '" placeholder="去看看">'
+      + '<span class="hint">最多 12 字，留空则前台用默认文案。</span></div>'
+      + '<div class="field"><label for="aSort">排序</label><input id="aSort" type="number" step="1" value="' + esc(row.sort) + '">'
+      + '<span class="hint">数字越小越靠前。</span></div>'
+      + '</div>'
+      + '<div class="field"><label class="switch"><input id="aActive" type="checkbox"' + (row.active ? ' checked' : '') + '> 启用（首页可见）</label></div>'
+      + '</div>'
+      + '<div class="modal-foot">'
+      + '<button class="btn btn-secondary" type="button" data-close>取消</button>'
+      + '<button class="btn btn-primary" type="button" data-act="ann.save" data-id="' + (a ? esc(row.id) : '') + '">保存</button>'
+      + '</div>';
+  }
+
+  async function saveAnnouncement(id) {
+    const body = String(($('#aBody') || {}).value || '');
+    const link = String(($('#aLink') || {}).value || '').trim();
+    if (!body.trim()) return toast('公告内容不能为空', 'danger');
+    if (body.trim().length > ANN_BODY_MAX) return toast('公告最多 ' + ANN_BODY_MAX + ' 字', 'danger');
+    if (link && !(link.indexOf('/') === 0 || link.indexOf('#/') === 0 || /^https:\/\//i.test(link))) {
+      return toast('链接只接受 /xxx、#/xxx 或 https 链接', 'danger');
+    }
+    const payload = {
+      body: body,
+      link: link,
+      linkText: String(($('#aLinkText') || {}).value || '').trim(),
+      sort: Number(($('#aSort') || {}).value) || 0,
+      active: Boolean($('#aActive') && $('#aActive').checked)
+    };
+    try {
+      await store.saveAnnouncement(id ? Number(id) : 0, payload);
+      toast(id ? '公告已更新' : '公告已创建', 'ok');
+      closeModal();
+      await refreshAfterAction();
+    } catch (e) {
+      toast('保存失败：' + errText(e), 'danger');
+    }
+  }
+
+  /* ───────────────────────── 渲染：学校 ───────────────────────── */
+
+  function schoolRowHtml(s) {
+    return '<li class="q-row" data-od-id="school-' + s.id + '" style="grid-template-columns:minmax(0,1fr) auto">'
+      + '<div class="q-main">'
+      + '<div class="q-head"><strong>' + esc(s.name) + '</strong>'
+      + '<span class="badge"' + (s.active ? ' data-status="actioned"' : '') + '>' + (s.active ? '启用中' : '已停用') + '</span>'
+      + '<span class="meta od-nowrap">排序 ' + esc(s.sort) + '</span>'
+      + '<span class="meta-dim od-nowrap">#' + esc(s.id) + '</span></div>'
+      + '<div class="q-foot"><span class="meta">已选该校 ' + esc(s.userCount) + ' 人</span></div>'
+      + '</div>'
+      + '<div class="q-actions">'
+      + '<button class="btn btn-secondary btn-sm" type="button" data-act="school.toggle" data-id="' + esc(s.id) + '">' + (s.active ? '停用' : '启用') + '</button>'
+      + '<button class="btn btn-secondary btn-sm" type="button" data-act="school.edit" data-id="' + esc(s.id) + '">编辑</button>'
+      + '<button class="btn btn-danger-ghost btn-sm" type="button" data-act="school.delete" data-id="' + esc(s.id) + '">删除</button>'
+      + '</div></li>';
+  }
+
+  function schoolsHtml(res) {
+    const items = res.items || [];
+    const activeCount = items.filter((s) => s.active).length;
+    const banner = activeCount === 0
+      ? '<div class="banner"><p><strong>启用中的学校为 0，新用户现在无法完成注册。</strong>请至少添加并启用一所学校。</p>'
+        + '<button class="btn btn-primary btn-sm" type="button" data-act="school.new">添加学校</button></div>'
+      : '<div class="banner"><p><strong>名单为空时新用户无法完成注册</strong>：注册必须从启用中的名单里选择学校。'
+        + '删除学校<strong>不影响</strong>已经选了它的用户（users.school 存的是校名快照，且选定后不可更改）。</p>'
+        + '<button class="btn btn-secondary btn-sm" type="button" data-act="school.new">添加学校</button></div>';
+    const head = banner
+      + '<div class="toolbar"><span class="meta">共 ' + items.length + ' 所 · 启用中 ' + activeCount + ' 所</span><span class="spacer"></span>'
+      + (state.mode === 'live' ? '' : '<span class="meta-dim">演示数据</span>') + '</div>';
+    const body = items.length
+      ? '<ul class="q-list">' + items.map(schoolRowHtml).join('') + '</ul>'
+      : emptyState('还没有学校', '添加并启用一所学校，新用户才能完成注册。');
+    return head + body;
+  }
+
+  async function renderSchools() {
+    const el = $('#view-schools');
+    el.innerHTML = skeleton(3);
+    try {
+      const res = await store.schools();
+      state.cache.schools = res;
+      el.innerHTML = schoolsHtml(res);
+    } catch (e) {
+      if (handleApiError(e)) return;
+      el.innerHTML = errorState(errText(e));
+    }
+  }
+
+  function schoolFormHtml(s) {
+    const row = s || { name: '', sort: 0, active: true };
+    return '<div class="modal-head"><div><h2 id="modalTitle">' + (s ? '编辑学校' : '添加学校') + '</h2>'
+      + '<p class="sub">' + (s ? '#' + esc(row.id) + ' · 已选 ' + esc(row.userCount || 0) + ' 人' : '保存后新用户即可选择') + '</p></div>'
+      + '<button class="iconbtn" type="button" data-close aria-label="关闭">' + CLOSE_ICON + '</button></div>'
+      + '<div class="modal-body">'
+      + '<div class="field"><label for="scName">校名</label><input id="scName" maxlength="30" value="' + esc(row.name) + '" placeholder="2–30 字，需与用户选择时完全一致">'
+      + '<span class="hint">同名且已停用的学校会被重新启用，而不是新建一条。</span></div>'
+      + '<div class="form-grid">'
+      + '<div class="field"><label for="scSort">排序</label><input id="scSort" type="number" step="1" value="' + esc(row.sort) + '">'
+      + '<span class="hint">数字越小越靠前。</span></div>'
+      + '</div>'
+      + '<div class="field"><label class="switch"><input id="scActive" type="checkbox"' + (row.active ? ' checked' : '') + '> 启用（注册页可选）</label>'
+      + '<span class="hint">停用后已选该校的用户不受影响。</span></div>'
+      + '</div>'
+      + '<div class="modal-foot">'
+      + '<button class="btn btn-secondary" type="button" data-close>取消</button>'
+      + '<button class="btn btn-primary" type="button" data-act="school.save" data-id="' + (s ? esc(row.id) : '') + '">保存</button>'
+      + '</div>';
+  }
+
+  async function saveSchool(id) {
+    const name = String(($('#scName') || {}).value || '').trim();
+    if (name.length < 2 || name.length > 30) return toast('校名需为 2–30 字', 'danger');
+    const payload = { name: name, sort: Number(($('#scSort') || {}).value) || 0 };
+    if (id) payload.active = Boolean($('#scActive') && $('#scActive').checked);
+    try {
+      await store.saveSchool(id ? Number(id) : 0, payload);
+      toast(id ? '学校已更新' : '学校已添加', 'ok');
+      closeModal();
+      await refreshAfterAction();
+    } catch (e) {
+      toast('保存失败：' + errText(e), 'danger');
     }
   }
 
@@ -1304,15 +2358,24 @@ a { color: var(--accent); }
       if (btn.dataset.view === view) btn.setAttribute('aria-current', 'page');
       else btn.removeAttribute('aria-current');
     });
-    ['overview', 'queue', 'reports', 'audit', 'feedback'].forEach((v) => { $('#view-' + v).hidden = v !== view; });
-    $('#searchWrap').hidden = view !== 'queue';
+    VIEW_IDS.forEach((v) => { const section = $('#view-' + v); if (section) section.hidden = v !== view; });
+    syncQueueSearch();
     renderCurrent();
+  }
+
+  // 论坛队列不支持关键字搜索（服务端只按状态取待审），宁可不显示搜索框
+  function syncQueueSearch() {
+    $('#searchWrap').hidden = state.view !== 'queue' || FORUM_TYPES.indexOf(state.queueType) >= 0;
   }
 
   function renderCurrent() {
     if (state.view === 'overview') return renderOverview();
     if (state.view === 'queue') return renderQueue();
     if (state.view === 'reports') return renderReports();
+    if (state.view === 'users') return renderUsers();
+    if (state.view === 'titles') return renderTitles();
+    if (state.view === 'announcements') return renderAnnouncements();
+    if (state.view === 'schools') return renderSchools();
     if (state.view === 'feedback') return renderFeedback();
     return renderAudit();
   }
@@ -1327,31 +2390,27 @@ a { color: var(--accent); }
     };
     if (s) {
       set('overview', s.pendingTotal || 0, 'warn');
-      set('queue', (s.pendingPosts || 0) + (s.pendingComments || 0), 'warn');
+      set('queue', (s.pendingPosts || 0) + (s.pendingComments || 0) + (s.pendingThreads || 0) + (s.pendingReplies || 0), 'warn');
       set('reports', s.openReports || 0, 'warn');
       set('feedback', s.openFeedback || 0, 'warn');
+      set('users', s.users || 0); // 灰色：账号规模是参考值，不是待办
       set('audit', '');
     }
   }
 
-  // 门禁状态与「已连接 / 演示模式」并列展示，互不覆盖：
-  // 前者说明写操作是否需要邀请码，后者说明后台自己在跟谁说话。
-  // 侧栏常驻一行，同时在「连接设置」里再写一遍，便于排查线上配置。
-  function gateLabel(stats) {
-    if (stats && stats.gateRequired && stats.gateInviteRequired) return { label: '门禁：已启用（邀请码）', mode: 'live' };
-    if (stats && stats.gateRequired) return { label: '门禁：已启用（仅本地挑战）', mode: 'live' };
-    return { label: '门禁：未启用', mode: 'demo' }; // 未启用 = 黄色告警点（站点对整个互联网开放）
+  // 版本状态与「已连接 / 演示模式」并列展示：侧栏常驻一行，
+  // 「连接设置」里再写一遍，排查线上部署版本时不用翻日志。
+  function versionLabel(stats) {
+    return stats && stats.version ? '服务端 v' + stats.version : '版本未知（未连接后端）';
   }
 
-  function setGateStatus(stats) {
+  function setVersionStatus(stats) {
     const s = stats || state.stats;
-    if (!s) return;
-    const box = $('#gate');
-    const text = $('#gateText');
+    const box = $('#version');
+    const text = $('#versionText');
     if (!box || !text) return;
-    const info = gateLabel(s);
-    box.dataset.mode = info.mode;
-    text.textContent = info.label;
+    box.dataset.mode = s && s.version ? 'live' : 'demo';
+    text.textContent = versionLabel(s);
   }
 
   /* ───────────────────────── 帖子详情 ───────────────────────── */
@@ -1398,7 +2457,7 @@ a { color: var(--accent); }
       if (handleApiError(e)) { closeModal(); return; }
       $('#modalCard').innerHTML = '<div class="modal-head"><div><h2 id="modalTitle">帖子详情</h2></div>'
         + '<button class="iconbtn" type="button" data-close aria-label="关闭">' + CLOSE_ICON + '</button></div>'
-        + '<div class="modal-body">' + errorState(e.message) + '</div>';
+        + '<div class="modal-body">' + errorState(errText(e)) + '</div>';
     }
   }
 
@@ -1490,6 +2549,115 @@ a { color: var(--accent); }
         await refreshAfterAction();
         return;
       }
+      if (act === 'thread.approve' || act === 'thread.reject' || act === 'thread.remove'
+        || act === 'reply.approve' || act === 'reply.reject' || act === 'reply.remove') {
+        const isThread = act.indexOf('thread.') === 0;
+        const verb = act.split('.').pop();
+        const label = (isThread ? '主题' : '回复') + ' #' + id;
+        if (verb !== 'approve') {
+          const yes = await confirmDialog({
+            title: verb === 'reject' ? '驳回这条' + (isThread ? '主题' : '回复') + '？' : '删除这条' + (isThread ? '主题' : '回复') + '？',
+            body: verb === 'reject'
+              ? label + ' 将不会出现在论坛，记录保留在库中以便复查。'
+              : label + ' 将从论坛移除，对应的计数与经验一并回退。',
+            confirmText: verb === 'reject' ? '驳回' : '删除',
+            danger: true
+          });
+          if (!yes) return;
+        }
+        if (el) el.disabled = true;
+        if (isThread) await store.reviewThread(Number(id), verb);
+        else await store.reviewReply(Number(id), verb);
+        toast('已' + (verb === 'approve' ? '通过' : verb === 'reject' ? '驳回' : '删除') + label, verb === 'approve' ? 'ok' : 'danger');
+        await refreshAfterAction();
+        return;
+      }
+      if (act === 'user.open') { await openUserDetail(Number(id), el || null); return; }
+      if (act === 'user.apply') { await runUserAction(Number(id), el ? el.dataset.op : '', el); return; }
+      if (act === 'title.new') { openModal(titleFormHtml(null)); return; }
+      if (act === 'title.edit') {
+        const t = findCached('titles', id);
+        if (!t) { toast('头衔不存在，请刷新后重试', 'danger'); return; }
+        openModal(titleFormHtml(t));
+        return;
+      }
+      if (act === 'title.save') { await saveTitle(id); return; }
+      if (act === 'title.delete') {
+        const t = findCached('titles', id) || { name: '#' + id, userCount: 0 };
+        const yes = await confirmDialog({
+          title: '删除头衔？',
+          body: '「' + t.name + '」将被删除，持有它的 ' + (t.userCount || 0) + ' 位用户会立刻失去该头衔，且无法恢复。',
+          confirmText: '删除',
+          danger: true
+        });
+        if (!yes) return;
+        await store.deleteTitle(Number(id));
+        toast('已删除头衔「' + t.name + '」', 'danger');
+        await refreshAfterAction();
+        return;
+      }
+      if (act === 'ann.new') { openModal(annFormHtml(null)); return; }
+      if (act === 'ann.edit') {
+        const a = findCached('announcements', id);
+        if (!a) { toast('公告不存在，请刷新后重试', 'danger'); return; }
+        openModal(annFormHtml(a));
+        return;
+      }
+      if (act === 'ann.save') { await saveAnnouncement(id); return; }
+      if (act === 'ann.toggle') {
+        const a = findCached('announcements', id);
+        if (!a) { toast('公告不存在，请刷新后重试', 'danger'); return; }
+        if (el) el.disabled = true;
+        await store.saveAnnouncement(Number(id), { active: !a.active });
+        toast(a.active ? '已停用公告 #' + id : '已启用公告 #' + id, a.active ? 'danger' : 'ok');
+        await refreshAfterAction();
+        return;
+      }
+      if (act === 'ann.delete') {
+        const a = findCached('announcements', id);
+        const yes = await confirmDialog({
+          title: '删除公告？',
+          body: '公告 #' + id + ' 将被永久删除' + (a ? '：' + String(a.body).slice(0, 40) : '') + '。',
+          confirmText: '删除',
+          danger: true
+        });
+        if (!yes) return;
+        await store.deleteAnnouncement(Number(id));
+        toast('已删除公告 #' + id, 'danger');
+        await refreshAfterAction();
+        return;
+      }
+      if (act === 'school.new') { openModal(schoolFormHtml(null)); return; }
+      if (act === 'school.edit') {
+        const s = findCached('schools', id);
+        if (!s) { toast('学校不存在，请刷新后重试', 'danger'); return; }
+        openModal(schoolFormHtml(s));
+        return;
+      }
+      if (act === 'school.save') { await saveSchool(id); return; }
+      if (act === 'school.toggle') {
+        const s = findCached('schools', id);
+        if (!s) { toast('学校不存在，请刷新后重试', 'danger'); return; }
+        if (el) el.disabled = true;
+        await store.saveSchool(Number(id), { active: !s.active });
+        toast(s.active ? '已停用「' + s.name + '」' : '已启用「' + s.name + '」', s.active ? 'danger' : 'ok');
+        await refreshAfterAction();
+        return;
+      }
+      if (act === 'school.delete') {
+        const s = findCached('schools', id) || { name: '#' + id, userCount: 0 };
+        const yes = await confirmDialog({
+          title: '删除学校？',
+          body: '「' + s.name + '」将从名单移除，新用户不能再选择它；已选该校的 ' + (s.userCount || 0) + ' 位用户不受影响（校名是快照，本来就不可更改）。',
+          confirmText: '删除',
+          danger: true
+        });
+        if (!yes) return;
+        await store.deleteSchool(Number(id));
+        toast('已删除「' + s.name + '」', 'danger');
+        await refreshAfterAction();
+        return;
+      }
       if (act === 'view') {
         await openDetail(Number(id), el || null);
         return;
@@ -1497,7 +2665,65 @@ a { color: var(--accent); }
     } catch (e) {
       if (el) el.disabled = false;
       if (e.status === 401) { handleApiError(e); toast('登录状态失效，请重新连接后端', 'danger'); return; }
-      toast('操作失败：' + e.message, 'danger');
+      toast('操作失败：' + errText(e), 'danger');
+    }
+  }
+
+  /**
+   * 用户管理动作。UI 只负责读控件、做二次确认与提示；
+   * 真正的合法性判断在服务端（等级裁剪、昵称长度、状态白名单），前端不重复造一套规则，
+   * 只拦住明显填错的输入，省一次往返。
+   */
+  async function runUserAction(id, op, el) {
+    const val = (sel) => { const node = $(sel); return node ? node.value : ''; };
+    const readers = {
+      set_title: () => (val('#opTitle') === '' ? null : Number(val('#opTitle'))),
+      set_level: () => Number(val('#opLevel')),
+      set_exp: () => Number(val('#opExp')),
+      reset_exp: () => 0,
+      set_status: () => val('#opStatus'),
+      rename: () => String(val('#opName')).trim(),
+      clear_nickname_flag: () => null
+    };
+    if (!readers[op]) return;
+    const value = readers[op]();
+    const name = $('#userModalName') ? $('#userModalName').textContent : '#' + id;
+
+    let confirmSpec = null;
+    if (op === 'set_status' && value === 'banned') {
+      confirmSpec = { title: '封禁这个账号？', body: name + ' 将立刻被踢下线，之后无法登录、发帖、评论与私信。', confirmText: '封禁', danger: true };
+    } else if (op === 'rename') {
+      if (value.length < 2 || value.length > 16) return toast('昵称需为 2–16 字', 'danger');
+      confirmSpec = { title: '确认改名？', body: '将把「' + name + '」的昵称改为「' + value + '」，用户本人会立刻看到新昵称。', confirmText: '改名', danger: true };
+    } else if (op === 'reset_exp') {
+      confirmSpec = { title: '重置经验？', body: '「' + name + '」的经验归零、等级回到 Lv.1，该操作不可撤销。', confirmText: '重置', danger: true };
+    } else if (op === 'clear_nickname_flag') {
+      confirmSpec = { title: '清除昵称预审标记？', body: '清除后视为人工放行，该昵称不再标记为待复核。', confirmText: '清除', danger: false };
+    } else if (op === 'set_level' && (!Number.isFinite(value) || value < 1 || value > 99)) {
+      return toast('等级需为 1–99', 'danger');
+    } else if (op === 'set_exp' && (!Number.isFinite(value) || value < 0)) {
+      return toast('经验需为不小于 0 的整数', 'danger');
+    }
+
+    if (confirmSpec) {
+      const yes = await confirmDialog(confirmSpec);
+      if (!yes) return;
+    }
+    if (el) el.disabled = true;
+    const VERB = {
+      set_title: '更新头衔', set_level: '设置等级', set_exp: '设置经验',
+      reset_exp: '重置经验', set_status: '更新状态', rename: '改名', clear_nickname_flag: '清除预审标记'
+    };
+    try {
+      await store.userAction(id, op, value);
+      toast('已' + (VERB[op] || op) + '：' + name, op === 'set_status' && value === 'banned' ? 'danger' : 'ok');
+      // 列表静默刷新 + 详情重新拉取：两处都不能留着旧数据
+      await refreshUsersList();
+      if ($('#modal').hidden) openModal(userModalShell());
+      await loadUserDetail(id);
+    } catch (e) {
+      if (el) el.disabled = false;
+      toast('操作失败：' + errText(e), 'danger');
     }
   }
 
@@ -1515,7 +2741,7 @@ a { color: var(--accent); }
       state.queueSel.clear();
       await refreshAfterAction();
     } catch (e) {
-      toast('批量操作失败：' + e.message, 'danger');
+      toast('批量操作失败：' + errText(e), 'danger');
     }
   }
 
@@ -1524,7 +2750,7 @@ a { color: var(--accent); }
       state.stats = await store.stats();
     } catch (e) { /* 计数刷新失败不阻塞操作反馈 */ }
     updateNavCounts();
-    setGateStatus();
+    setVersionStatus();
     await renderCurrent();
     if (!$('#modal').hidden) closeModal();
   }
@@ -1543,9 +2769,9 @@ a { color: var(--accent); }
       + '<div class="field"><label for="setToken">管理员令牌（ADMIN_TOKEN）</label>'
       + '<input id="setToken" type="password" autocomplete="off" placeholder="至少 24 位" value="' + esc(state.token) + '">'
       + '<span class="hint">令牌只保存在本机浏览器 localStorage，不会上传到任何第三方。</span></div>'
-      + '<div class="field"><label>内测门禁</label>'
-      + '<span class="hint" id="setGate">' + esc(gateLabel(state.stats).label) + '</span>'
-      + '<span class="hint">由服务端 GATE_ENFORCE / GATE_INVITE_CODES 决定，后台不能在这里改。</span></div>'
+      + '<div class="field"><label>服务端版本</label>'
+      + '<span class="hint" id="setVersion">' + esc(versionLabel(state.stats)) + '</span>'
+      + '<span class="hint">来自 /api/admin/stats 的 version 字段，后台不能在这里修改。</span></div>'
       + '</div>'
       + '<div class="modal-foot">'
       + '<button class="btn btn-ghost" type="button" data-act="clear-token">清除令牌</button>'
@@ -1593,7 +2819,7 @@ a { color: var(--accent); }
     setBanner();
     // 连接成功后顺手刷新导航计数与门禁状态：一次往返拿齐首屏要用的信息
     updateNavCounts();
-    setGateStatus();
+    setVersionStatus();
   }
 
   /* ───────────────────────── 事件绑定 ───────────────────────── */
@@ -1611,7 +2837,9 @@ a { color: var(--accent); }
     if (act === 'bulk-reject') return runBulk('bulk-reject', { title: '批量驳回？', confirmText: '批量驳回', danger: true });
     if (act === 'bulk-remove') return runBulk('bulk-remove', { title: '批量下架？', body: '下架后将从公开墙移除。', confirmText: '批量下架', danger: true });
     if (act === 'clear-sel') { state.queueSel.clear(); return renderCurrent(); }
-    if (act === 'load-more') return renderQueue();
+    if (act === 'load-more') return renderQueue(true);
+    if (act === 'users-prev') return pageUsers(false);
+    if (act === 'users-next') return pageUsers(true);
     return runAction(act, id, target);
   }
 
@@ -1650,10 +2878,18 @@ a { color: var(--accent); }
       }, 220);
     });
 
-    // 分区切换（帖子 / 评论）
+    // 分区切换（帖子 / 评论 / 主题 / 回复）：换类型就把搜索词与选择清空，避免隐式过滤
     $('#view-queue').addEventListener('click', (e) => {
       const t = e.target.closest('[data-qtype]');
-      if (t) { state.queueType = t.dataset.qtype; state.queueSel.clear(); renderQueue(); return; }
+      if (t) {
+        state.queueType = t.dataset.qtype;
+        state.queueSel.clear();
+        state.queueQuery = '';
+        if ($('#searchInput')) $('#searchInput').value = '';
+        syncQueueSearch();
+        renderQueue();
+        return;
+      }
       const r = e.target.closest('[data-rstatus]');
       if (r) { state.reportStatus = r.dataset.rstatus; renderReports(); return; }
       const a = e.target.closest('[data-afilter]');
@@ -1672,6 +2908,30 @@ a { color: var(--accent); }
       if (f) { state.feedbackStatus = f.dataset.fstatus; renderFeedback(); }
     });
 
+    // 用户视图：状态筛选与搜索。搜索做防抖，且只重绘列表（工具条不重建 = 焦点不丢）
+    $('#view-users').addEventListener('click', (e) => {
+      const u = e.target.closest('[data-ustatus]');
+      if (!u) return;
+      state.usersStatus = u.dataset.ustatus;
+      state.usersCursor = 0;
+      state.usersStack = [];
+      state.usersNext = null;
+      renderUsers();
+    });
+    let userSearchTimer = null;
+    $('#view-users').addEventListener('input', (e) => {
+      if (!e.target || e.target.id !== 'userSearch') return;
+      const value = e.target.value;
+      clearTimeout(userSearchTimer);
+      userSearchTimer = setTimeout(() => {
+        state.usersQuery = value.trim();
+        state.usersCursor = 0;
+        state.usersStack = [];
+        state.usersNext = null;
+        renderUsers();
+      }, 220);
+    });
+
     // 弹窗：关闭按钮 / 背景 / Esc
     $('#modal').addEventListener('click', (e) => {
       if (e.target.closest('[data-close]')) { closeModal(); return; }
@@ -1683,6 +2943,18 @@ a { color: var(--accent); }
       if (!t) return;
       if (t.dataset.act === 'refresh') { closeModal(); return renderCurrent(); }
       runAction(t.dataset.act, t.dataset.id, t);
+    });
+    // 弹层内的即时反馈：头衔颜色色块、公告字数
+    $('#modalCard').addEventListener('input', (e) => {
+      const t = e.target;
+      if (!t) return;
+      if (t.id === 'tColor') {
+        const sw = $('#tSwatch');
+        if (sw) sw.style.background = safeColor(t.value) || 'transparent';
+      } else if (t.id === 'aBody') {
+        const n = $('#aCount');
+        if (n) n.textContent = String(t.value || '').length;
+      }
     });
     $('#settingsModal').addEventListener('click', (e) => {
       if (e.target.closest('[data-close]')) { closeSettings(); return; }

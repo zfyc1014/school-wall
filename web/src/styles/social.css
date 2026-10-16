@@ -1,0 +1,164 @@
+/* ─────────────────────────────────────────────────────────────────────────
+ * 社交：会话列表（/messages）、单聊（/messages/:uuid）、好友（/friends）。
+ *
+ * 三条约定：
+ *   1. 类名一律 .social- 前缀；.list-item / .btn / .glass / .seg 这些通用类只做
+ *      「组合 + 覆写」，覆写时写成 .通用类.social-xxx（同优先级下不依赖文件顺序，
+ *      否则样式是否生效取决于 main.jsx 的 import 次序，太脆）；
+ *   2. 不出现任何颜色字面量 —— 深色模式只靠 tokens.css 换变量；
+ *   3. 触摸目标最小 var(--tap)（44px）：壳里的 .btn-sm 只有 32px，
+ *      列表行里的动作按钮统一用 .social-tap 撑到 44px，而不是另写一套按钮。
+ * ───────────────────────────────────────────────────────────────────── */
+
+/* ── 顶栏：标题居中，两侧各留一个 44px 的动作位 ── */
+.social-head-title { flex: 1 1 auto; min-width: 0; text-align: center; }
+.btn-icon.social-icon-btn { width: var(--tap); height: var(--tap); min-height: var(--tap); }
+.btn.social-tap { min-height: var(--tap); }
+
+/* ── 会话列表 ── */
+.social-conv-list { list-style: none; margin: var(--space-3) 0 0; padding: 0; }
+.list-item.social-conv { align-items: flex-start; }
+.social-conv-avatar { margin-top: 2px; }
+.social-conv-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.social-conv-top {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: var(--space-2); min-width: 0;
+}
+.social-conv-name { font-weight: 600; font-size: var(--text-base); }
+.social-conv-time { flex: 0 0 auto; font-size: var(--text-xs); color: var(--meta); }
+.social-conv-bottom {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--space-2); min-width: 0;
+}
+.social-conv-last { flex: 1 1 auto; min-width: 0; font-size: var(--text-sm); color: var(--muted); }
+.social-badge { font-size: var(--text-xs); }
+
+/* 未读：数字红点比纯圆点信息量大，超过 99 显示 99+ */
+.social-unread {
+  flex: 0 0 auto; min-width: 18px; padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--danger); color: var(--danger-on);
+  font-size: var(--text-xs); font-weight: 600; line-height: 18px; text-align: center;
+}
+
+/* ── 单聊 ──
+ * 输入区用 position: sticky 吸在 dock 之上（见契约要求），因此
+ * 「消息区 + 输入区」必须同处一个够高的容器里：sticky 只能在父盒子的范围内移动，
+ * 父盒子只有输入区那么高的话，它根本吸不住。 */
+.social-chat {
+  display: flex; flex-direction: column; gap: var(--space-3);
+  min-height: calc(100vh - var(--header-h) - var(--dock-safe));
+  padding-top: var(--space-3);
+}
+@supports (height: 100dvh) {
+  /* dvh 跟随移动端地址栏收放，避免输入法弹出时输入框被顶到屏幕外 */
+  .social-chat { min-height: calc(100dvh - var(--header-h) - var(--dock-safe)); }
+}
+.social-thread-area { flex: 1 1 auto; display: flex; flex-direction: column; }
+.social-thread { display: flex; flex-direction: column; gap: var(--space-3); }
+/* 哨兵：滚到底部时留出输入区的高度，最后一条消息不会被气泡挡住 */
+.social-thread-end { height: 1px; scroll-margin-bottom: calc(var(--dock-safe) + 84px); }
+.social-older { display: flex; justify-content: center; padding-bottom: var(--space-2); }
+
+.social-row { display: flex; align-items: flex-end; gap: var(--space-2); }
+.social-row.is-mine { flex-direction: row-reverse; }
+.social-row-avatar { margin-bottom: 16px; } /* 和气泡底对齐（时间那行占 16px） */
+.social-bubble-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; max-width: min(78%, 460px); min-width: 0; }
+.social-row.is-mine .social-bubble-wrap { align-items: flex-end; }
+.social-bubble {
+  padding: 8px 12px;
+  border-radius: var(--radius-lg) var(--radius-lg) var(--radius-lg) var(--radius-sm);
+  background: var(--surface); color: var(--fg);
+  box-shadow: var(--shadow-card);
+  font-size: var(--text-base); line-height: 1.45;
+  white-space: pre-wrap;      /* 用户敲的换行要原样保留 */
+  overflow-wrap: anywhere;    /* 长链接不撑破气泡 */
+}
+.social-bubble.is-mine {
+  border-radius: var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-lg);
+  background: var(--accent); color: var(--accent-on); box-shadow: none;
+}
+.social-bubble.is-pending { opacity: 0.6; } /* 发送中的乐观气泡 */
+.social-time { font-size: var(--text-xs); color: var(--meta); }
+
+/* 输入区：吸底 + 液态玻璃，滚动的消息从它下面穿过 */
+.social-composer {
+  position: sticky; bottom: calc(var(--dock-safe) + 8px); z-index: 20;
+  display: flex; flex-direction: column; gap: 2px;
+  margin-top: var(--space-3);
+  padding: 6px 6px 6px var(--space-3);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--glass-shadow);
+}
+.social-composer-row { display: flex; align-items: flex-end; gap: var(--space-2); }
+.social-input {
+  flex: 1 1 auto; min-width: 0; min-height: var(--tap); max-height: 112px;
+  padding: 10px 0;
+  border: 0; background: transparent; color: var(--fg);
+  font-size: var(--text-md); /* ≥16px：低于它 iOS 聚焦时会放大整页 */
+  line-height: 1.4;
+  resize: none; overflow-y: auto;
+}
+.social-input:focus, .social-input:focus-visible { outline: none; box-shadow: none; }
+.btn.social-send {
+  flex: 0 0 auto; width: var(--tap); height: var(--tap);
+  min-height: var(--tap); padding: 0; border-radius: 50%;
+}
+.social-count { padding-right: calc(var(--tap) + var(--space-2)); text-align: right; font-size: var(--text-xs); color: var(--meta); }
+
+/* 非好友 / 被拉黑：输入区换成提示条 —— 让用户知道下一步该做什么，而不是对着发不出去的输入框 */
+.social-hintbar {
+  position: sticky; bottom: calc(var(--dock-safe) + 8px); z-index: 20;
+  display: flex; align-items: center; gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--glass-shadow);
+}
+.social-hintbar-text { flex: 1 1 auto; min-width: 0; font-size: var(--text-sm); color: var(--fg-2); }
+
+/* ── 好友页 ── */
+.social-toolbar { display: flex; flex-direction: column; gap: var(--space-2); padding-top: var(--space-3); }
+.social-add { display: flex; align-items: center; gap: var(--space-2); }
+.input.social-add-input { flex: 1 1 auto; min-width: 0; }
+.social-tip { font-size: var(--text-xs); }
+.seg.social-seg { align-self: flex-start; margin-top: var(--space-2); }
+.seg.social-seg button { min-height: var(--tap); padding: 0 var(--space-4); }
+.social-panel { display: flex; flex-direction: column; gap: var(--space-3); padding-top: var(--space-3); }
+.social-list { list-style: none; margin: 0; padding: 0; }
+
+.list-item.social-user { align-items: center; }
+.social-user-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.social-user-name { font-weight: 600; font-size: var(--text-base); }
+.social-actions { display: flex; align-items: center; gap: var(--space-1); flex: 0 0 auto; }
+
+/* 收到的请求：留言与「同意/拒绝」各占一行，窄屏才不会把昵称挤成两个字 */
+.list-item.social-req { flex-direction: column; align-items: stretch; gap: var(--space-2); }
+.social-req-head { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.social-req-msg {
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  background: var(--surface-2); color: var(--fg-2);
+  font-size: var(--text-sm); overflow-wrap: anywhere;
+}
+.social-req-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.social-waiting {
+  flex: 0 0 auto; display: inline-flex; align-items: center;
+  min-height: 28px; padding: 0 12px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2); color: var(--muted);
+  font-size: var(--text-sm);
+}
+.social-user-msg { font-size: var(--text-xs); color: var(--meta); overflow-wrap: anywhere; }
+
+/* 好友行的「更多」菜单（Sheet 内部） */
+.btn.social-menu-item { width: 100%; }
+.social-menu { display: flex; flex-direction: column; gap: var(--space-2); }
+.social-confirm { display: flex; flex-direction: column; gap: var(--space-4); text-align: center; color: var(--fg-2); }
+.social-confirm-actions { display: flex; gap: var(--space-3); }
+.social-confirm-actions .social-tap { flex: 1 1 0; }
+
+/* 窄屏：顶栏昵称旁边的学校/头衔让位给昵称本身 */
+@media (max-width: 359px) {
+  .social-head-title .social-badge { display: none; }
+}

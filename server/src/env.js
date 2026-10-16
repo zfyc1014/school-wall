@@ -15,7 +15,7 @@
  *   - 解析失败只跳过该行，绝不因为配置文件的格式问题让服务起不来。
  *
  * 这个模块在 require 时就生效（有副作用），因此必须在其它读取 process.env 的
- * 模块（db.js 读 DB_PATH、gate.js 读 GATE_*）**之前**引用。
+ * 模块（db.js 读 DB_PATH、config.js 读 CF_* / SESSION_* 等）**之前**引用。
  */
 
 const fs = require("fs");

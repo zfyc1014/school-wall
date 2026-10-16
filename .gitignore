@@ -3,8 +3,6 @@ node_modules/
 
 # 构建产物（Vite 输出到 web/dist）
 web/dist/
-# 冒烟测试截图
-web/screenshots/
 assets/
 *.local
 
@@ -14,7 +12,9 @@ server/.env
 server/data/*.db
 server/data/*.db-wal
 server/data/*.db-shm
-server/data/banned.txt
+# 注意：server/data/banned.txt（预审词表）**随仓库分发**，不忽略 ——
+# 新部署开箱就要能用昵称预审；运营可以直接改这个文件，也可以用 BANNED_FILE 指向自己的词表。
+# 词表来自公开开源词库，不含任何用户数据。
 
 # 编辑器 / 系统
 .DS_Store

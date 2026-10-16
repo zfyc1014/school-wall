@@ -95,29 +95,64 @@ db.pragma("auto_analyze = 0");
 
 db.exec(fs.readFileSync(path.join(__dirname, "..", "schema.sql"), "utf8"));
 
-/* ───────────────────── 内测版迁移（幂等）───────────────────── */
+/* ───────────────────── v1.0.0 迁移（幂等）───────────────────── */
 
 /**
- * 内测版（0.9）删除实名制后，从旧库升级上来的数据库里会留下
- * `identities` / `identity_codes` 两张表与三处 `identity_id` 列。
+ * 迁移原则：**尽力而为，失败不影响启动**。
  *
- * 处理原则：**尽力清理，失败不影响启动**。
- *   - 新库根本不会建这些对象（schema.sql 已删除），这段只对旧库生效；
+ *   - 新库不会走到这里（schema.sql 建的就是最终形态），这段只对旧库生效；
+ *   - 每一步都先探测再执行，重复启动不会报错、不会重复改；
  *   - DROP COLUMN 要求该列不被索引/约束引用，因此先删索引再删列；
- *   - 万一数据库版本或约束不允许删除，就退化为「保留空列不再使用」——
+ *   - 万一数据库版本不允许某项变更，就退化为「保留旧列不再读写」——
  *     绝不能因为一次清理失败就让服务起不来。
+ *
+ * v1.0.0 的三类迁移：
+ *   1. 补列：posts/comments.user_id、reports.reporter_id、feedback.user_id
+ *      （账号体系上线前的内容没有作者，留空即可，前台本来也不展示作者）；
+ *   2. 改名：likes.ip_hash → likes.actor（点赞主体从「IP 哈希」升级为「登录用户」，
+ *      这样换设备仍然是同一个人，计数不会再因为换网而翻倍）；
+ *   3. 清理：实名时代的 identities / identity_codes 表与 identity_id 列。
  */
 function tableExists(table) {
   return Boolean(db.prepare("SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name=?").get(table));
 }
 
-function dropColumnIfExists(table, column) {
+function columnNames(table) {
+  if (!tableExists(table)) return [];
+  return db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+}
+
+function addColumnIfMissing(table, column, decl) {
+  if (!tableExists(table) || columnNames(table).includes(column)) return false;
+  try {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
+    console.log(`[db] 迁移：${table} 增加列 ${column}`);
+    return true;
+  } catch (err) {
+    console.warn(`[db] 迁移：${table}.${column} 添加失败（${err.message}），该功能在旧库上不可用`);
+    return false;
+  }
+}
+
+function renameColumnIfExists(table, from, to) {
   if (!tableExists(table)) return false;
-  const exists = db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
-  if (!exists) return false;
+  const cols = columnNames(table);
+  if (!cols.includes(from) || cols.includes(to)) return false;
+  try {
+    db.exec(`ALTER TABLE ${table} RENAME COLUMN ${from} TO ${to}`);
+    console.log(`[db] 迁移：${table}.${from} 已重命名为 ${to}`);
+    return true;
+  } catch (err) {
+    console.warn(`[db] 迁移：${table}.${from} 重命名失败（${err.message}）`);
+    return false;
+  }
+}
+
+function dropColumnIfExists(table, column) {
+  if (!tableExists(table) || !columnNames(table).includes(column)) return false;
   try {
     db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
-    console.log(`[db] 迁移：已移除 ${table}.${column}（内测版不再收集实名信息）`);
+    console.log(`[db] 迁移：已移除历史遗留列 ${table}.${column}`);
     return true;
   } catch (err) {
     console.warn(`[db] 迁移：${table}.${column} 无法删除（${err.message}），已保留为空列，代码不再读写`);
@@ -125,9 +160,22 @@ function dropColumnIfExists(table, column) {
   }
 }
 
-if (tableExists("identities") || tableExists("identity_codes")) {
-  console.log("[db] 检测到实名时代的旧表，正在清理（内测版不收集手机号）");
+// 1) 补账号外键列
+addColumnIfMissing("posts", "user_id", "INTEGER");
+addColumnIfMissing("comments", "user_id", "INTEGER");
+addColumnIfMissing("reports", "reporter_id", "INTEGER");
+addColumnIfMissing("feedback", "user_id", "INTEGER");
+
+// 2) 点赞主体的语义升级：IP 哈希 → 登录用户
+renameColumnIfExists("likes", "ip_hash", "actor");
+
+// 旧版本的 actor 列可能在补数据时为 NULL（NOT NULL 约束只在新建表时生效），
+// 这里把历史行标成匿名主体，避免统计口径把它们算成同一个人。
+if (tableExists("likes") && columnNames("likes").includes("actor")) {
+  db.prepare("UPDATE likes SET actor = 'legacy:anonymous' WHERE actor IS NULL OR actor = ''").run();
 }
+
+// 3) 实名时代的遗留对象：与 v1.0.0 的账号体系无关，一并清掉
 db.exec("DROP INDEX IF EXISTS idx_posts_identity");
 db.exec("DROP INDEX IF EXISTS idx_comments_identity");
 db.exec("DROP INDEX IF EXISTS idx_reports_identity");
@@ -206,6 +254,11 @@ function cleanup(days = Number(process.env.RETENTION_DAYS || 0)) {
   run("orphan_likes", "DELETE FROM likes WHERE post_id NOT IN (SELECT id FROM posts)");
   run("orphan_comments", "DELETE FROM comments WHERE post_id NOT IN (SELECT id FROM posts)");
 
+  // 过期凭据：无论是否开启保留期都要清（留着只有坏处：表变大、泄露面变大）
+  run("expired_sessions", "DELETE FROM sessions WHERE expires_at < ?", Date.now());
+  run("expired_codes", "DELETE FROM auth_codes WHERE expires_at < ?", Date.now() - 86400000);
+  run("expired_register_tokens", "DELETE FROM register_tokens WHERE expires_at < ?", Date.now() - 86400000);
+
   if (days > 0) {
     const cutoff = Date.now() - days * 86400000;
 
@@ -220,6 +273,8 @@ function cleanup(days = Number(process.env.RETENTION_DAYS || 0)) {
     // 已处理的内测反馈：保留期满清理（未处理的永远保留，不能被时间清掉）
     run("old_feedback",
       "DELETE FROM feedback WHERE status <> 'open' AND created_at < ?", cutoff);
+    // 私信按保留期清理（默认关闭；开启后旧私信会被删除，需在隐私政策中说明）
+    run("old_dms", "DELETE FROM dm_messages WHERE created_at < ?", cutoff);
   } else {
     // 未开启保留期时，仍然清掉「已下架帖子」，因为下架即不再需要保留正文。
     // 该动作同时通过外键级联清掉它的点赞与评论，直接缩小主键表体积。
@@ -281,7 +336,12 @@ function stats() {
       likes: count("SELECT COUNT(*) FROM likes"),
       reports: count("SELECT COUNT(*) FROM reports"),
       feedback: count("SELECT COUNT(*) FROM feedback"),
-      audit: count("SELECT COUNT(*) FROM audit_log")
+      audit: count("SELECT COUNT(*) FROM audit_log"),
+      users: count("SELECT COUNT(*) FROM users"),
+      threads: count("SELECT COUNT(*) FROM forum_threads"),
+      replies: count("SELECT COUNT(*) FROM forum_replies"),
+      messages: count("SELECT COUNT(*) FROM dm_messages"),
+      sessions: count("SELECT COUNT(*) FROM sessions")
     },
     autoVacuum: db.pragma("auto_vacuum", { simple: true }),
     dirtyAtBoot

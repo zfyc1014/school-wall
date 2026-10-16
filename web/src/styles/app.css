@@ -1,0 +1,128 @@
+/* 应用外壳：页面骨架、悬浮玻璃 dock、公告栏、吸顶标题栏、分段控件。 */
+
+.app { min-height: 100vh; display: flex; flex-direction: column; }
+.page { flex: 1; padding-bottom: var(--dock-safe); }
+
+/* ── 吸顶标题栏（二级页用）── */
+.page-head {
+  position: sticky; top: 0; z-index: 30;
+  display: flex; align-items: center; gap: var(--space-2);
+  height: var(--header-h); padding-inline: var(--space-2);
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border-bottom: 1px solid var(--border-soft);
+}
+.page-head .page-title { font-size: var(--text-md); font-weight: 600; }
+.page-head-spacer { width: 38px; }
+@supports not ((backdrop-filter: blur(8px)) or (-webkit-backdrop-filter: blur(8px))) {
+  .page-head { background: var(--surface); }
+}
+
+/* 首页顶部：站名 + 搜索入口。刻意只放这两样。 */
+.home-head {
+  position: sticky; top: 0; z-index: 30;
+  padding: calc(env(safe-area-inset-top, 0px) + 8px) 0 8px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border-bottom: 1px solid var(--border-soft);
+}
+@supports not ((backdrop-filter: blur(8px)) or (-webkit-backdrop-filter: blur(8px))) {
+  .home-head { background: var(--surface); }
+}
+.home-title { font-size: var(--text-lg); font-weight: 700; }
+.home-sub { font-size: var(--text-xs); color: var(--meta); }
+
+/* ── 公告栏 ── */
+.announce {
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--accent) 8%, var(--surface));
+  border: 1px solid color-mix(in oklab, var(--accent) 16%, transparent);
+  font-size: var(--text-sm);
+  color: var(--fg-2);
+}
+.announce-icon { color: var(--accent); flex: 0 0 auto; margin-top: 1px; }
+.announce-body { flex: 1; min-width: 0; }
+.announce-link { color: var(--accent); font-weight: 500; margin-left: 6px; white-space: nowrap; }
+.announce-more { font-size: var(--text-xs); color: var(--accent); margin-top: 4px; }
+
+/* ── 分段控件 ── */
+.seg {
+  display: inline-flex; padding: 2px; gap: 2px;
+  background: var(--surface-2); border-radius: var(--radius-pill);
+}
+.seg button {
+  min-height: 30px; padding: 0 14px; border-radius: var(--radius-pill);
+  font-size: var(--text-sm); color: var(--muted); font-weight: 500;
+}
+.seg button[aria-selected='true'] { background: var(--surface); color: var(--fg); box-shadow: var(--shadow-card); }
+
+/* ── 底部 dock：液态玻璃 ── */
+.dock {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+  padding: 0 var(--gutter) calc(env(safe-area-inset-bottom, 0px) + 12px);
+  display: flex; justify-content: center;
+  pointer-events: none; /* 让两侧的空白区域不挡住内容滚动 */
+}
+.dock-inner {
+  pointer-events: auto;
+  width: 100%; max-width: min(var(--content-max), 460px);
+  height: var(--dock-h);
+  display: flex; align-items: center; justify-content: space-around;
+  border-radius: var(--radius-pill);
+  box-shadow: var(--glass-shadow-dock);
+  /* 液态玻璃的观感来自三层叠加：半透明底 + 模糊饱和 + 顶部内高光 */
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border: 1px solid var(--glass-border);
+  padding: 0 6px;
+}
+@supports not ((backdrop-filter: blur(8px)) or (-webkit-backdrop-filter: blur(8px))) {
+  .dock-inner { background: var(--surface); }
+}
+.dock-tab {
+  position: relative;
+  flex: 1 1 0; height: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  color: var(--muted); font-size: 10px; font-weight: 500;
+  border-radius: var(--radius-pill);
+  transition: color var(--motion-fast) var(--ease);
+}
+.dock-tab.is-active { color: var(--accent); }
+.dock-tab.is-active .dock-icon { transform: translateY(-1px); }
+.dock-icon { display: inline-flex; transition: transform var(--motion-fast) var(--ease); }
+.dock-dot {
+  position: absolute; top: 8px; left: 50%; margin-left: 6px;
+  min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: var(--radius-pill);
+  background: var(--danger); color: var(--danger-on);
+  font-size: 10px; line-height: 16px; text-align: center; font-weight: 600;
+}
+.dock-compose {
+  flex: 0 0 auto; margin: 0 4px;
+  width: 46px; height: 46px; border-radius: 50%;
+  background: var(--accent); color: var(--accent-on);
+  display: inline-flex; align-items: center; justify-content: center;
+  box-shadow: 0 6px 16px color-mix(in oklab, var(--accent) 45%, transparent);
+  transition: transform var(--motion-fast) var(--ease);
+}
+.dock-compose:active { transform: scale(0.94); }
+
+/* ── 首页信息流骨架（卡片样式在 wall.css）── */
+.feed { padding-top: var(--space-3); }
+.feed-status { padding: var(--space-6) 0; text-align: center; }
+.feed-end { padding: var(--space-5) 0 calc(var(--space-6)); text-align: center; color: var(--meta); font-size: var(--text-sm); }
+
+/* 主行动按钮：内容为空时的引导，不做 hero 大图 */
+.cta-inline {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  margin-top: var(--space-4); padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}

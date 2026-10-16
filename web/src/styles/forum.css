@@ -1,0 +1,151 @@
+/* 论坛：版块列表 / 主题详情 / 发帖。
+ *
+ * 约定（见契约 §3）：类名统一 .forum- 前缀，颜色只取 tokens 变量，
+ * 需要新变体时用 color-mix(var(--x) …) 派生，绝不写字面量，深色模式才不用改这里。
+ */
+
+/* 吸顶标题栏贴到内容列两侧：容器自带 gutter 内边距，不拉出去会缩成一条悬空的短条 */
+.forum-page .page-head {
+  margin-inline: calc(var(--gutter) * -1);
+  padding-inline: var(--gutter);
+}
+
+/* ── 版块与排序 ── */
+.forum-toolbar {
+  display: flex; align-items: center; gap: var(--space-3);
+  margin: var(--space-3) 0 var(--space-2);
+}
+/* chips / seg 在这页是主要筛选入口，统一抬到 44px 触摸目标 */
+.forum-boards .chip { min-height: var(--tap); padding: 0 var(--space-4); }
+.forum-sort { flex: 0 0 auto; }
+.forum-sort button { min-height: var(--tap); padding: 0 var(--space-4); }
+
+/* ── 主题列表 ── */
+.forum-list { display: block; }
+.forum-thread {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-4);
+  margin-top: var(--space-3);
+}
+.forum-thread-main {
+  display: block; width: 100%;
+  min-height: var(--tap);
+  text-align: left; color: inherit;
+}
+.forum-thread-main:active { opacity: 0.7; }
+.forum-thread-title { font-size: var(--text-md); font-weight: 600; line-height: 1.35; word-break: break-word; }
+.forum-thread-excerpt { margin-top: 6px; color: var(--muted); font-size: var(--text-sm); }
+
+.forum-thread-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--space-2); margin-top: var(--space-2);
+}
+.forum-author {
+  display: inline-flex; align-items: center; gap: 8px;
+  flex: 1 1 auto; min-width: 0; min-height: var(--tap);
+  padding: 0; text-align: left;
+  color: var(--fg-2); font-size: var(--text-sm);
+}
+.forum-author:active { opacity: 0.6; }
+.forum-author-name {
+  font-weight: 500; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.forum-stats {
+  display: inline-flex; align-items: center; gap: var(--space-3);
+  flex: 0 0 auto; font-variant-numeric: tabular-nums;
+}
+.forum-more { padding: var(--space-5) 0 var(--space-2); text-align: center; }
+.forum-more.meta { padding: var(--space-4) 0; }
+
+/* ── 主题详情 ── */
+.forum-thread-detail { margin-top: var(--space-3); }
+.forum-detail-title { font-size: var(--text-lg); font-weight: 700; line-height: 1.35; word-break: break-word; }
+.forum-author-lg { margin-top: var(--space-3); max-width: 100%; gap: var(--space-3); }
+.forum-author-main { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
+.forum-author-lg .forum-author-name { font-size: var(--text-base); }
+/* 正文保留换行：用户敲的回车就是他想要的段落，合并掉会读成一大坨 */
+.forum-detail-body {
+  margin-top: var(--space-4);
+  white-space: pre-wrap; word-break: break-word;
+  color: var(--fg); font-size: var(--text-md); line-height: 1.62;
+}
+.forum-detail-meta { display: flex; align-items: center; gap: 6px; margin-top: var(--space-3); }
+
+/* ── 回复 ── */
+.forum-replies { margin-top: var(--space-5); }
+.forum-replies-title {
+  display: flex; align-items: center; gap: 6px;
+  font-size: var(--text-base); font-weight: 600;
+}
+.forum-replies .empty { padding: var(--space-6) 0; }
+.forum-reply {
+  display: flex; gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.forum-reply:last-child { border-bottom: 0; }
+.forum-avatar-btn {
+  flex: 0 0 auto;
+  width: var(--tap); height: var(--tap);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.forum-avatar-btn:active { opacity: 0.6; }
+.forum-reply-main { flex: 1; min-width: 0; }
+.forum-reply-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.forum-reply-name {
+  display: inline-flex; align-items: center;
+  min-height: var(--tap);
+  color: var(--fg-2); font-size: var(--text-sm); font-weight: 500;
+}
+.forum-floor { margin-left: auto; color: var(--meta); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+.forum-reply-body { white-space: pre-wrap; word-break: break-word; color: var(--fg); }
+.forum-reply-time { display: block; margin-top: 4px; }
+
+/* ── 底部操作条 ──
+ * sticky 到 dock 上方（--dock-safe 已经算过 dock 高度 + 安全区），
+ * 玻璃质感复用 .glass，这里只补形状与投影。 */
+.forum-bar {
+  position: sticky;
+  bottom: calc(var(--dock-safe) + 8px);
+  z-index: 20;
+  display: flex; align-items: flex-end; gap: var(--space-2);
+  margin: var(--space-5) 0 var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--glass-shadow);
+}
+.forum-bar-form { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.forum-bar-input { min-height: var(--tap); max-height: 30vh; }
+.forum-bar-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); }
+.forum-bar-actions .counter { flex: 1; text-align: left; }
+.forum-reply-open {
+  flex: 1 1 auto; min-width: 0; min-height: var(--tap);
+  display: flex; align-items: center;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2); color: var(--meta);
+  font-size: var(--text-base); text-align: left;
+}
+.forum-like {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  min-width: var(--tap); min-height: var(--tap);
+  padding: 0 10px;
+  border-radius: var(--radius-pill);
+  color: var(--muted); font-size: var(--text-sm); font-variant-numeric: tabular-nums;
+  transition: color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease), transform var(--motion-fast) var(--ease);
+}
+.forum-like:active { transform: scale(0.94); }
+/* 已赞：填充（filled 由 IconHeart 控制）+ 底色高亮，一眼能看出是自己的赞 */
+.forum-like.is-liked {
+  color: var(--danger);
+  background: color-mix(in oklab, var(--danger) 12%, transparent);
+}
+.forum-like[disabled] { opacity: 0.55; }
+
+/* ── 发帖 ── */
+.forum-form { margin-top: var(--space-4); }
+.forum-form-note { padding-bottom: var(--space-2); }

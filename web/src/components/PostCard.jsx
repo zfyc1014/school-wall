@@ -1,122 +1,142 @@
-import { useCallback, useId, useState } from 'react';
-import { ANON_AVATAR, ANON_NAME, COMMENT_MAX } from '../lib/types.js';
-import { rel, nfmt } from '../lib/format.js';
-import { useReveal } from '../hooks/useReveal.js';
-import { useComments } from '../hooks/useComments.js';
-import { IconBubble, IconFlag, IconHeart } from './icons.jsx';
+import { useState } from 'react';
+import { api } from '../api/client.js';
+import { useAuth } from '../context/AuthContext.jsx';
+import { useToast } from '../context/ToastContext.jsx';
+import { timeAgo } from '../lib/format.js';
+import { IconComment, IconHeart, IconMore } from './icons.jsx';
 
 /**
- * 一张墙贴：匿名身份 + 相对时间 + 分类徽标 + 正文 + 点赞/评论/举报。
- * 结构与 class 名与 school-confession-wall.html 的 postCard() 完全一致。
+ * 表白墙卡片。
+ *
+ * 匿名是产品前提：卡片上**不出现任何作者信息**，只有内容、分类、点赞与评论。
+ * 长文默认折叠到 8 行，点「展开」看全文（取消字数上限之后必须处理这件事，
+ * 否则一条几千字的帖子会把整个信息流顶穿）。
  */
-export function PostCard({ post, index, adapter, toast, onLike, onReport, onCommentCount, popping }) {
-  const [openComments, setOpenComments] = useState(false);
-  const [draft, setDraft] = useState('');
-  const reveal = useReveal(Math.min(index * 45, 360));
-  const panelId = useId();
+export function PostCard({ post, liked, onLike, onComment, onReport }) {
+  const { requireLogin } = useAuth();
+  const toast = useToast();
+  const [expanded, setExpanded] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [comments, setComments] = useState(null);
+  const [commentText, setCommentText] = useState('');
+  const [sending, setSending] = useState(false);
 
-  const handleCountChange = useCallback(
-    (count) => onCommentCount(post.id, count),
-    [onCommentCount, post.id]
-  );
+  const body = String(post.body || '');
+  const isLong = body.length > 220;
 
-  const { comments, state, sending, submit } = useComments({
-    open: openComments,
-    adapter,
-    postId: post.id,
-    toast,
-    onCountChange: handleCountChange,
-  });
+  const loadComments = async () => {
+    setComments((prev) => (prev ? prev : []));
+    try {
+      const data = await api.posts.comments(post.id);
+      setComments(Array.isArray(data.items) ? data.items : []);
+    } catch (err) {
+      toast(err.message || '评论加载失败');
+    }
+  };
 
-  async function handleSubmit(e) {
-    e.preventDefault();
-    const ok = await submit(draft);
-    if (ok) setDraft('');
-  }
+  const submitComment = async () => {
+    const text = commentText.trim();
+    if (!text || sending) return;
+    setSending(true);
+    try {
+      const result = await api.posts.comment(post.id, text);
+      setCommentText('');
+      toast(result.status === 'pending' ? '评论已提交，审核通过后显示' : '已发布');
+    } catch (err) {
+      toast(err.message || '评论失败');
+    } finally {
+      setSending(false);
+    }
+  };
 
   return (
-    <article
-      ref={reveal.ref}
-      className={`post reveal ${reveal.className}`}
-      style={reveal.style}
-      data-od-id={`post-${post.id}`}
-    >
+    <article className="post">
       <header className="post-head">
-        <span className="avatar" aria-hidden="true">{ANON_AVATAR}</span>
-        <div className="post-id">
-          <span className="post-name">{ANON_NAME}</span>
-          <span className="post-meta meta">{rel(post.createdAt)}</span>
+        <span className="tag">{post.cat}</span>
+        <span className="meta">{timeAgo(post.createdAt)}</span>
+        <div className="grow" />
+        <div className="post-menu">
+          <button
+            className="btn-icon"
+            type="button"
+            aria-label="更多"
+            onClick={() => setMenuOpen((v) => !v)}
+          >
+            <IconMore size={18} />
+          </button>
+          {menuOpen ? (
+            <div className="post-menu-pop glass glass-strong">
+              <button
+                type="button"
+                className="list-item"
+                onClick={() => { setMenuOpen(false); onReport(post); }}
+              >
+                举报
+              </button>
+            </div>
+          ) : null}
         </div>
-        <span className="cat-chip">{post.cat}</span>
       </header>
 
-      <p className="post-body">{post.body}</p>
+      <p className={'post-body' + (isLong && !expanded ? ' is-clamped' : '')}>{body}</p>
+      {isLong ? (
+        <button className="post-more" type="button" onClick={() => setExpanded((v) => !v)}>
+          {expanded ? '收起' : '展开全文'}
+        </button>
+      ) : null}
 
       <footer className="post-actions">
         <button
-          className={`act like${popping ? ' pop' : ''}`}
+          className={'post-action' + (liked ? ' is-liked' : '')}
           type="button"
-          aria-pressed={post.liked}
-          aria-label={post.liked ? '取消喜欢' : '喜欢'}
-          onClick={() => onLike(post.id)}
+          aria-pressed={liked}
+          onClick={() => onLike(post)}
         >
-          <IconHeart />
-          <span className="count">{nfmt(post.likes)}</span>
+          <IconHeart size={19} filled={liked} />
+          <span>{post.likes || 0}</span>
         </button>
-
         <button
-          className="act"
+          className="post-action"
           type="button"
-          aria-label="评论"
-          aria-expanded={openComments}
-          aria-controls={panelId}
-          onClick={() => setOpenComments((v) => !v)}
+          onClick={() => {
+            requireLogin(() => {
+              if (comments === null) loadComments();
+              else setComments(null);
+              onComment(post);
+            });
+          }}
         >
-          <IconBubble />
-          <span className="count">{post.comments}</span>
-        </button>
-
-        <button
-          className="act report"
-          type="button"
-          aria-label="举报"
-          onClick={() => onReport(post.id)}
-        >
-          <IconFlag />
-          <span>举报</span>
+          <IconComment size={19} />
+          <span>{post.comments || 0}</span>
         </button>
       </footer>
 
-      {openComments && (
-        <div className="comments" id={panelId}>
-          {state === 'loading' && <p className="meta">正在加载评论…</p>}
-          {state === 'error' && <p className="meta">评论加载失败，收起后重试</p>}
-          {state === 'ready' && comments.length === 0 && (
-            <p className="meta">还没有回复，来说第一句。</p>
-          )}
-          {state === 'ready' &&
-            comments.map((c) => (
-              <div className="comment" key={c.id}>
-                <span className="who">{c.who}</span>
-                <span className="txt">{c.text}</span>
-              </div>
-            ))}
-
-          <form className="comment-form" onSubmit={handleSubmit}>
+      {comments !== null ? (
+        <section className="post-comments">
+          {comments.length === 0 ? <p className="meta">还没有评论</p> : null}
+          {comments.map((item) => (
+            <p key={item.id} className="post-comment">
+              <span className="post-comment-body">{item.body}</span>
+              <span className="meta">{timeAgo(item.createdAt)}</span>
+            </p>
+          ))}
+          <div className="post-comment-form">
             <input
-              type="text"
-              maxLength={COMMENT_MAX}
-              placeholder="匿名回复…"
-              aria-label="回复内容"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              className="input"
+              placeholder="说点什么…"
+              value={commentText}
+              maxLength={300}
+              onChange={(event) => setCommentText(event.target.value)}
+              onKeyDown={(event) => { if (event.key === 'Enter') submitComment(); }}
             />
-            <button type="submit" disabled={sending || !draft.trim()}>
-              {sending ? '发送中' : '发送'}
+            <button className="btn btn-primary btn-sm" type="button" disabled={sending || !commentText.trim()} onClick={submitComment}>
+              发送
             </button>
-          </form>
-        </div>
-      )}
+          </div>
+        </section>
+      ) : null}
     </article>
   );
 }
+
+export default PostCard;
