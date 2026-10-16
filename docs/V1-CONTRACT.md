@@ -279,7 +279,8 @@ import { Avatar } from '../components/Avatar.jsx';
 - `GET /api/admin/users?q=&status=&cursor=&limit=` → `{items:[AdminUser], nextCursor}`
   AdminUser 含：`id, uuid, email, nickname, nicknameFlagged, school, avatar, bio, title, level, exp,
   status, createdAt, lastLoginAt, ipHash, uaHash, counts:{posts,comments,threads,replies,dms,friends}`
-- `GET /api/admin/users/:id` → `{user: AdminUser, recent:{posts,threads,reports}}`
+- `GET /api/admin/users/:id` → `{user: AdminUser, recent:{posts,comments,threads,messages}}`
+  （`messages` 每项含 `direction: 'out'|'in'`，只给管理员看）
 - `POST /api/admin/users/:id` `{action, value}`：
   `set_title`(value=titleId|null) `set_level` `set_exp` `set_status`(`active|muted|banned`)
   `rename` `clear_nickname_flag` `reset_exp`

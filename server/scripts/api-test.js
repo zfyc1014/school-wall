@@ -517,6 +517,21 @@ async function main() {
     eq("队列项带命中标记", Boolean(queue.body.items[0].flag), true);
     eq("队列项带作者信息（便于判断）", queue.body.items[0].author.nickname, "阿波");
 
+    // 队列翻页：升序队列的游标必须是「大于」，写成「小于」会永远取不到第二页。
+    // 用 dave 发帖：bob 在 10 分钟内已经用掉发帖配额（限流是刻意的，不去绕过它）。
+    const extra = await dave.post("/api/forum/threads", { board: "general", title: "测试违禁词第二帖", body: "内容" });
+    eq("第二条命中预筛的主题也进队列", extra.body.status, "pending");
+
+    const page1 = await anon.get("/api/admin/queue?type=threads&limit=1", { admin: true });
+    eq("队列每页按 limit 返回", page1.body.items.length, 1);
+    ok("第一页带游标（说明还有下一页）", page1.body.nextCursor > 0, page1.body.nextCursor);
+    const page2 = await anon.get("/api/admin/queue?type=threads&limit=1&cursor=" + page1.body.nextCursor, { admin: true });
+    eq("第二页能取到剩下的待审主题", page2.body.items.length, 1);
+    ok("两页返回的是不同条目", page2.body.items[0].id !== page1.body.items[0].id,
+      { first: page1.body.items[0].id, second: page2.body.items[0].id });
+    eq("翻到底后不再有游标", page2.body.nextCursor, null);
+    await anon.post("/api/admin/threads/" + extra.body.id + "/remove", {}, { admin: true });
+
     await anon.post("/api/admin/threads/" + flagged.body.id + "/approve", {}, { admin: true });
     eq("审核通过后公开", (await anon.get("/api/forum/threads/" + flagged.body.id)).status, 200);
 

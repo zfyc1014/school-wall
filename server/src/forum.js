@@ -236,12 +236,19 @@ function toggleLike(threadId, userId) {
 
 /* ───────────────────────────── 审核 ───────────────────────────── */
 
+/**
+ * 待审主题队列。
+ *
+ * 游标方向容易写错（本项目踩过一次）：队列按时间**升序**处理，所以翻页条件必须是
+ * `id > 游标`；写成 `id < 游标` 时第一页之后永远是空的 —— 而 id 与 created_at
+ * 在这里同序，因此直接用 id 排序即可，比 created_at + id 的行值比较更简单也更准。
+ */
 function queueThreads({ limit = 50, cursor = 0 } = {}) {
   const lastId = Number(cursor) || 0;
   const rows = db.prepare(
     `SELECT id, board, author_id, title, body, flag, created_at FROM forum_threads
-      WHERE status = 'pending' ${lastId > 0 ? "AND id < ?" : ""}
-      ORDER BY created_at ASC, id ASC LIMIT ?`
+      WHERE status = 'pending' ${lastId > 0 ? "AND id > ?" : ""}
+      ORDER BY id ASC LIMIT ?`
   ).all(...(lastId > 0 ? [lastId] : []), Math.min(100, Number(limit) || 50) + 1);
 
   const hasMore = rows.length > limit;
@@ -264,13 +271,14 @@ function queueThreads({ limit = 50, cursor = 0 } = {}) {
   };
 }
 
+/** 待审回复队列：游标方向同上（升序 → `id > 游标`） */
 function queueReplies({ limit = 50, cursor = 0 } = {}) {
   const lastId = Number(cursor) || 0;
   const rows = db.prepare(
     `SELECT r.id, r.thread_id, r.author_id, r.body, r.flag, r.created_at, t.title AS thread_title
        FROM forum_replies r LEFT JOIN forum_threads t ON t.id = r.thread_id
-      WHERE r.status = 'pending' ${lastId > 0 ? "AND r.id < ?" : ""}
-      ORDER BY r.created_at ASC, r.id ASC LIMIT ?`
+      WHERE r.status = 'pending' ${lastId > 0 ? "AND r.id > ?" : ""}
+      ORDER BY r.id ASC LIMIT ?`
   ).all(...(lastId > 0 ? [lastId] : []), Math.min(100, Number(limit) || 50) + 1);
 
   const hasMore = rows.length > limit;
