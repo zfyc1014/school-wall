@@ -24,6 +24,35 @@ const recountOnly = args.includes("--recount");
 const dbArg = args.find((a) => a.startsWith("--db="));
 if (dbArg) process.env.DB_PATH = dbArg.slice(5);
 
+/*
+ * ── 父进程：只负责调度与判定 ────────────────────────────────────────────
+ *
+ * 必须在 require("../src/db") **之前**：父进程一旦加载了 better-sqlite3，
+ * 它自己也会在退出阶段撞上那个原生断言（见文件末尾的说明），包装就白做了。
+ */
+if (process.env.DB_CHECK_CHILD !== "1") {
+  const { spawnSync } = require("child_process");
+  const child = spawnSync(process.execPath, [__filename].concat(process.argv.slice(2)), {
+    env: Object.assign({}, process.env, { DB_CHECK_CHILD: "1" }),
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+
+  const out = child.stdout || "";
+  process.stdout.write(out);
+  const verdict = /__VERDICT__ (ok|fail:([0-9]+))/.exec(out);
+
+  if (!verdict) {
+    if (child.stderr) process.stderr.write(child.stderr);
+    console.error("[db-check] 没能拿到体检结论（子进程退出码 " + child.status + "，signal " + child.signal + "）");
+    process.exit(1);
+  }
+  if (child.status === 134 || child.signal === "SIGABRT") {
+    console.log("[db-check] 注：子进程在退出阶段触发了 better-sqlite3 的原生断言（SIGABRT）；结论已在上面拿到，与体检结果无关。");
+  }
+  process.exit(verdict[1] === "ok" ? 0 : 1);
+}
+
 const db = require("../src/db");
 
 let failed = 0;
@@ -50,7 +79,8 @@ const EXPECTED_TABLES = [
   "user_titles", "schools", "announcements",
   "posts", "comments", "likes", "reports", "feedback", "audit_log", "stats",
   "forum_threads", "forum_replies", "thread_likes",
-  "friendships", "dm_messages"
+  "friendships", "dm_messages",
+  "afdian_orders"
 ];
 
 /**
@@ -66,7 +96,8 @@ const EXPECTED_INDEXES = [
   "idx_reports_status", "idx_reports_post", "idx_feedback_status", "idx_audit_time",
   "idx_threads_board", "idx_threads_new", "idx_threads_hot", "idx_threads_author",
   "idx_replies_thread", "idx_replies_author", "idx_friendships_addressee",
-  "idx_dm_pair", "idx_dm_inbox"
+  "idx_dm_pair", "idx_dm_inbox",
+  "idx_afdian_user", "idx_afdian_received", "idx_afdian_unbound"
 ];
 
 function checkSchema() {
@@ -81,12 +112,13 @@ function checkSchema() {
   check("索引齐全（" + EXPECTED_INDEXES.length + " 条）", missingIdx.length === 0, missingIdx);
   check("没有多余的索引（写入放大）", extraIdx.length === 0, extraIdx);
 
-  // UNIQUE 约束会自动建索引：users.email、users.uuid、user_titles.name、schools.name
-  // （WITHOUT ROWID 的表把主键当聚簇键，不会额外生成 sqlite_autoindex_*）
+  // UNIQUE 约束会自动建索引：users.email、users.uuid、user_titles.name、schools.name、
+  // afdian_orders.out_trade_no（幂等发奖就靠它）。
+  // WITHOUT ROWID 的表把主键当聚簇键，不会额外生成 sqlite_autoindex_*
   const autoIdx = db.prepare(
     "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name LIKE 'sqlite_autoindex_%'"
   ).pluck().get();
-  check("唯一约束自带索引存在（email / uuid / 头衔名 / 校名）", autoIdx === 4, { autoIdx });
+  check("唯一约束自带索引存在（邮箱 / uuid / 头衔名 / 校名 / 订单号）", autoIdx === 5, { autoIdx });
 
   check("已删除实名时代的遗留表",
     !tableExists("identities") && !tableExists("identity_codes"));
@@ -205,6 +237,9 @@ function finish(code) {
   } catch { /* 拿不到 gc 就跳过 */ }
 
   try { db.close(); } catch { /* ignore */ }
+
+  // 判定行：父进程只认它（见文件末尾的 spawn 包装）
+  console.log("__VERDICT__ " + (code ? "fail:" + failed : "ok"));
   process.exitCode = code;
 }
 

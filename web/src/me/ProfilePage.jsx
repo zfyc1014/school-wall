@@ -6,7 +6,8 @@ import { navigate } from '../router.jsx';
 import { Avatar } from '../components/Avatar.jsx';
 import { UserBadge } from '../components/UserBadge.jsx';
 import { Empty, Loading } from '../components/Empty.jsx';
-import { IconChat, IconSettings, IconUserPlus, IconInfo, IconLock } from '../components/icons.jsx';
+import { IconChat, IconSettings, IconUserPlus, IconInfo, IconLock, IconHeart } from '../components/icons.jsx';
+import { SupportSheet } from './SupportSheet.jsx';
 import { timeAgo } from '../lib/format.js';
 
 /**
@@ -16,10 +17,13 @@ import { timeAgo } from '../lib/format.js';
  * 学校在最前是产品要求（选定时就承诺过「会显示在主页最前面」），
  * 等级排在头衔之后，空间不够时先省略等级。
  */
-export function ProfilePage({ onOpenFeedback }) {
+export function ProfilePage({ site, onOpenFeedback }) {
   const { user, ready, openAuth, refresh, logout } = useAuth();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
+  const [supportOpen, setSupportOpen] = useState(false);
+  // 只有站点配置了爱发电主页才显示入口：没配置就完全不提这件事
+  const afdianPage = site && site.afdian && site.afdian.page ? site.afdian.page : '';
 
   useEffect(() => {
     if (ready && user) refresh();
@@ -117,6 +121,13 @@ export function ProfilePage({ onOpenFeedback }) {
           <IconInfo size={20} />
           <span className="grow">意见反馈</span>
         </button>
+        {afdianPage ? (
+          <button className="list-item" type="button" onClick={() => setSupportOpen(true)}>
+            <IconHeart size={20} />
+            <span className="grow">支持校园墙</span>
+            <span className="meta">爱发电</span>
+          </button>
+        ) : null}
       </div>
 
       <div className="list" style={{ marginTop: 16 }}>
@@ -136,6 +147,10 @@ export function ProfilePage({ onOpenFeedback }) {
           退出登录
         </button>
       </div>
+
+      {afdianPage ? (
+        <SupportSheet open={supportOpen} onClose={() => setSupportOpen(false)} page={afdianPage} />
+      ) : null}
     </div>
   );
 }

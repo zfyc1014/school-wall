@@ -43,6 +43,7 @@ const email = require("./email");
 const forum = require("./forum");
 const social = require("./social");
 const announce = require("./announce");
+const afdian = require("./afdian");
 
 /* ────────────────────────────── 配置 ────────────────────────────── */
 
@@ -599,6 +600,63 @@ route("GET", "/api/site", (ctx) => {
 // GET /api/schools —— 注册时可选的学校（后台维护的启用名单）
 route("GET", "/api/schools", (ctx) => {
   sendJson(ctx.req, ctx.res, 200, { items: users.schoolList() });
+});
+
+/* ───────────────────────── 爱发电赞助回调 ─────────────────────────
+ * 爱发电在订单支付后 POST 到这里（form-urlencoded：params=<JSON>&sign=<md5>）。
+ *
+ * 三个必须做对的地方：
+ *   1. **必须回 {"ec":200,"em":""}**，否则平台会一直重试；
+ *   2. 签名按官方算法校验（token 未配置时不接受任何回调，避免被伪造刷奖）；
+ *   3. 幂等交给 out_trade_no 唯一约束 —— 重试是常态，不是异常。
+ *
+ * 注意：这里读的是**原始 body**，不能走 readJson（回调是表单编码而不是 JSON）。
+ * ------------------------------------------------------------------ */
+route("POST", "/api/afdian/webhook", async (ctx) => {
+  if (!config.AFDIAN.enabled) {
+    return sendJson(ctx.req, ctx.res, 404, { ec: 404, em: "afdian not configured" });
+  }
+
+  let raw = "";
+  try {
+    const buf = await readBody(ctx.req);
+    raw = buf.toString("utf8");
+  } catch {
+    return sendJson(ctx.req, ctx.res, 200, { ec: 413, em: "payload too large" });
+  }
+
+  const parsed = afdian.parseWebhook(raw, ctx.req.headers["content-type"]);
+  if (!parsed.ok) {
+    afdian.rememberAttempt({ ok: false, reason: parsed.reason, raw: raw.slice(0, 500), ip: ctx.ip });
+    audit("afdian.webhook_rejected", null, parsed.reason, ctx.ip);
+    console.warn(`[afdian] 回调被拒：${parsed.reason}；原文（截断）：${raw.slice(0, 300)}`);
+    return sendJson(ctx.req, ctx.res, 200, { ec: 403, em: parsed.reason });
+  }
+
+  const event = parsed.event || {};
+  const order = event.order || null;
+  if (!order || !order.out_trade_no) {
+    afdian.rememberAttempt({ ok: false, reason: "no_order_in_event", raw: raw.slice(0, 500), ip: ctx.ip });
+    return sendJson(ctx.req, ctx.res, 200, { ec: 200, em: "" });
+  }
+
+  const result = afdian.handleOrder(order, "webhook");
+  afdian.rememberAttempt({
+    ok: true,
+    order: order.out_trade_no,
+    duplicated: Boolean(result.duplicated),
+    matched: Boolean(result.matched),
+    reward: result.reward || "",
+    ip: ctx.ip
+  });
+
+  if (!result.duplicated && result.matched) {
+    audit("afdian.reward", order.out_trade_no, result.reward || "", ctx.ip);
+    console.log(`[afdian] 订单 ${order.out_trade_no} 已匹配：${result.reward || "（未配置发奖）"}`);
+  }
+
+  // 无论有没有匹配到人都回 200：匹配是「我们这边的事」，不该让平台反复重试
+  sendJson(ctx.req, ctx.res, 200, { ec: 200, em: "" });
 });
 
 /* ───────────────────────── 邮箱验证码登录 ─────────────────────────
@@ -2093,6 +2151,64 @@ route("POST", "/api/admin/replies/:id/:action", (ctx) => {
   const result = forum.reviewReply(ctx.params.id, action);
   if (!result.ok) throw httpError(404, "reply not found");
   audit("reply." + action, String(ctx.params.id), null, ctx.ip);
+  sendJson(ctx.req, ctx.res, 200, result);
+});
+
+/* ───────────────────────── 赞助（爱发电）管理 ───────────────────────── */
+
+// GET /api/admin/afdian?filter=all|unbound|bound&limit=&cursor=
+route("GET", "/api/admin/afdian", (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  const rawFilter = String(ctx.query.get("filter") || "");
+  const filter = ["all", "unbound", "bound"].includes(rawFilter) ? rawFilter : "all";
+  const result = afdian.listOrders({
+    filter,
+    limit: clamp(toInt(ctx.query.get("limit"), 30), 1, 100),
+    cursor: toInt(ctx.query.get("cursor"), 0)
+  });
+  sendJson(ctx.req, ctx.res, 200, Object.assign(result, {
+    filter,
+    stats: afdian.stats(),
+    recentWebhooks: afdian.recentWebhooks()
+  }));
+});
+
+// POST /api/admin/afdian/orders/:id/bind  { uuid } —— 手动把一单算到某个用户头上
+route("POST", "/api/admin/afdian/orders/:id/bind", async (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  const payload = await readJson(ctx.req);
+  const result = afdian.bindOrder(ctx.params.id, String(payload.uuid || "").trim());
+  if (!result.ok) {
+    return sendJson(ctx.req, ctx.res, 400, {
+      error: result.error,
+      message: result.error === "user_not_found" ? "没有这个用户（uuid 不对？）" : "订单不存在"
+    });
+  }
+  audit("afdian.bind", ctx.params.id, result.reward || "", ctx.ip);
+  sendJson(ctx.req, ctx.res, 200, { ok: true, reward: result.reward, user: result.user });
+});
+
+// POST /api/admin/afdian/orders/:id/ignore —— 忽略一单（测试单、自己给自己下单…）
+route("POST", "/api/admin/afdian/orders/:id/ignore", (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  const result = afdian.ignoreOrder(ctx.params.id);
+  if (!result.ok) throw httpError(404, "order not found");
+  audit("afdian.ignore", String(ctx.params.id), null, ctx.ip);
+  sendJson(ctx.req, ctx.res, 200, { ok: true });
+});
+
+// POST /api/admin/afdian/sync  { pages? } —— 回调漏了时手动补单（按 out_trade_no 去重）
+route("POST", "/api/admin/afdian/sync", async (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  if (!config.AFDIAN.apiReady) {
+    return sendJson(ctx.req, ctx.res, 400, {
+      error: "afdian_not_configured",
+      message: "需要先配置 AFDIAN_USER_ID 与 AFDIAN_TOKEN"
+    });
+  }
+  const payload = await readJson(ctx.req);
+  const result = await afdian.syncOrders(clamp(toInt(payload.pages, 3), 1, 20));
+  audit("afdian.sync", null, `导入 ${result.imported} 单`, ctx.ip);
   sendJson(ctx.req, ctx.res, 200, result);
 });
 

@@ -278,6 +278,35 @@ CREATE TABLE IF NOT EXISTS dm_messages (
 CREATE INDEX IF NOT EXISTS idx_dm_pair  ON dm_messages(sender_id, recipient_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_dm_inbox ON dm_messages(recipient_id, read_at, id DESC);
 
+-- ── 爱发电赞助订单（v1.0.0 接入）────────────────────────────────────────
+--
+-- 数据流：爱发电下单成功 → 平台 POST 到 /api/afdian/webhook → 这里落一行。
+-- **out_trade_no 唯一**是整条链路的关键：爱发电没收到 200 响应就会重试，
+-- 有唯一约束时重放退化成一次 INSERT OR IGNORE，绝不会重复发奖。
+--
+-- amount 存字符串而不是 REAL：金额是定点小数，浮点会引入 0.1+0.2 这类误差；
+-- 这些值只用于展示与对账，不参与计算。
+CREATE TABLE IF NOT EXISTS afdian_orders (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  out_trade_no TEXT    NOT NULL UNIQUE,
+  afdian_user  TEXT,                        -- 爱发电侧的赞助者 id
+  plan_id      TEXT,
+  amount       TEXT,                        -- 实付金额（字符串）
+  months       INTEGER NOT NULL DEFAULT 0,
+  status       INTEGER NOT NULL DEFAULT 0,  -- 2 = 支付成功
+  remark       TEXT,                        -- 下单留言：用来匹配本站账号
+  user_id      INTEGER,                     -- 匹配到的本站用户（可空，后台可手动绑定）
+  matched_by   TEXT,                        -- remark_uuid | remark_email | admin | none
+  reward       TEXT,                        -- 实际发放内容（追溯「谁因为哪一单拿到了什么」）
+  raw          TEXT,                        -- 原始报文（截断保存，排查用）
+  created_at   INTEGER NOT NULL,            -- 爱发电订单时间（毫秒）
+  received_at  INTEGER NOT NULL             -- 本站收到时间
+);
+CREATE INDEX IF NOT EXISTS idx_afdian_user     ON afdian_orders(user_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_afdian_received ON afdian_orders(received_at DESC);
+-- 待绑定队列：还没匹配到本站账号的订单
+CREATE INDEX IF NOT EXISTS idx_afdian_unbound  ON afdian_orders(user_id, status);
+
 -- ── 举报 / 工单 ─────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS reports (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,

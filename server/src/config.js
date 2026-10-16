@@ -58,6 +58,33 @@ const FORUM_PREMOD = process.env.FORUM_PREMOD === "1";
 /** 昵称修改冷却（小时），默认 168 小时 = 7 天 */
 const NICKNAME_COOLDOWN_H = Math.max(0, Number(process.env.NICKNAME_COOLDOWN_H || 168));
 
+/* ───────────────────────── 爱发电（赞助）─────────────────────────
+ *
+ * 配置来自 https://afdian.com/dashboard/dev ：
+ *   AFDIAN_USER_ID    开发者页的「用户 ID」
+ *   AFDIAN_TOKEN      开发者页的「API Token」（校验回调签名、查询订单都要它）
+ *   AFDIAN_PAGE       你的爱发电主页，例如 https://afdian.com/a/xxx（前端「支持校园墙」入口）
+ *
+ * 三者缺任意一个，赞助功能就视为未配置：接口 404、前端不显示入口，
+ * 服务本身完全不受影响 —— 赞助是可选功能，不该成为部署门槛。
+ *
+ * AFDIAN_REWARD_TITLE：下单留言里填了本站 uuid / 邮箱时自动发放的头衔名；
+ * 留空 = 只记录不自动发奖，全部交给后台手动绑定。
+ * ------------------------------------------------------------------- */
+const AFDIAN = {
+  userId: String(process.env.AFDIAN_USER_ID || "").trim(),
+  token: String(process.env.AFDIAN_TOKEN || "").trim(),
+  page: String(process.env.AFDIAN_PAGE || "").trim(),
+  apiBase: String(process.env.AFDIAN_API_BASE || "https://afdian.com/api/open").trim(),
+  rewardTitle: String(process.env.AFDIAN_REWARD_TITLE == null ? "赞助者" : process.env.AFDIAN_REWARD_TITLE).trim(),
+  rewardExp: Math.max(0, Number(process.env.AFDIAN_REWARD_EXP || 0)),
+  timeoutMs: Math.max(1000, Number(process.env.AFDIAN_TIMEOUT_MS || 8000))
+};
+/** 回调校验需要 token；查询/发奖 API 需要 userId + token；前端入口需要 page */
+AFDIAN.webhookReady = Boolean(AFDIAN.token);
+AFDIAN.apiReady = Boolean(AFDIAN.userId && AFDIAN.token);
+AFDIAN.enabled = Boolean(AFDIAN.page || AFDIAN.webhookReady);
+
 /** 功能开关：都开着，但允许运营按学校情况关掉论坛或私信 */
 const FEATURES = {
   forum: process.env.FEATURE_FORUM !== "0",
@@ -70,7 +97,9 @@ function publicConfig() {
     version: VERSION,
     siteName: SITE_NAME,
     emailConfigured: EMAIL.configured,
-    features: FEATURES
+    features: FEATURES,
+    // 前端据此决定要不要显示「支持校园墙」入口；没配置就完全不提这件事
+    afdian: AFDIAN.page ? { page: AFDIAN.page } : null
   };
 }
 
@@ -86,6 +115,7 @@ module.exports = {
   SESSION_COOKIE,
   FORUM_PREMOD,
   NICKNAME_COOLDOWN_H,
+  AFDIAN,
   FEATURES,
   publicConfig
 };

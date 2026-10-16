@@ -79,7 +79,7 @@ function Shell() {
       />
     );
   } else if (segments[0] === 'me') {
-    page = <ProfilePage onOpenFeedback={() => setFeedbackOpen(true)} />;
+    page = <ProfilePage site={site} onOpenFeedback={() => setFeedbackOpen(true)} />;
   } else if (segments[0] === 'u' && segments[1]) {
     page = <UserPage uuid={segments[1]} />;
   } else if (segments[0] === 'settings') {
