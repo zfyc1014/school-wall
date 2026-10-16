@@ -63,7 +63,10 @@ const server = spawn(process.execPath, [join(ROOT, 'server', 'src', 'server.js')
     ADMIN_TOKEN,
     IP_HASH_SECRET: IP_SECRET,
     AUTH_CODE_ECHO: '1',
-    FORCE_HTTPS: '0'
+    FORCE_HTTPS: '0',
+    // 赞助入口是有配置才出现的，e2e 里给上一个假主页来验证它真的会渲染
+    AFDIAN_PAGE: 'https://afdian.com/a/school-wall',
+    AFDIAN_TOKEN: 'e2e-afdian-token'
   },
   stdio: ['ignore', 'pipe', 'pipe']
 });
@@ -219,6 +222,20 @@ async function main() {
     await page.waitFor('!!document.querySelector(".me-name")', { timeout: 8000 });
     const badge = await page.eval('document.querySelector(".badge").innerText');
     ok('个人主页的学校·头衔·等级顺序正确（学校在最前）', badge.trim().startsWith('示例大学'), badge);
+
+    console.log('\n赞助入口（爱发电）');
+    const hasSupport = await page.eval(hasText('支持校园墙'));
+    ok('配置了爱发电主页时「我的」出现支持入口', hasSupport);
+    await page.eval(clickText('.list-item', '支持校园墙'));
+    await page.waitFor('!!document.querySelector(".support-uuid code")', { timeout: 5000 });
+    const uuidShown = await page.eval('document.querySelector(".support-uuid code").innerText.trim()');
+    const uuidReal = await page.eval('(async () => (await (await fetch("/api/auth/me")).json()).user.uuid)()');
+    ok('弹层里给出的 uuid 与账号一致（用户要把它填进下单留言）', uuidShown === uuidReal, { uuidShown, uuidReal });
+    const linkHref = await page.eval('(document.querySelector(".sheet-panel a.btn") || {}).href || ""');
+    ok('弹层里的按钮指向爱发电主页', String(linkHref).includes('afdian.com/a/school-wall'), linkHref);
+    await page.eval(clickText('.sheet-panel .btn-icon', ''));
+    await page.eval('(() => { const b = document.querySelector(".sheet-backdrop"); if (b) b.click(); return true; })()');
+    await page.waitFor('!document.querySelector(".sheet-panel")', { timeout: 5000 });
 
     console.log('\n发布：取消字数限制');
     const longText = '这是一段很长的表白。'.repeat(40); // 400 字，超过旧版 500 字限制的一半以上

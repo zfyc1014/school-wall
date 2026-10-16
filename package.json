@@ -14,11 +14,12 @@
     "preview": "vite preview --config web/vite.config.js",
     "tokens": "python scripts/check-tokens.py",
     "e2e": "node scripts/e2e.mjs",
+    "e2e:admin": "node scripts/admin-e2e.mjs",
     "server": "npm --prefix server start",
     "server:dev": "npm --prefix server run dev",
     "server:install": "npm --prefix server install",
     "server:test": "npm --prefix server test",
-    "verify": "python scripts/check-tokens.py && npm run build && npm --prefix server test && npm run e2e"
+    "verify": "python scripts/check-tokens.py && npm run build && npm --prefix server test && npm run e2e && npm run e2e:admin"
   },
   "dependencies": {
     "react": "^18.3.1",

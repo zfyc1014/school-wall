@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light">
-<title>后台审核 · 校园表白墙</title>
+<title>后台审核 · 校园墙</title>
 <style>
 /* OD-LAYOUT-PRIMITIVES v1 — structure only: display, flex/grid, overflow, wrapping, ratio.
    Put this @layer first; product CSS outside the layer always wins. */
@@ -330,6 +330,18 @@ a { color: var(--accent); }
 .detail-item:last-child { border-bottom: 0; }
 .detail-item .sub { color: var(--meta); font-size: var(--text-xs); margin-top: 4px; }
 
+/* ── 赞助（爱发电）── */
+/* 回调排查用原生 <details>：没有脚本也能展开，展开态由 summary 上的文案提示 */
+.hooks > summary { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-5);
+  cursor: pointer; list-style: none; }
+.hooks > summary::-webkit-details-marker { display: none; }
+.hooks > summary h2 { font: 600 var(--text-lg)/1.2 var(--font-display); letter-spacing: -0.01em; }
+.hooks > summary .sub { color: var(--muted); font-size: var(--text-sm); }
+.hooks > summary::after { content: "展开"; margin-left: auto; flex: none; color: var(--accent); font-size: var(--text-sm); font-weight: 500; }
+.hooks[open] > summary { border-bottom: 1px solid var(--border-soft); }
+.hooks[open] > summary::after { content: "收起"; }
+.hooks-body { padding: var(--space-2) var(--space-5) var(--space-4); }
+
 .toaster { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 80; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }
 .toast { background: var(--fg); color: var(--bg); border-radius: var(--radius-pill); padding: 10px 18px; font-size: var(--text-sm);
   box-shadow: var(--shadow-lift); animation: pop var(--motion-base) var(--ease-standard); max-width: min(92vw, 520px); text-align: center; }
@@ -375,7 +387,7 @@ a { color: var(--accent); }
       <span class="brand-mark" aria-hidden="true">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg>
       </span>
-      <span class="brand-text"><strong>校园表白墙</strong><span>审核后台 · v1.0</span></span>
+      <span class="brand-text"><strong>校园墙</strong><span>审核后台 · v1.0</span></span>
     </div>
 
     <nav class="nav-rail" aria-label="审核功能">
@@ -407,6 +419,10 @@ a { color: var(--accent); }
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20V9.5l9-5 9 5V20"/><path d="M9.5 20v-6h5v6"/><path d="M3 20h18"/></svg>
         <span class="nav-label">学校</span><span class="nav-count" data-count="schools"></span>
       </button>
+      <button class="nav-item" type="button" data-view="afdian">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.5-1.5 3-3.2 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.8 0-3 .5-4.5 2-1.5-1.5-2.7-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4 3 5.5l7 7Z"/></svg>
+        <span class="nav-label">赞助</span><span class="nav-count" data-count="afdian"></span>
+      </button>
       <button class="nav-item" type="button" data-view="audit">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg>
         <span class="nav-label">审核日志</span><span class="nav-count" data-count="audit"></span>
@@ -419,7 +435,7 @@ a { color: var(--accent); }
 
     <div class="side-foot">
       <div class="conn" id="conn" data-mode="demo">
-        <span class="dot" aria-hidden="true"></span><span id="connText">演示模式</span>
+        <span class="dot" aria-hidden="true"></span><span id="connText">未连接</span>
       </div>
       <div class="conn" id="version" data-mode="live">
         <span class="dot" aria-hidden="true"></span><span id="versionText">版本 —</span>
@@ -449,7 +465,7 @@ a { color: var(--accent); }
 
     <div class="content" id="content">
       <div class="banner" id="banner" data-od-id="conn-banner" hidden>
-        <p><strong>演示模式</strong> · 未连接后端，以下为示例数据，操作只在本页生效。</p>
+        <p><strong>未连接到后端</strong> · 点右上角「连接后端」填管理员令牌；连上之前不会加载任何数据。</p>
         <button class="btn btn-secondary btn-sm" type="button" id="bannerSettings">配置后端连接</button>
       </div>
 
@@ -460,6 +476,7 @@ a { color: var(--accent); }
       <section class="view" id="view-titles" data-od-id="view-titles" hidden></section>
       <section class="view" id="view-announcements" data-od-id="view-announcements" hidden></section>
       <section class="view" id="view-schools" data-od-id="view-schools" hidden></section>
+      <section class="view" id="view-afdian" data-od-id="view-afdian" hidden></section>
       <section class="view" id="view-audit" data-od-id="view-audit" hidden></section>
       <section class="view" id="view-feedback" data-od-id="view-feedback" hidden></section>
     </div>
@@ -490,12 +507,13 @@ a { color: var(--accent); }
     titles: { title: '头衔', sub: '达到等级自动授予，管理员手动指定优先' },
     announcements: { title: '公告', sub: '首页公告栏内容，可排序与启停' },
     schools: { title: '学校', sub: '可注册学校名单，登录时强制选择且不可更改' },
+    afdian: { title: '赞助', sub: '爱发电订单、手动补单、发奖与回调排查' },
     audit: { title: '审核日志', sub: '每一次审核动作都留痕，便于追责与合规' },
     feedback: { title: '意见反馈', sub: '用户提交的问题与建议，处理后归档' }
   };
 
   // 视图顺序即导航顺序：setView 用它做显隐与标题分发
-  const VIEW_IDS = ['overview', 'queue', 'reports', 'users', 'titles', 'announcements', 'schools', 'audit', 'feedback'];
+  const VIEW_IDS = ['overview', 'queue', 'reports', 'users', 'titles', 'announcements', 'schools', 'afdian', 'audit', 'feedback'];
   // 队列四类型：帖子 / 评论（表白墙）与 主题 / 回复（论坛）共用同一个视图
   const QUEUE_TABS = [['posts', '帖子'], ['comments', '评论'], ['threads', '主题'], ['replies', '回复']];
   const FORUM_TYPES = ['threads', 'replies'];
@@ -528,6 +546,28 @@ a { color: var(--accent); }
   const ACTION_TONE = {
     'post.approve': 'ok', 'comment.approve': 'ok', 'report.dismiss': 'ok', 'feedback.done': 'ok',
     'post.remove': 'danger', 'post.reject': 'danger', 'comment.reject': 'danger', 'report.takedown': 'danger'
+  };
+
+  /* 赞助（爱发电）：matchedBy 是机器可读的匹配来源，这里翻成人话；配色沿用既有 .badge 三档 */
+  const AFDIAN_MATCH_LABEL = {
+    remark_uuid: '留言 uuid', remark_email: '留言邮箱', admin: '后台绑定', none: '未匹配', ignored: '已忽略'
+  };
+  const AFDIAN_MATCH_TONE = { remark_uuid: 'actioned', remark_email: 'actioned', admin: 'pending', none: 'open', ignored: '' };
+  const AFDIAN_FILTERS = [['all', '全部'], ['unbound', '待绑定'], ['bound', '已绑定']];
+  /* 回调被拒的原因是「赞助为什么没到账」的第一现场：每个原因都配一句人话 */
+  const AFDIAN_REASON_TEXT = {
+    bad_sign: '签名不匹配：多半是 AFDIAN_TOKEN 填错了（回调的 sign 与服务端算出来的对不上）',
+    token_not_configured: '服务端没有 AFDIAN_TOKEN，无法校验签名，回调一律拒绝',
+    missing_params: '请求体里没有 params 字段：多半不是爱发电的回调，或回调地址被中转改写了',
+    invalid_params_json: 'params 不是合法 JSON：请求体被中转或代理改写过',
+    invalid_envelope: '外层信封不是对象：读不到 user_id / params / ts / sign',
+    incomplete_envelope: '信封缺字段：user_id、params、ts 至少缺一个',
+    missing_sign: '信封里没有 sign 字段，无法确认来源',
+    invalid_json: '请求体不是合法 JSON，无法解析',
+    invalid_event_json: '事件体不是合法 JSON，解析不出订单',
+    unsigned_event: '只有事件体、没有外层信封：这个请求可能不是爱发电发来的',
+    no_order_in_event: '事件里没有订单：可能是赞助者 / 方案类事件，不需要处理',
+    order_not_found: '订单不存在'
   };
 
   // 头衔颜色来自后台输入：只接受 #RRGGBB，其余一律当空值，绝不把任意字符串送进 style
@@ -599,547 +639,9 @@ a { color: var(--accent); }
     return x.toFixed(x >= 10 ? 0 : 1) + ' ' + u[i];
   }
 
-  /* ───────────────────────── 演示数据 ───────────────────────── */
-
-  const MIN = 60e3, HOUR = 60 * MIN, DAY = 24 * HOUR;
-  const now = Date.now();
-
-  /* v1.0 新增后台数据的演示版本：字段与 /api/admin/* 下发的结构完全一致，
-     演示模式下同样能走完搜索、筛选、改头衔、封禁、增删学校等完整流程。 */
-  const demoCounts = (o) => Object.assign({ posts: 0, comments: 0, threads: 0, replies: 0, dmsSent: 0, friends: 0 }, o || {});
-  const nextId = (list) => list.reduce((m, x) => Math.max(m, Number(x.id) || 0), 0) + 1;
-
-  const DEMO_TITLES = [
-    { id: 1, name: '新生', color: '#16a34a', minLevel: 1, auto: true, sort: 0, createdAt: now - 200 * DAY },
-    { id: 2, name: '学长', color: '#0071e3', minLevel: 5, auto: true, sort: 1, createdAt: now - 180 * DAY },
-    { id: 3, name: '荣誉墙主', color: '#dc2626', minLevel: 1, auto: false, sort: 2, createdAt: now - 30 * DAY }
-  ];
-
-  const DEMO_SCHOOLS = [
-    { id: 1, name: '示例大学', sort: 0, active: true, createdAt: now - 220 * DAY },
-    { id: 2, name: '示例师范大学', sort: 1, active: true, createdAt: now - 220 * DAY },
-    { id: 3, name: '示例职业技术学院', sort: 2, active: false, createdAt: now - 120 * DAY }
-  ];
-
-  const DEMO_ANNOUNCEMENTS = [
-    { id: 2, body: '论坛已开放：可以发帖讨论，回复请遵守社区规范。', link: '/forum', linkText: '去论坛', active: true, sort: 0, createdAt: now - 3 * DAY, updatedAt: now - 6 * HOUR },
-    { id: 1, body: '期末周互助帖征集已结束，感谢参与的同学们。', link: '', linkText: '', active: false, sort: 1, createdAt: now - 20 * DAY, updatedAt: now - 12 * DAY }
-  ];
-
-  const DEMO_USERS = [
-    { id: 3, uuid: '8f1c4a72-2b95-4d3e-9a10-6c7d51e0b4a8', email: 'xiaoman@example.edu', nickname: '小满', nicknameFlagged: 'social',
-      school: '示例大学', avatar: '', bio: '喜欢在图书馆四楼靠窗', titleId: 2, title: null, level: 7, exp: 1560, status: 'active',
-      mutedUntil: 0, lastNicknameAt: 0, createdAt: now - 96 * DAY, lastLoginAt: now - 2 * HOUR, lastSeenAt: now - 25 * MIN,
-      ipHash: 'a1b2c3d4e5f60718', uaHash: '90f8e7d6c5b4a321', counts: demoCounts({ posts: 3, comments: 12, threads: 4, replies: 9, dmsSent: 31, friends: 6 }) },
-    { id: 2, uuid: '3c07be15-9d84-4f61-8b2c-1e5a7d902f36', email: 'azhe@example.edu', nickname: '夜跑的阿哲', nicknameFlagged: '',
-      school: '示例师范大学', avatar: '', bio: '每晚绕操场十圈', titleId: null, title: null, level: 4, exp: 320, status: 'muted',
-      mutedUntil: now + 2 * DAY, lastNicknameAt: now - 12 * DAY, createdAt: now - 41 * DAY, lastLoginAt: now - 9 * HOUR, lastSeenAt: now - 9 * HOUR,
-      ipHash: '5be0c1a97f2d4386', uaHash: '1122aabbccddeeff', counts: demoCounts({ posts: 1, comments: 4, threads: 2, replies: 15, dmsSent: 7, friends: 3 }) },
-    { id: 1, uuid: 'd41f8a06-77c2-4a53-b0e9-2a6c8f13d7b5', email: 'spam@example.edu', nickname: '代办刷分', nicknameFlagged: 'banned',
-      school: '示例职业技术学院', avatar: '', bio: '', titleId: null, title: null, level: 1, exp: 0, status: 'banned',
-      mutedUntil: 0, lastNicknameAt: 0, createdAt: now - 6 * DAY, lastLoginAt: now - 3 * DAY, lastSeenAt: now - 3 * DAY,
-      ipHash: 'ffeeddccbbaa0099', uaHash: '0102030405060708', counts: demoCounts({ posts: 0, comments: 1, threads: 0, replies: 0, dmsSent: 0, friends: 0 }) }
-  ];
-
-  const DEMO_USER_RECENT = {
-    3: {
-      posts: [{ id: 1015, cat: '树洞', body: '图书馆四楼靠窗的位置真的绝，推荐给备考的同学们，插座也多。', status: 'approved', created_at: now - 20 * HOUR }],
-      comments: [{ id: 5521, post_id: 1015, body: '同意，而且那边的插座真的多，可以待一整天。', status: 'pending', created_at: now - 3 * MIN }],
-      threads: [{ id: 12, board: 'study', title: '期末复习组队（图书馆四楼）', status: 'pending', created_at: now - 40 * MIN }],
-      messages: [{ id: 91, direction: 'out', body: '明天七点图书馆见？', createdAt: now - 5 * HOUR }]
-    },
-    2: {
-      posts: [],
-      comments: [{ id: 5512, post_id: 1009, body: '我好像在失物招领处见过。', status: 'approved', created_at: now - 1 * HOUR }],
-      threads: [{ id: 11, board: 'lost', title: '体育馆看台捡到黑色蓝牙耳机', status: 'pending', created_at: now - 4 * HOUR }],
-      messages: [{ id: 88, direction: 'in', body: '耳机还在吗？', createdAt: now - 3 * HOUR }]
-    },
-    1: { posts: [], comments: [{ id: 5480, post_id: 1002, body: '加微信 wall_helper 代刷。', status: 'rejected', created_at: now - 5 * DAY }], threads: [], messages: [] }
-  };
-
-  const DEMO_THREADS = [
-    { id: 12, kind: 'thread', board: 'study', title: '期末复习组队（图书馆四楼）', flag: 'cn_phone',
-      body: '想找两三个一起复习的同学，晚上七点到十点，图书馆四楼靠窗。可以加我 138 0013 8000 拉个群。',
-      author: { uuid: DEMO_USERS[0].uuid, nickname: '小满', school: '示例大学', avatar: '', title: { name: '学长', color: '#0071e3' }, level: 7 },
-      createdAt: now - 40 * MIN },
-    { id: 11, kind: 'thread', board: 'lost', title: '体育馆看台捡到黑色蓝牙耳机', flag: '',
-      body: '周三晚在体育馆看台捡到一副黑色蓝牙耳机，充电盒上有贴纸。失主可以回复我，或发邮件到 lianxi@example.edu。',
-      author: { uuid: DEMO_USERS[1].uuid, nickname: '夜跑的阿哲', school: '示例师范大学', avatar: '', title: null, level: 4 },
-      createdAt: now - 4 * HOUR }
-  ];
-
-  const DEMO_REPLIES = [
-    { id: 33, kind: 'reply', threadId: 9, threadTitle: '图书馆四楼真的适合自习吗', flag: 'social',
-      body: '同问，我一般去三楼，但那边插座少。可以加我 qq: 88123456 一起。',
-      author: { uuid: DEMO_USERS[1].uuid, nickname: '夜跑的阿哲', school: '示例师范大学', avatar: '', title: null, level: 4 },
-      createdAt: now - 55 * MIN },
-    { id: 31, kind: 'reply', threadId: 8, threadTitle: '这周六的社团招新在哪里', flag: '',
-      body: '周六上午九点，体育馆门口集合，别迟到。',
-      author: { uuid: DEMO_USERS[0].uuid, nickname: '小满', school: '示例大学', avatar: '', title: { name: '学长', color: '#0071e3' }, level: 7 },
-      createdAt: now - 6 * HOUR }
-  ];
-
-  const demoState = {
-    approvedBase: 128,
-    approvedDelta: 0,
-    posts: [
-      { id: 1041, cat: '表白', status: 'approved', body: '想对高三(2)班的林同学说：你每天早自习在窗边背单词的样子，是我整个高三最好的风景。', flag: null, like_count: 0, comment_count: 0, created_at: now - 8 * MIN },
-      { id: 1040, cat: '寻人', status: 'pending', body: '寻找上周三在图书馆三楼捡到我饭卡的同学，麻烦联系 138 0013 8000，非常感谢！', flag: 'cn_phone', like_count: 0, comment_count: 0, created_at: now - 26 * MIN },
-      { id: 1038, cat: '失物', status: 'pending', body: '体育馆看台捡到一副黑色蓝牙耳机，失主可以发邮件到 lianxi@example.edu 认领。', flag: 'email', like_count: 0, comment_count: 0, created_at: now - 2 * HOUR },
-      { id: 1035, cat: '树洞', status: 'pending', body: '最近压力好大，期中排名掉了三十名，感觉对不起爸妈。有一样的同学吗？', flag: null, like_count: 0, comment_count: 0, created_at: now - 5 * HOUR },
-      { id: 1031, cat: '致谢', status: 'pending', body: '谢谢今天在食堂帮我端餐盘的学长，虽然不知道你叫什么，但祝你好运。', flag: null, like_count: 0, comment_count: 0, created_at: now - 9 * HOUR },
-      { id: 1024, cat: '表白', status: 'pending', body: '把你的名字写在了物理笔记的最后一页。想认识你可以加我 qq: 88123456。', flag: 'social', like_count: 0, comment_count: 0, created_at: now - 15 * HOUR },
-      { id: 1015, cat: '树洞', status: 'approved', body: '图书馆四楼靠窗的位置真的绝，推荐给备考的同学们，插座也多。', flag: null, like_count: 128, comment_count: 6, created_at: now - 20 * HOUR },
-      { id: 1009, cat: '失物', status: 'approved', body: '求扩散：在食堂丢了一张校园卡，捡到的同学请联系我，谢谢！', flag: 'student_id', like_count: 43, comment_count: 3, created_at: now - 28 * HOUR },
-      { id: 1002, cat: '树洞', status: 'approved', body: '有人知道这周六的社团招新在哪里吗？在线等。', flag: null, like_count: 17, comment_count: 4, created_at: now - 40 * HOUR }
-    ],
-    comments: [
-      { id: 5521, post_id: 1015, status: 'pending', body: '同意，而且那边的插座真的多，可以待一整天。', flag: null, created_at: now - 3 * MIN },
-      { id: 5518, post_id: 1015, status: 'pending', body: '我的手机号 13800138000，要不要约个学习局？', flag: 'cn_phone', created_at: now - 18 * MIN },
-      { id: 5512, post_id: 1009, status: 'pending', body: '我好像在失物招领处见过，微信：wall_helper', flag: 'social', created_at: now - 1 * HOUR },
-      { id: 5501, post_id: 1002, status: 'pending', body: '周六上午九点，体育馆门口集合。', flag: null, created_at: now - 3 * HOUR }
-    ],
-    reports: [
-      { id: 312, post_id: 1009, comment_id: null, reason: '内容含疑似学号与联系方式，可能构成起底', status: 'open', created_at: now - 40 * MIN },
-      { id: 311, post_id: 1015, comment_id: 5518, reason: '评论留下手机号，疑似骚扰', status: 'open', created_at: now - 15 * MIN },
-      { id: 305, post_id: 1002, comment_id: null, reason: '重复发帖', status: 'dismissed', created_at: now - 6 * HOUR },
-      { id: 298, post_id: 1015, comment_id: null, reason: '不实信息', status: 'actioned', created_at: now - 1 * DAY }
-    ],
-    audit: [
-      { id: 8841, action: 'post.approve', target: '1015', note: 'from:pending', created_at: now - 20 * HOUR },
-      { id: 8840, action: 'comment.reject', target: '5499', note: 'post:1015 delta:-1', created_at: now - 21 * HOUR },
-      { id: 8836, action: 'report.dismiss', target: '305', note: 'post:1002', created_at: now - 6 * HOUR },
-      { id: 8830, action: 'post.remove', target: '980', note: 'from:approved', created_at: now - 1 * DAY },
-      { id: 8824, action: 'comment.approve', target: '5481', note: 'post:1015 delta:1', created_at: now - 2 * DAY }
-    ],
-    // 意见反馈：分类各一条，一条带联系方式、一条 200 字以上（演示折叠/展开）
-    feedback: [
-      { id: 77, cat: 'bug', status: 'open', contact: null, created_at: now - 42 * MIN, resolved_at: null,
-        body: '在 iPhone SE 上打开首页，点「加载更多」之后页面会跳一下，偶尔同一条内容会重复出现两次，刷新后才恢复正常。' },
-      { id: 74, cat: 'idea', status: 'open', contact: '微信：wall_helper', created_at: now - 5 * HOUR, resolved_at: null,
-        body: '希望表白墙能给每条内容加上「学院 / 年级」的可选筛选，现在内容多了以后翻起来有点累，想找同院同学发的内容要翻很久。另外建议在发布页把字数上限直接写在输入框旁边，我上次写到一半才被提示超长，前面的内容全白写了，如果能实时显示「已输入多少字 / 上限多少字」会好很多。还有一个小想法：如果能在个人页看到自己发过的内容当前是待审、已通过还是被驳回，就不用反复刷新首页确认了；被驳回时最好也能给一句简短的原因。另外希望举报之后能收到处理结果的通知，不然不知道到底有没有人管。最后谢谢维护的同学，反馈响应很快，也祝这面墙越做越好。' },
-      { id: 69, cat: 'other', status: 'dismissed', contact: null, created_at: now - 2 * DAY, resolved_at: now - 1 * DAY,
-        body: '只是想谢谢维护这个墙的同学，考试周还看到内容在正常更新，很安心。' }
-    ],
-    titles: DEMO_TITLES,
-    users: DEMO_USERS,
-    userRecent: DEMO_USER_RECENT,
-    announcements: DEMO_ANNOUNCEMENTS,
-    schools: DEMO_SCHOOLS,
-    threads: DEMO_THREADS,
-    replies: DEMO_REPLIES,
-    db: { fileBytes: 3565158, reclaimableBytes: 262144, walBytes: 0, cacheMb: 16, pageSize: 4096, pageCount: 870, freelistPages: 64, autoVacuum: 2 },
-    nextAuditId: 8842
-  };
-
-  // 用户身上的 title 是快照：头衔一改，持有它的用户要同步看到新名字与新颜色
-  function demoLinkTitles() {
-    demoState.users.forEach((u) => {
-      const t = demoState.titles.filter((x) => x.id === u.titleId)[0];
-      u.title = t ? { name: t.name, color: t.color } : null;
-    });
-  }
-  demoLinkTitles();
-
-  const postById = (id) => demoState.posts.find((p) => p.id === id);
-
-  function demoStats() {
-    const pendingPosts = demoState.posts.filter((p) => p.status === 'pending');
-    const pendingComments = demoState.comments.filter((c) => c.status === 'pending');
-    const openReports = demoState.reports.filter((r) => r.status === 'open');
-    const openFeedback = demoState.feedback.filter((f) => f.status === 'open');
-    const pendingThreads = demoState.threads.filter((t) => t.status !== 'approved');
-    const pendingReplies = demoState.replies.filter((r) => r.status !== 'approved');
-    const oldest = [].concat(
-      pendingPosts.map((p) => p.created_at),
-      pendingComments.map((c) => c.created_at),
-      openReports.map((r) => r.created_at),
-      pendingThreads.map((t) => t.createdAt)
-    );
-    const approvedPosts = demoState.approvedBase + demoState.approvedDelta;
-    return {
-      pendingPosts: pendingPosts.length,
-      pendingComments: pendingComments.length,
-      pendingThreads: pendingThreads.length,
-      pendingReplies: pendingReplies.length,
-      openReports: openReports.length,
-      approvedPosts,
-      pendingTotal: pendingPosts.length + pendingComments.length + pendingThreads.length + pendingReplies.length + openReports.length,
-      oldestPendingAt: oldest.length ? Math.min.apply(null, oldest) : null,
-      generatedAt: Date.now(),
-      // 运营指标：与 GET /api/admin/stats 同名字段，演示模式下同样可用
-      openFeedback: openFeedback.length,
-      users: demoState.users.length + 214,
-      usersToday: 3,
-      activeToday: 12,
-      threads: demoState.threads.filter((t) => t.status === 'approved').length + 46,
-      replies: demoState.replies.filter((r) => r.status === 'approved').length + 318,
-      dmsToday: 27,
-      version: '1.0.0（演示）',
-      db: {
-        fileBytes: demoState.db.fileBytes,
-        reclaimableBytes: demoState.db.reclaimableBytes,
-        walBytes: demoState.db.walBytes,
-        cacheMb: demoState.db.cacheMb,
-        counts: {
-          posts: demoState.posts.length + 125,
-          approved: approvedPosts,
-          pending: pendingPosts.length,
-          comments: demoState.comments.length + 898,
-          likes: 3120,
-          reports: demoState.reports.length + 27,
-          feedback: demoState.feedback.length + 11,
-          audit: demoState.audit.length + 279,
-          users: demoState.users.length + 214,
-          threads: demoState.threads.length + 46,
-          replies: demoState.replies.length + 318,
-          messages: 640
-        }
-      }
-    };
-  }
-
-  // 论坛队列的游标是纯数字 id（先来先审），与帖子/评论的 created_at.id 语义不同
-  function demoForumQueue(type) {
-    const list = type === 'threads' ? demoState.threads : demoState.replies;
-    const items = list.filter((x) => !x.status).sort((a, b) => a.createdAt - b.createdAt || a.id - b.id);
-    return { type, items, nextCursor: null };
-  }
-
-  function demoReviewThread(id, action) {
-    const item = demoState.threads.filter((t) => t.id === id)[0];
-    if (!item) throw new Error('not_found');
-    item.status = action === 'approve' ? 'approved' : 'removed';
-    pushAudit('thread.' + action, id, null);
-    return { ok: true, status: item.status };
-  }
-
-  function demoReviewReply(id, action) {
-    const item = demoState.replies.filter((r) => r.id === id)[0];
-    if (!item) throw new Error('not_found');
-    item.status = action === 'approve' ? 'approved' : 'removed';
-    pushAudit('reply.' + action, id, null);
-    return { ok: true, status: item.status };
-  }
-
-  function demoQueue(type, q) {
-    const query = String(q || '').toLowerCase();
-    if (type === 'threads' || type === 'replies') return demoForumQueue(type);
-    if (type === 'comments') {
-      const items = demoState.comments
-        .filter((c) => c.status === 'pending')
-        .filter((c) => {
-          if (!query) return true;
-          const post = postById(c.post_id);
-          return c.body.toLowerCase().indexOf(query) >= 0 || (post && post.body.toLowerCase().indexOf(query) >= 0);
-        })
-        .sort((a, b) => a.created_at - b.created_at || a.id - b.id)
-        .map((c) => {
-          const post = postById(c.post_id);
-          return Object.assign({}, c, {
-            post_body: post ? post.body : null,
-            post_cat: post ? post.cat : null,
-            post_status: post ? post.status : null
-          });
-        });
-      return { type, items, total: items.length, nextCursor: null };
-    }
-    const items = demoState.posts
-      .filter((p) => p.status === 'pending')
-      .filter((p) => !query || p.body.toLowerCase().indexOf(query) >= 0)
-      .sort((a, b) => a.created_at - b.created_at || a.id - b.id);
-    return { type: 'posts', items, total: items.length, nextCursor: null };
-  }
-
-  function demoReports(status) {
-    const items = demoState.reports
-      .filter((r) => status === 'all' || r.status === status)
-      .sort((a, b) => b.id - a.id)
-      .map((r) => {
-        const post = postById(r.post_id);
-        const comment = r.comment_id ? demoState.comments.find((c) => c.id === r.comment_id) : null;
-        return Object.assign({}, r, {
-          post_body: post ? post.body : null,
-          post_cat: post ? post.cat : null,
-          post_status: post ? post.status : null,
-          comment_body: comment ? comment.body : null
-        });
-      });
-    return { items, total: items.length, status };
-  }
-
-  function demoAudit(action) {
-    const items = demoState.audit
-      .filter((a) => !action || a.action === action)
-      .sort((a, b) => b.id - a.id);
-    return { items, total: items.length };
-  }
-
-  // 演示模式下的反馈队列：IP / UA 哈希这类隐私字段压根不进演示数据，
-  // 与真实接口的「后台不展示」保持一致。
-  function demoFeedback(status) {
-    const items = demoState.feedback
-      .filter((f) => status === 'all' || f.status === status)
-      .sort((a, b) => b.id - a.id);
-    return { items, total: items.length, status };
-  }
-
-  function demoResolveFeedback(id, action) {
-    const item = demoState.feedback.find((f) => f.id === id);
-    if (!item) throw new Error('not_found');
-    item.status = action === 'done' ? 'done' : 'dismissed';
-    item.resolved_at = Date.now();
-    pushAudit('feedback.' + (action === 'done' ? 'done' : 'dismiss'), id, null);
-    return { id, status: item.status };
-  }
-
-  function pushAudit(action, target, note) {
-    demoState.audit.unshift({ id: demoState.nextAuditId++, action, target: String(target), note: note || null, created_at: Date.now() });
-    if (demoState.audit.length > 60) demoState.audit.pop();
-  }
-
-  function demoReviewPost(id, action) {
-    const post = postById(id);
-    if (!post) throw new Error('not_found');
-    const from = post.status;
-    post.status = action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'removed';
-    if (from === 'pending' && action === 'approve') demoState.approvedDelta += 1;
-    if (from === 'approved' && action === 'remove') demoState.approvedDelta -= 1;
-    if (action === 'remove') {
-      demoState.reports.forEach((r) => {
-        if (r.post_id === id && r.status === 'open') { r.status = 'actioned'; r.resolved_at = Date.now(); }
-      });
-    }
-    pushAudit('post.' + action, id, 'from:' + from);
-    return { id, status: post.status, from };
-  }
-
-  function demoReviewComment(id, action) {
-    const comment = demoState.comments.find((c) => c.id === id);
-    if (!comment) throw new Error('not_found');
-    const next = action === 'approve' ? 'approved' : 'rejected';
-    const delta = (next === 'approved' && comment.status !== 'approved') ? 1 : (next !== 'approved' && comment.status === 'approved') ? -1 : 0;
-    comment.status = next;
-    if (delta) {
-      const post = postById(comment.post_id);
-      if (post) post.comment_count = Math.max(0, post.comment_count + delta);
-    }
-    pushAudit('comment.' + action, id, delta ? 'post:' + comment.post_id + ' delta:' + delta : null);
-    return { id, status: next, commentCountDelta: delta };
-  }
-
-  function demoResolveReport(id, action) {
-    const report = demoState.reports.find((r) => r.id === id);
-    if (!report) throw new Error('not_found');
-    if (action === 'takedown') {
-      const post = postById(report.post_id);
-      if (post && post.status === 'approved') { post.status = 'removed'; demoState.approvedDelta -= 1; }
-      demoState.reports.forEach((r) => {
-        if (r.post_id === report.post_id && r.status === 'open') { r.status = 'actioned'; r.resolved_at = Date.now(); }
-      });
-    } else {
-      report.status = 'dismissed';
-      report.resolved_at = Date.now();
-    }
-    pushAudit('report.' + action, id, 'post:' + report.post_id);
-    return { id, action };
-  }
-
-  function demoBulk(type, ids, action) {
-    const updated = [], skipped = [];
-    ids.forEach((id) => {
-      try {
-        if (type === 'posts') demoReviewPost(id, action); else demoReviewComment(id, action);
-        updated.push(id);
-      } catch (e) { skipped.push(id); }
-    });
-    return { type, action, updated, skipped };
-  }
-
-  function demoDetail(id) {
-    const post = postById(id);
-    if (!post) throw new Error('not_found');
-    return {
-      post: {
-        id: post.id, cat: post.cat, body: post.body, status: post.status, flag: post.flag,
-        likes: post.like_count, comments: post.comment_count, createdAt: post.created_at, reviewedAt: null
-      },
-      comments: demoState.comments.filter((c) => c.post_id === id).map((c) => ({
-        id: c.id, body: c.body, status: c.status, flag: c.flag, createdAt: c.created_at
-      })),
-      reports: demoState.reports.filter((r) => r.post_id === id).map((r) => ({
-        id: r.id, reason: r.reason, status: r.status, createdAt: r.created_at
-      }))
-    };
-  }
-
-  /* ─────────────── 演示实现：用户 / 头衔 / 公告 / 学校 ─────────────── */
-
-  function demoLevelFromExp(exp) {
-    const e = Math.max(0, Math.floor(Number(exp) || 0));
-    return Math.max(1, Math.min(99, Math.floor((Math.sqrt(1 + (8 * e) / 50) - 1) / 2) + 1));
-  }
-
-  function demoUsers(query, status, cursor) {
-    const q = String(query || '').toLowerCase();
-    const rows = demoState.users
-      .filter((u) => !status || u.status === status)
-      .filter((u) => !q || [u.nickname, u.email, u.school, u.uuid].join(' ').toLowerCase().indexOf(q) >= 0)
-      .sort((a, b) => b.id - a.id)
-      .filter((u) => !cursor || u.id < Number(cursor));
-    const page = rows.slice(0, 30);
-    return { items: page, nextCursor: rows.length > 30 && page.length ? page[page.length - 1].id : null };
-  }
-
-  function demoUserDetail(id) {
-    const user = demoState.users.filter((u) => u.id === Number(id))[0];
-    if (!user) throw new Error('not_found');
-    return { user, recent: demoState.userRecent[user.id] || { posts: [], comments: [], threads: [], messages: [] } };
-  }
-
-  function demoUserAction(id, action, value) {
-    const user = demoState.users.filter((u) => u.id === Number(id))[0];
-    if (!user) throw new Error('not_found');
-    if (action === 'set_title') {
-      const t = demoState.titles.filter((x) => x.id === Number(value))[0];
-      if (value != null && value !== '' && !t) throw new Error('title_not_found');
-      user.titleId = t ? t.id : null;
-      user.title = t ? { name: t.name, color: t.color } : null;
-    } else if (action === 'set_level') {
-      user.level = Math.max(1, Math.min(99, Number(value) || 1));
-    } else if (action === 'set_exp') {
-      user.exp = Math.max(0, Math.floor(Number(value) || 0));
-      user.level = demoLevelFromExp(user.exp);
-    } else if (action === 'reset_exp') {
-      user.exp = 0;
-      user.level = 1;
-    } else if (action === 'set_status') {
-      if (['active', 'muted', 'banned'].indexOf(value) < 0) throw new Error('invalid_status');
-      user.status = value;
-    } else if (action === 'rename') {
-      const clean = String(value == null ? '' : value).trim();
-      if (clean.length < 2 || clean.length > 16) throw new Error('nickname_length');
-      user.nickname = clean;
-      user.nicknameFlagged = '';
-      user.lastNicknameAt = Date.now();
-    } else if (action === 'clear_nickname_flag') {
-      user.nicknameFlagged = '';
-    } else {
-      throw new Error('unknown_action');
-    }
-    pushAudit('user.' + action, user.uuid, null);
-    return { ok: true, user };
-  }
-
-  function demoTitles() {
-    return demoState.titles
-      .map((t) => Object.assign({}, t, { userCount: demoState.users.filter((u) => u.titleId === t.id).length }))
-      .sort((a, b) => a.sort - b.sort || a.minLevel - b.minLevel || a.id - b.id);
-  }
-
-  function demoSaveTitle(id, patch) {
-    const clean = String(patch.name == null ? '' : patch.name).trim().slice(0, 12);
-    if (!clean) throw new Error('invalid_name');
-    const color = String(patch.color || '');
-    if (color && !HEX_RE.test(color)) throw new Error('invalid_color');
-    const dup = demoState.titles.filter((t) => t.name === clean && t.id !== Number(id))[0];
-    if (dup) throw new Error('duplicate_name');
-    const minLevel = Math.max(1, Math.min(99, Number(patch.minLevel) || 1));
-    const sort = Number(patch.sort) || 0;
-    let row = demoState.titles.filter((t) => t.id === Number(id))[0];
-    if (!row) {
-      row = { id: nextId(demoState.titles), createdAt: Date.now() };
-      demoState.titles.push(row);
-    }
-    row.name = clean;
-    row.color = color;
-    row.minLevel = minLevel;
-    row.auto = Boolean(patch.auto);
-    row.sort = sort;
-    demoLinkTitles();
-    pushAudit(id ? 'title.update' : 'title.create', String(row.id), clean);
-    return { ok: true, id: row.id };
-  }
-
-  function demoDeleteTitle(id) {
-    const idx = demoState.titles.map((t) => t.id).indexOf(Number(id));
-    if (idx < 0) throw new Error('not_found');
-    demoState.titles.splice(idx, 1);
-    demoState.users.forEach((u) => { if (u.titleId === Number(id)) u.titleId = null; });
-    demoLinkTitles();
-    pushAudit('title.delete', String(id), null);
-    return { ok: true };
-  }
-
-  function demoAnnouncements() {
-    return demoState.announcements.slice().sort((a, b) => a.sort - b.sort || b.id - a.id);
-  }
-
-  function demoNormalizeLink(raw) {
-    const link = String(raw == null ? '' : raw).trim().slice(0, 200);
-    if (!link) return '';
-    if (link.indexOf('#/') === 0 || link.indexOf('/') === 0) return link;
-    if (/^https:\/\//i.test(link)) return link;
-    return '';
-  }
-
-  function demoSaveAnnouncement(id, patch) {
-    const body = String(patch.body == null ? '' : patch.body).replace(/\s+/g, ' ').trim();
-    if (!body) throw new Error('empty');
-    if (body.length > 120) throw new Error('too_long');
-    let row = demoState.announcements.filter((a) => a.id === Number(id))[0];
-    if (!row) {
-      row = { id: nextId(demoState.announcements), createdAt: Date.now(), active: true };
-      demoState.announcements.push(row);
-    }
-    if (patch.body != null) row.body = body;
-    if (patch.link != null) row.link = demoNormalizeLink(patch.link);
-    if (patch.linkText != null) row.linkText = String(patch.linkText || '').trim().slice(0, 12);
-    if (patch.active != null) row.active = Boolean(patch.active);
-    if (patch.sort != null) row.sort = Number(patch.sort) || 0;
-    row.updatedAt = Date.now();
-    pushAudit(id ? 'announce.update' : 'announce.create', String(row.id), null);
-    return { ok: true, id: row.id };
-  }
-
-  function demoDeleteAnnouncement(id) {
-    const idx = demoState.announcements.map((a) => a.id).indexOf(Number(id));
-    if (idx < 0) throw new Error('not_found');
-    demoState.announcements.splice(idx, 1);
-    pushAudit('announce.delete', String(id), null);
-    return { ok: true };
-  }
-
-  function demoSchools() {
-    return demoState.schools
-      .map((s) => Object.assign({}, s, { userCount: demoState.users.filter((u) => u.school === s.name).length }))
-      .sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name, 'zh'));
-  }
-
-  function demoSaveSchool(id, patch) {
-    const clean = String(patch.name == null ? '' : patch.name).trim().slice(0, 30);
-    if (patch.name != null && clean.length < 2) throw new Error('invalid_name');
-    const dup = demoState.schools.filter((s) => s.name === clean && s.id !== Number(id))[0];
-    if (dup) throw new Error('duplicate_name');
-    let row = demoState.schools.filter((s) => s.id === Number(id))[0];
-    if (!row) {
-      row = { id: nextId(demoState.schools), active: true, sort: 0, createdAt: Date.now() };
-      demoState.schools.push(row);
-    }
-    if (patch.name != null) row.name = clean;
-    if (patch.sort != null) row.sort = Number(patch.sort) || 0;
-    if (patch.active != null) row.active = Boolean(patch.active);
-    pushAudit(id ? 'school.update' : 'school.create', String(row.id), row.name);
-    return { ok: true, id: row.id };
-  }
-
-  function demoDeleteSchool(id) {
-    const idx = demoState.schools.map((s) => s.id).indexOf(Number(id));
-    if (idx < 0) throw new Error('not_found');
-    demoState.schools.splice(idx, 1);
-    pushAudit('school.delete', String(id), null);
-    return { ok: true };
-  }
+  /* 这里原来有一整套「演示模式」：假用户、假帖子、假订单，后端连不上时自动顶上。
+   * v1.0.0 已整体删除：一是要求「删除所有示例内容」，二是它会把假数据当成真的
+   * 摆在审核员面前 —— 没连上后端就该说没连上。 */
 
   /* ───────────────────────── 状态 / 接口层 ───────────────────────── */
 
@@ -1147,7 +649,7 @@ a { color: var(--accent); }
   const LS_BASE = 'od_admin_base';
 
   const state = {
-    mode: 'demo',
+
     token: localStorage.getItem(LS_TOKEN) || '',
     base: localStorage.getItem(LS_BASE) || '',
     lastError: null,
@@ -1171,8 +673,15 @@ a { color: var(--accent); }
     usersItems: [],
     userDetail: null,
     titleOptions: [],
+    // 赞助（爱发电）：游标分页只在「加载更多」时前进，切筛选一律重拉第一页
+    afdianFilter: 'all',
+    afdianItems: [],
+    afdianNext: null,
+    afdianStats: null,
+    afdianWebhooks: [],
+    afdianHooksOpen: false,
     stats: null,
-    cache: { overview: null, queue: null, reports: null, audit: null, feedback: null, users: null, titles: null, announcements: null, schools: null }
+    cache: { overview: null, queue: null, reports: null, audit: null, feedback: null, users: null, titles: null, announcements: null, schools: null, afdian: null }
   };
 
   function authHeaders(extra) {
@@ -1222,7 +731,9 @@ a { color: var(--accent); }
     unknown_action: '不支持的操作',
     empty: '内容不能为空',
     too_long: '内容超出长度上限',
-    empty_ids: '没有选中任何内容'
+    empty_ids: '没有选中任何内容',
+    user_not_found: '没有这个用户（uuid 不对？）',
+    afdian_not_configured: '未配置 AFDIAN_USER_ID / AFDIAN_TOKEN，无法从爱发电拉取订单'
   };
   function errText(e) {
     if (!e) return '请稍后重试';
@@ -1230,75 +741,68 @@ a { color: var(--accent); }
   }
 
   const store = {
-    stats: () => (state.mode === 'live' ? api('/api/admin/stats') : Promise.resolve(demoStats())),
-    // 论坛队列的 cursor 是纯数字 id，帖子/评论是 created_at.id；这里原样透传，由服务端解释
-    queue: (type, q, cursor) => (state.mode === 'live'
-      ? api('/api/admin/queue?type=' + type + '&limit=50' + (q ? '&q=' + encodeQ(q) : '') + (cursor ? '&cursor=' + encodeQ(cursor) : ''))
-      : Promise.resolve(demoQueue(type, q))),
-    reviewThread: (id, action) => (state.mode === 'live'
-      ? api('/api/admin/threads/' + id + '/' + action, { method: 'POST' })
-      : Promise.resolve(demoReviewThread(id, action))),
-    reviewReply: (id, action) => (state.mode === 'live'
-      ? api('/api/admin/replies/' + id + '/' + action, { method: 'POST' })
-      : Promise.resolve(demoReviewReply(id, action))),
+    stats: () => (api('/api/admin/stats') ),
+    // 论坛队列的 cursor 是纯数字 id，帖子/评论是 created_at.id；这里原样透传，由服务端解释)
+    queue: (type, q, cursor) => (api('/api/admin/queue?type=' + type + '&limit=50' + (q ? '&q=' + encodeQ(q) : '') + (cursor ? '&cursor=' + encodeQ(cursor) : ''))
+      ),
+    reviewThread: (id, action) => (api('/api/admin/threads/' + id + '/' + action, { method: 'POST' })
+      ),
+    reviewReply: (id, action) => (api('/api/admin/replies/' + id + '/' + action, { method: 'POST' })
+      ),
     users: (opts) => {
       const o = opts || {};
-      if (state.mode !== 'live') return Promise.resolve(demoUsers(o.q, o.status, o.cursor));
       return api('/api/admin/users?limit=30'
         + (o.q ? '&q=' + encodeQ(o.q) : '')
         + (o.status ? '&status=' + encodeQ(o.status) : '')
         + (o.cursor ? '&cursor=' + encodeQ(o.cursor) : ''));
     },
-    userDetail: (id) => (state.mode === 'live' ? api('/api/admin/users/' + id) : Promise.resolve(demoUserDetail(id))),
-    userAction: (id, action, value) => (state.mode === 'live'
-      ? api('/api/admin/users/' + id, { method: 'POST', body: JSON.stringify({ action: action, value: value }) })
-      : Promise.resolve(demoUserAction(id, action, value))),
-    titles: () => (state.mode === 'live' ? api('/api/admin/titles') : Promise.resolve({ items: demoTitles() })),
-    saveTitle: (id, patch) => (state.mode === 'live'
-      ? api('/api/admin/titles' + (id ? '/' + id : ''), { method: 'POST', body: JSON.stringify(patch) })
-      : Promise.resolve(demoSaveTitle(id, patch))),
-    deleteTitle: (id) => (state.mode === 'live'
-      ? api('/api/admin/titles/' + id + '/delete', { method: 'POST' })
-      : Promise.resolve(demoDeleteTitle(id))),
-    announcements: () => (state.mode === 'live' ? api('/api/admin/announcements') : Promise.resolve({ items: demoAnnouncements() })),
-    saveAnnouncement: (id, patch) => (state.mode === 'live'
-      ? api('/api/admin/announcements' + (id ? '/' + id : ''), { method: 'POST', body: JSON.stringify(patch) })
-      : Promise.resolve(demoSaveAnnouncement(id, patch))),
-    deleteAnnouncement: (id) => (state.mode === 'live'
-      ? api('/api/admin/announcements/' + id + '/delete', { method: 'POST' })
-      : Promise.resolve(demoDeleteAnnouncement(id))),
-    schools: () => (state.mode === 'live' ? api('/api/admin/schools') : Promise.resolve({ items: demoSchools() })),
-    saveSchool: (id, patch) => (state.mode === 'live'
-      ? api('/api/admin/schools' + (id ? '/' + id : ''), { method: 'POST', body: JSON.stringify(patch) })
-      : Promise.resolve(demoSaveSchool(id, patch))),
-    deleteSchool: (id) => (state.mode === 'live'
-      ? api('/api/admin/schools/' + id + '/delete', { method: 'POST' })
-      : Promise.resolve(demoDeleteSchool(id))),
-    reports: (status) => (state.mode === 'live'
-      ? api('/api/admin/reports?status=' + encodeQ(status) + '&limit=200')
-      : Promise.resolve(demoReports(status))),
-    audit: (action) => (state.mode === 'live'
-      ? api('/api/admin/audit?limit=100' + (action ? '&action=' + encodeQ(action) : ''))
-      : Promise.resolve(demoAudit(action))),
-    feedback: (status) => (state.mode === 'live'
-      ? api('/api/admin/feedback?status=' + encodeQ(status) + '&limit=100')
-      : Promise.resolve(demoFeedback(status))),
-    detail: (id) => (state.mode === 'live' ? api('/api/admin/posts/' + id) : Promise.resolve(demoDetail(id))),
-    reviewPost: (id, action) => (state.mode === 'live'
-      ? api('/api/admin/posts/' + id + '/' + action, { method: 'POST' })
-      : Promise.resolve(demoReviewPost(id, action))),
-    reviewComment: (id, action) => (state.mode === 'live'
-      ? api('/api/admin/comments/' + id + '/' + action, { method: 'POST' })
-      : Promise.resolve(demoReviewComment(id, action))),
-    resolveReport: (id, action) => (state.mode === 'live'
-      ? api('/api/admin/reports/' + id + '/resolve', { method: 'POST', body: JSON.stringify({ action: action }) })
-      : Promise.resolve(demoResolveReport(id, action))),
-    resolveFeedback: (id, action) => (state.mode === 'live'
-      ? api('/api/admin/feedback/' + id + '/resolve', { method: 'POST', body: JSON.stringify({ action: action }) })
-      : Promise.resolve(demoResolveFeedback(id, action))),
-    bulk: (type, ids, action) => (state.mode === 'live'
-      ? api('/api/admin/bulk', { method: 'POST', body: JSON.stringify({ type: type, ids: ids, action: action }) })
-      : Promise.resolve(demoBulk(type, ids, action)))
+    userDetail: (id) => (api('/api/admin/users/' + id) ),
+    userAction: (id, action, value) => (api('/api/admin/users/' + id, { method: 'POST', body: JSON.stringify({ action: action, value: value }) })
+      ),
+    titles: () => (api('/api/admin/titles') ),
+    saveTitle: (id, patch) => (api('/api/admin/titles' + (id ? '/' + id : ''), { method: 'POST', body: JSON.stringify(patch) })
+      ),
+    deleteTitle: (id) => (api('/api/admin/titles/' + id + '/delete', { method: 'POST' })
+      ),
+    announcements: () => (api('/api/admin/announcements') ),
+    saveAnnouncement: (id, patch) => (api('/api/admin/announcements' + (id ? '/' + id : ''), { method: 'POST', body: JSON.stringify(patch) })
+      ),
+    deleteAnnouncement: (id) => (api('/api/admin/announcements/' + id + '/delete', { method: 'POST' })
+      ),
+    schools: () => (api('/api/admin/schools') ),
+    saveSchool: (id, patch) => (api('/api/admin/schools' + (id ? '/' + id : ''), { method: 'POST', body: JSON.stringify(patch) })
+      ),
+    deleteSchool: (id) => (api('/api/admin/schools/' + id + '/delete', { method: 'POST' })
+      ),
+    afdian: (opts) => {
+      const o = opts || {};
+      return api('/api/admin/afdian?limit=30'
+        + '&filter=' + encodeQ(o.filter || 'all')
+        + (o.cursor ? '&cursor=' + encodeQ(o.cursor) : ''));
+    },
+    afdianBind: (id, uuid) => (api('/api/admin/afdian/orders/' + id + '/bind', { method: 'POST', body: JSON.stringify({ uuid: uuid }) })
+      ),
+    afdianIgnore: (id) => (api('/api/admin/afdian/orders/' + id + '/ignore', { method: 'POST' })
+      ),
+    afdianSync: (pages) => (api('/api/admin/afdian/sync', { method: 'POST', body: JSON.stringify({ pages: pages }) })
+      ),
+    reports: (status) => (api('/api/admin/reports?status=' + encodeQ(status) + '&limit=200')
+      ),
+    audit: (action) => (api('/api/admin/audit?limit=100' + (action ? '&action=' + encodeQ(action) : ''))
+      ),
+    feedback: (status) => (api('/api/admin/feedback?status=' + encodeQ(status) + '&limit=100')
+      ),
+    detail: (id) => (api('/api/admin/posts/' + id) ),
+    reviewPost: (id, action) => (api('/api/admin/posts/' + id + '/' + action, { method: 'POST' })
+      ),
+    reviewComment: (id, action) => (api('/api/admin/comments/' + id + '/' + action, { method: 'POST' })
+      ),
+    resolveReport: (id, action) => (api('/api/admin/reports/' + id + '/resolve', { method: 'POST', body: JSON.stringify({ action: action }) })
+      ),
+    resolveFeedback: (id, action) => (api('/api/admin/feedback/' + id + '/resolve', { method: 'POST', body: JSON.stringify({ action: action }) })
+      ),
+    bulk: (type, ids, action) => (api('/api/admin/bulk', { method: 'POST', body: JSON.stringify({ type: type, ids: ids, action: action }) })
+      )
   };
 
   /* ───────────────────────── UI 原语 ───────────────────────── */
@@ -1318,15 +822,15 @@ a { color: var(--accent); }
     const banner = $('#banner');
     const conn = $('#conn');
     const text = $('#connText');
-    conn.dataset.mode = state.mode;
-    if (state.mode === 'live') {
+    conn.dataset.mode = state.lastError ? 'demo' : 'live';
+    if (state.lastError) {
+      text.textContent = '未连接到后端';
+      banner.hidden = false;
+    } else {
       text.textContent = '已连接后端 API';
       banner.hidden = true;
-    } else {
-      text.textContent = state.lastError ? '连接失败 · 演示模式' : '演示模式';
-      banner.hidden = false;
     }
-    $('#openSettings').textContent = state.mode === 'live' ? '连接设置' : '连接后端';
+    $('#openSettings').textContent = state.lastError ? '连接后端' : '连接设置';
   }
 
   function skeleton(rows) {
@@ -1623,7 +1127,6 @@ a { color: var(--accent); }
     const meta = '<span class="meta">' + esc(count) + '</span>'
       + (forum ? '<span class="meta-dim">按 id 正序 · 先来先审</span>' : '');
     return '<div class="toolbar">' + tabs + meta + '<span class="spacer"></span>'
-      + (state.mode === 'live' ? '' : '<span class="meta-dim">演示数据</span>')
       + '</div>' + queueListHtml() + bulkBarHtml();
   }
 
@@ -1801,7 +1304,6 @@ a { color: var(--accent); }
     }
     return '<div class="toolbar">' + seg + '<span class="meta">共 ' + esc(res.total != null ? res.total : res.items.length) + ' 条</span>'
       + '<span class="spacer"></span>'
-      + (state.mode === 'live' ? '' : '<span class="meta-dim">演示数据</span>')
       + '</div>' + body;
   }
 
@@ -2290,8 +1792,7 @@ a { color: var(--accent); }
         + '删除学校<strong>不影响</strong>已经选了它的用户（users.school 存的是校名快照，且选定后不可更改）。</p>'
         + '<button class="btn btn-secondary btn-sm" type="button" data-act="school.new">添加学校</button></div>';
     const head = banner
-      + '<div class="toolbar"><span class="meta">共 ' + items.length + ' 所 · 启用中 ' + activeCount + ' 所</span><span class="spacer"></span>'
-      + (state.mode === 'live' ? '' : '<span class="meta-dim">演示数据</span>') + '</div>';
+      + '<div class="toolbar"><span class="meta">共 ' + items.length + ' 所 · 启用中 ' + activeCount + ' 所</span><span class="spacer"></span>' + '</div>';
     const body = items.length
       ? '<ul class="q-list">' + items.map(schoolRowHtml).join('') + '</ul>'
       : emptyState('还没有学校', '添加并启用一所学校，新用户才能完成注册。');
@@ -2347,6 +1848,264 @@ a { color: var(--accent); }
     }
   }
 
+  /* ───────────────────────── 渲染：赞助（爱发电） ───────────────────────── */
+
+  // 回调地址必须打在后端上：同源部署时 state.base 为空，直接用当前站点源；填了「API 地址」则以它为准
+  function afdianWebhookUrl() {
+    const base = String(state.base || location.origin || '').replace(/\/+$/, '');
+    return base + '/api/afdian/webhook';
+  }
+
+  // 复制回调地址：非安全上下文（局域网 http）没有异步剪贴板，退回旧接口；两条路都要有可见反馈
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text);
+    return new Promise((resolve, reject) => {
+      const box = document.createElement('textarea');
+      box.value = text;
+      box.setAttribute('readonly', '');
+      box.style.position = 'fixed';
+      box.style.top = '-1000px';
+      document.body.appendChild(box);
+      box.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      box.remove();
+      if (ok) resolve(); else reject(new Error('copy_failed'));
+    });
+  }
+
+  // 配置状态一行：徽标沿用既有三档配色（绿=就绪 / 红=未配置），说明里写后果而不是重复一遍「未配置」
+  function afdianStateRow(label, tone, badge, hint) {
+    return '<div class="od-field"><span class="k">' + esc(label) + '</span>'
+      + '<span class="badge"' + (tone ? ' data-status="' + tone + '"' : '') + '>' + esc(badge) + '</span>'
+      + '<span class="h">' + esc(hint) + '</span></div>';
+  }
+
+  // 爱发电订单状态：2 = 已支付（只有它才发奖），其余（未支付 / 已退款）只记一笔
+  function afdianStatusLabel(status) {
+    const n = Number(status);
+    if (n === 2) return '已支付';
+    if (n === 0 || n === 1) return '未支付';
+    return '状态 ' + n;
+  }
+
+  // 未就绪时的告警：说清「哪一项没配」和「会导致什么」，这是赞助收不到的头号原因
+  function afdianBannerHtml(s) {
+    const st = s || {};
+    if (st.enabled && st.webhookReady && st.apiReady) return '';
+    let msg;
+    if (!st.enabled) {
+      msg = '<strong>AFDIAN_TOKEN 与 AFDIAN_PAGE 都没配置</strong>：回调接口 <span class="mono">/api/afdian/webhook</span> 直接返回 404，'
+        + '前台也不会出现赞助入口 —— 现在一单都收不到。';
+    } else if (!st.webhookReady) {
+      msg = '<strong>未配置 AFDIAN_TOKEN</strong>：回调会因签名校验失败（token_not_configured）被拒，赞助不会到账。'
+        + (st.apiReady ? '' : '同时没有 <strong>AFDIAN_USER_ID</strong>，历史订单也查不了。');
+    } else {
+      msg = '<strong>未配置 AFDIAN_USER_ID</strong>：回调仍能到账，但查不了历史订单，手动补单不可用。';
+    }
+    return '<div class="banner"><p>赞助未就绪 · ' + msg + ' 配置项写在 <span class="mono">server/.env</span>，改完重启服务。</p></div>';
+  }
+
+  function afdianStatusHtml(s) {
+    const st = s || {};
+    const url = afdianWebhookUrl();
+    return '<div class="card">'
+      + '<div class="card-head"><h2>接入状态</h2>'
+      + '<span class="sub">配置见 <a href="https://afdian.com/dashboard/dev" target="_blank" rel="noopener">爱发电开发者页</a></span></div>'
+      + '<div class="card-pad od-stack" style="--od-gap:var(--space-4)">'
+      + '<div class="kv">'
+      + afdianStateRow('回调签名校验', st.webhookReady ? 'actioned' : 'open', st.webhookReady ? '已就绪' : '未配置',
+          st.webhookReady ? 'AFDIAN_TOKEN 已配置，回调能过签名校验' : '缺少 AFDIAN_TOKEN：回调一律被拒，赞助不会到账')
+      + afdianStateRow('订单查询 API', st.apiReady ? 'actioned' : 'open', st.apiReady ? '已就绪' : '未配置',
+          st.apiReady ? 'AFDIAN_USER_ID + TOKEN 已配置，可查询与补单' : '缺少 AFDIAN_USER_ID：无法查询订单、无法补单')
+      + afdianStateRow('发奖头衔', st.rewardTitle ? 'actioned' : '', st.rewardTitle ? st.rewardTitle : '不自动发奖',
+          st.rewardTitle ? '匹配到用户时自动授予该头衔' : 'AFDIAN_REWARD_TITLE 为空：只记录订单，发奖全靠手动绑定')
+      + afdianStateRow('发奖经验', Number(st.rewardExp) > 0 ? 'actioned' : '', Number(st.rewardExp) > 0 ? '+' + st.rewardExp : '不发经验',
+          Number(st.rewardExp) > 0 ? 'AFDIAN_REWARD_EXP 设置的经验值' : 'AFDIAN_REWARD_EXP 为 0：等级保持由内容决定')
+      + afdianStateRow('爱发电主页', st.page ? 'actioned' : '', st.page ? '已配置' : '未配置',
+          st.page || 'AFDIAN_PAGE 为空：前台不显示「支持校园墙」入口')
+      + '</div>'
+      + '<div class="field" style="margin-bottom:0"><label for="afWebhook">回调地址（粘进爱发电开发者页的回调设置）</label>'
+      + '<div class="od-row"><input id="afWebhook" class="od-fill mono" readonly value="' + esc(url) + '">'
+      + '<button class="btn btn-secondary" type="button" data-act="afdian.copy">复制</button></div>'
+      + '<span class="hint">必须公网可达、且指向本后端；爱发电要求接口回 <span class="mono">{&quot;ec&quot;:200,&quot;em&quot;:&quot;&quot;}</span>，本站已按官方约定返回。'
+      + '回调没配好时，订单只会出现在爱发电后台，可以用下面的「从爱发电同步订单」补回来。</span></div>'
+      + '</div></div>';
+  }
+
+  function afdianTilesHtml(s) {
+    const st = s || {};
+    const unbound = Number(st.unbound) || 0;
+    const tiles = [
+      { label: '累计订单', value: st.total || 0, cap: '含未支付与已忽略', tone: null },
+      { label: '已支付', value: st.paid || 0, cap: 'status = 2，会发奖', tone: null },
+      { label: '待绑定', value: unbound, cap: '留言里没有 uuid / 邮箱', tone: unbound > 0 ? 'warn' : null },
+      { label: '今日入库', value: st.today || 0, cap: '最近 24 小时收到', tone: null },
+      { label: '累计金额', value: String(st.amount == null ? '0.00' : st.amount) + ' 元', cap: '只统计已支付订单', tone: 'accent' }
+    ];
+    return '<div class="tiles">' + tiles.map((t) =>
+      '<div class="tile"' + (t.tone ? ' data-tone="' + t.tone + '"' : '') + '>'
+      + '<span class="num">' + esc(t.value) + '</span>'
+      + '<span class="cap">' + esc(t.label) + '</span>'
+      + '<span class="meta-dim">' + esc(t.cap) + '</span></div>'
+    ).join('') + '</div>';
+  }
+
+  // 发奖规则一行说清：头衔怎么来的、什么时候不覆盖、匹配不到会去哪
+  function afdianRuleHtml(s) {
+    const st = s || {};
+    return '<p class="meta-dim" style="margin:var(--space-3) 0 0">发奖规则：用户在下单留言里填自己的 uuid 或注册邮箱，回调到达时就会自动匹配并发奖 —— '
+      + (st.rewardTitle ? '发头衔「' + esc(st.rewardTitle) + '」' : '不发头衔（AFDIAN_REWARD_TITLE 为空）')
+      + '，' + (Number(st.rewardExp) > 0 ? '经验 +' + esc(st.rewardExp) : '不发经验')
+      + '；用户已有手动头衔时不覆盖。匹配不到的订单留在「待绑定」里，等管理员手动绑定。</p>';
+  }
+
+  function afdianUserLine(o) {
+    const u = o.user;
+    if (!u) {
+      return '<span class="meta">用户</span><span class="meta">未匹配到本站账号</span>'
+        + (o.remark ? '<span class="meta-dim">留言里没有可识别的 uuid / 邮箱</span>' : '<span class="meta-dim">这单没有留言，只能手动绑定</span>');
+    }
+    // 与前台一致：学校 · 头衔 · 等级，另附 uuid 便于核对
+    return '<span class="meta">用户</span><strong>' + esc(u.nickname) + '</strong>'
+      + '<span class="meta">' + esc(u.school || '未设学校') + ' · ' + esc((u.title && u.title.name) || '无头衔') + ' · Lv.' + esc(u.level == null ? 1 : u.level) + '</span>'
+      + '<span class="meta-dim mono">' + esc(u.uuid) + '</span>';
+  }
+
+  function afdianRowHtml(o) {
+    const paid = Number(o.status) === 2;
+    const tone = AFDIAN_MATCH_TONE[o.matchedBy] == null ? '' : AFDIAN_MATCH_TONE[o.matchedBy];
+    const label = AFDIAN_MATCH_LABEL[o.matchedBy] || o.matchedBy || '未匹配';
+    return '<li class="q-row" data-od-id="afdian-' + esc(o.id) + '" style="grid-template-columns:minmax(0,1fr) auto">'
+      + '<div class="q-main">'
+      + '<div class="q-head">'
+      + '<span class="badge"' + (tone ? ' data-status="' + tone + '"' : '') + '>' + esc(label) + '</span>'
+      + '<span class="badge"' + (paid ? ' data-status="actioned"' : '') + '>' + esc(afdianStatusLabel(o.status)) + '</span>'
+      + '<span class="meta mono od-nowrap">¥' + esc(o.amount || '0.00') + (Number(o.months) > 0 ? ' × ' + esc(o.months) + ' 个月' : '') + '</span>'
+      + '<span class="meta od-nowrap" title="下单 ' + fmtDate(o.createdAt) + ' · 入库 ' + fmtDate(o.receivedAt) + '">' + timeAgo(o.createdAt) + '</span>'
+      + '<span class="meta-dim od-nowrap">#' + esc(o.id) + '</span>'
+      + '</div>'
+      + '<p class="q-body">' + (o.remark ? '留言：' + esc(o.remark) : '<span class="meta">下单时没有填留言</span>') + '</p>'
+      + '<div class="q-foot od-cluster">'
+      + '<span class="meta od-nowrap">订单号 <span class="mono">' + esc(o.outTradeNo) + '</span></span>'
+      + '<span class="meta">发放 ' + (o.reward ? esc(o.reward) : '—') + '</span>'
+      + (o.planId ? '<span class="meta-dim od-nowrap">方案 ' + esc(o.planId) + '</span>' : '')
+      + '</div>'
+      + '<div class="q-foot od-cluster">' + afdianUserLine(o) + '</div>'
+      + '</div>'
+      + '<div class="q-actions">'
+      + '<button class="btn btn-secondary btn-sm" type="button" data-act="afdian.bind" data-id="' + esc(o.id) + '">'
+      + (o.user ? '改绑用户' : '绑定用户') + '</button>'
+      + (o.matchedBy === 'ignored'
+        ? '<span class="meta-dim">已忽略</span>'
+        : '<button class="btn btn-ghost btn-sm" type="button" data-act="afdian.ignore" data-id="' + esc(o.id) + '">忽略</button>')
+      + '</div></li>';
+  }
+
+  function afdianBindFormHtml(o) {
+    return '<div class="modal-head"><div><h2 id="modalTitle">绑定用户</h2>'
+      + '<p class="sub">订单 <span class="mono">' + esc(o.outTradeNo) + '</span> · ¥' + esc(o.amount || '0.00')
+      + ' · ' + esc(afdianStatusLabel(o.status)) + '</p></div>'
+      + '<button class="iconbtn" type="button" data-close aria-label="关闭">' + CLOSE_ICON + '</button></div>'
+      + '<div class="modal-body">'
+      + (o.remark ? '<div class="detail-quote">下单留言：' + esc(o.remark) + '</div>' : '')
+      + '<div class="field" style="margin:' + (o.remark ? 'var(--space-4)' : '0') + ' 0 0"><label for="afUuid">用户 UUID</label>'
+      + '<input id="afUuid" class="mono" placeholder="8f1c4a72-2b95-4d3e-9a10-6c7d51e0b4a8" autocomplete="off">'
+      + '<span class="hint">在「用户 → 详情」里复制 uuid；' + (Number(o.status) === 2 ? '绑定成功即按发奖规则发奖。' : '这单不是已支付状态，绑定后只会记录归属，不发奖。') + '</span>'
+      + '</div></div>'
+      + '<div class="modal-foot"><button class="btn btn-secondary" type="button" data-close>取消</button>'
+      + '<button class="btn btn-primary" type="button" data-act="afdian.bind.save" data-id="' + esc(o.id) + '">绑定</button></div>';
+  }
+
+  // 回调排查：被拒的原始请求不会落库，只在这里出现 —— 所以原文一定要留在页面上
+  function afdianHookRow(w) {
+    const ok = Boolean(w.ok);
+    const bits = [];
+    if (w.order) bits.push('订单 ' + w.order);
+    if (ok) {
+      if (w.duplicated) bits.push('重复回调，已按订单号幂等跳过');
+      bits.push(w.matched ? '已匹配到用户' : '未匹配到用户，进「待绑定」');
+      if (w.reward) bits.push('发放：' + w.reward);
+    }
+    if (w.ip) bits.push('来源 ' + w.ip);
+    return '<div class="a-row" data-kind="' + (ok ? 'ok' : 'danger') + '">'
+      + '<span class="a-dot" aria-hidden="true"></span>'
+      + '<div class="a-main">'
+      + '<div class="a-line"><strong>' + (ok ? '已接收' : '已拒绝') + '</strong>'
+      + (ok ? '' : '<span class="chip mono">' + esc(w.reason || 'unknown') + '</span>')
+      + '<span class="meta od-nowrap" title="' + fmtDate(w.at) + '">' + timeAgo(w.at) + '</span></div>'
+      + (ok ? '' : '<p class="q-context">' + esc(AFDIAN_REASON_TEXT[w.reason] || w.reason || '未记录原因') + '</p>')
+      + (bits.length ? '<p class="q-context">' + esc(bits.join(' · ')) + '</p>' : '')
+      + (w.raw ? '<p class="q-context mono od-clamp-2" style="color:var(--meta)">原文：' + esc(w.raw) + '</p>' : '')
+      + '</div></div>';
+  }
+
+  function afdianHooksHtml() {
+    const hooks = state.afdianWebhooks || [];
+    const bad = hooks.filter((w) => !w.ok).length;
+    const body = hooks.length
+      ? '<div class="detail-list">' + hooks.map(afdianHookRow).join('') + '</div>'
+      : emptyState('还没有回调记录', '要么暂时没有人赞助，要么回调地址没填对 —— 先去爱发电开发者页核对回调地址与本页给出的一致。');
+    return '<details class="card hooks" id="afHookDetails" style="margin-top:var(--space-5)"' + (state.afdianHooksOpen ? ' open' : '') + '>'
+      + '<summary><h2>回调排查</h2><span class="sub">最近 ' + hooks.length + ' 次 · 被拒 ' + bad + ' 次（被拒的请求不入库，只在这里留痕）</span></summary>'
+      + '<div class="hooks-body">' + body + '</div></details>';
+  }
+
+  function afdianHtml() {
+    const s = state.afdianStats || {};
+    const items = state.afdianItems || [];
+    const seg = '<div class="seg" role="tablist" aria-label="订单筛选">' + AFDIAN_FILTERS.map((f) =>
+      '<button role="tab" type="button" data-afdfilter="' + f[0] + '" aria-selected="' + (state.afdianFilter === f[0]) + '">' + f[1] + '</button>'
+    ).join('') + '</div>';
+    // 补单走的是爱发电的查询 API：没有 userId + token 时点了必然失败，直接禁用并说明原因
+    const syncBtn = '<button class="btn btn-primary btn-sm" type="button" data-act="afdian.sync"'
+      + (s.apiReady ? '' : ' disabled title="未配置 AFDIAN_USER_ID / AFDIAN_TOKEN，无法查询订单"')
+      + '>从爱发电同步订单</button>';
+    const toolbar = '<div class="toolbar">' + seg
+      + '<span class="meta">本页 ' + items.length + ' 条' + (s.total == null ? '' : ' · 累计 ' + esc(s.total) + ' 单') + '</span>'
+      + '<span class="spacer"></span>'
+      + syncBtn + '</div>';
+    const body = items.length
+      ? '<ul class="q-list">' + items.map(afdianRowHtml).join('') + '</ul>'
+        + (state.afdianNext
+          ? '<div style="display:flex;justify-content:center;margin-top:var(--space-5)"><button class="btn btn-secondary" type="button" data-act="afdian-more">加载更多</button></div>'
+          : '')
+      : emptyState(
+        state.afdianFilter === 'unbound' ? '没有待绑定的订单' : (state.afdianFilter === 'bound' ? '还没有绑定用户的订单' : '还没有赞助订单'),
+        '订单由爱发电回调写入；回调漏了可以用右上角「从爱发电同步订单」按订单号补单，重复补单不会重复发奖。');
+    return afdianBannerHtml(s) + afdianStatusHtml(s)
+      + '<div style="margin-top:var(--space-5)">' + afdianTilesHtml(s) + afdianRuleHtml(s) + '</div>'
+      + '<div style="margin-top:var(--space-5)">' + toolbar + body + '</div>'
+      + afdianHooksHtml();
+  }
+
+  async function renderAfdian(more) {
+    const el = $('#view-afdian');
+    if (!more) {
+      state.afdianItems = [];
+      state.afdianNext = null;
+      el.innerHTML = skeleton(3);
+    }
+    try {
+      const res = await store.afdian({ filter: state.afdianFilter, cursor: more ? state.afdianNext : 0 });
+      state.cache.afdian = res;
+      state.afdianStats = res.stats || null;
+      state.afdianWebhooks = res.recentWebhooks || [];
+      state.afdianNext = res.nextCursor || null;
+      state.afdianItems = more ? state.afdianItems.concat(res.items || []) : (res.items || []);
+      state.afdianFilter = res.filter || state.afdianFilter;
+      if (more && !(res.items || []).length) toast('没有更多订单', 'warn');
+      el.innerHTML = afdianHtml();
+      updateNavCounts();
+    } catch (e) {
+      if (handleApiError(e)) return;
+      if (more) { toast('加载更多失败：' + errText(e), 'danger'); return; }
+      state.afdianStats = null;
+      el.innerHTML = errorState(errText(e));
+      updateNavCounts();
+    }
+  }
+
   /* ───────────────────────── 视图切换 / 计数 ───────────────────────── */
 
   function setView(view) {
@@ -2376,6 +2135,7 @@ a { color: var(--accent); }
     if (state.view === 'titles') return renderTitles();
     if (state.view === 'announcements') return renderAnnouncements();
     if (state.view === 'schools') return renderSchools();
+    if (state.view === 'afdian') return renderAfdian();
     if (state.view === 'feedback') return renderFeedback();
     return renderAudit();
   }
@@ -2396,9 +2156,11 @@ a { color: var(--accent); }
       set('users', s.users || 0); // 灰色：账号规模是参考值，不是待办
       set('audit', '');
     }
+    // 赞助：待绑定单数只有取过 /api/admin/afdian 才知道，没访问过视图就不显示（不额外发请求）
+    set('afdian', state.afdianStats ? (state.afdianStats.unbound || 0) : '', 'warn');
   }
 
-  // 版本状态与「已连接 / 演示模式」并列展示：侧栏常驻一行，
+  // 版本状态与「已连接」并列展示：侧栏常驻一行，
   // 「连接设置」里再写一遍，排查线上部署版本时不用翻日志。
   function versionLabel(stats) {
     return stats && stats.version ? '服务端 v' + stats.version : '版本未知（未连接后端）';
@@ -2464,7 +2226,7 @@ a { color: var(--accent); }
   /* ───────────────────────── 动作处理 ───────────────────────── */
 
   // 渲染/操作过程中的接口错误：不改动连接模式，只如实提示并让调用方显示错误态，
-  // 避免「后端其实没连上，界面却切换成演示数据」这种误导。
+  // 避免「后端其实没连上，界面却显示成成功」这种误导。
   function handleApiError(e) {
     if (e && e.status === 401) {
       toast('管理员令牌无效或已过期，请在“连接设置”中更新', 'danger');
@@ -2486,7 +2248,7 @@ a { color: var(--accent); }
       // 大坑（已踩过）：直接把 act 拼进 URL 会变成
       //   POST /api/admin/posts/7/post.approve → 404 not_found，
       // 界面上表现为「点通过没反应、只弹一句操作失败」。
-      // 演示模式的 demoReviewPost 也按裸动作分支，前缀会一路错到底，
+      // 服务端只认裸动作（approve / reject / remove），带上前缀会一路错到底，
       // 因此统一在这里剥前缀，两处调用点都受益。
       const verb = String(act).split('.').pop();
 
@@ -2658,6 +2420,82 @@ a { color: var(--accent); }
         await refreshAfterAction();
         return;
       }
+      if (act === 'afdian.copy') {
+        try {
+          await copyText(afdianWebhookUrl());
+          toast('回调地址已复制，粘到爱发电开发者页的回调设置里', 'ok');
+        } catch (e) {
+          toast('复制失败，请手动选中地址复制：' + afdianWebhookUrl(), 'danger');
+        }
+        return;
+      }
+      if (act === 'afdian.bind') {
+        const o = findCached('afdian', id);
+        if (!o) { toast('订单不存在，请刷新后重试', 'danger'); return; }
+        openModal(afdianBindFormHtml(o));
+        return;
+      }
+      if (act === 'afdian.bind.save') {
+        const uuid = String(($('#afUuid') || {}).value || '').trim();
+        if (!uuid) { toast('请先填用户 uuid', 'danger'); return; }
+        if (el) el.disabled = true;
+        try {
+          const res = await store.afdianBind(Number(id), uuid);
+          toast('已把订单 #' + id + ' 绑给 ' + ((res.user && res.user.nickname) || uuid) + (res.reward ? ' · ' + res.reward : ''), 'ok');
+        } catch (e) {
+          // 这里单独 catch：uuid 抄错是最常见的失败，要给一句能照着做的人话，而不是通用错误。
+          // 错误码有的挂在 code 上、有的挂在 message 上，两个都要认。
+          if (el) el.disabled = false;
+          const code = (e && (e.code || e.message)) || '';
+          toast(code === 'user_not_found'
+            ? '没有这个用户：uuid 抄错了，或对方还没注册（可在「用户」里搜昵称核对）'
+            : (code === 'not_found' ? '订单不存在，请刷新后重试' : '绑定失败：' + errText(e)), 'danger');
+          return;
+        }
+        closeModal();
+        await refreshAfterAction();
+        return;
+      }
+      if (act === 'afdian.ignore') {
+        const o = findCached('afdian', id);
+        const yes = await confirmDialog({
+          title: '忽略这单？',
+          body: '订单 #' + id + (o ? '（' + o.outTradeNo + '，¥' + (o.amount || '0.00') + '）' : '')
+            + ' 会标记为已忽略，不再出现在「待绑定」里；已经发出去的奖励不会收回。',
+          confirmText: '忽略',
+          danger: true
+        });
+        if (!yes) return;
+        if (el) el.disabled = true;
+        await store.afdianIgnore(Number(id));
+        toast('已忽略订单 #' + id, 'danger');
+        await refreshAfterAction();
+        return;
+      }
+      if (act === 'afdian.sync') {
+        const st = state.afdianStats || {};
+        if (!st.apiReady) {
+          toast('未配置 AFDIAN_USER_ID / AFDIAN_TOKEN，无法从爱发电拉取订单', 'danger');
+          return;
+        }
+        if (el) el.disabled = true;
+        let res;
+        try {
+          res = await store.afdianSync(3);
+        } catch (e) {
+          if (el) el.disabled = false;
+          toast((e && (e.code || e.message)) === 'afdian_not_configured'
+            ? '未配置 AFDIAN_USER_ID / AFDIAN_TOKEN，无法从爱发电拉取订单'
+            : '同步失败：' + errText(e), 'danger');
+          return;
+        }
+        // 服务端把每页的失败原因拼成「第 N 页：xxx」的数组，原样带出来即可，不再包一层页码
+        const errs = res.errors || [];
+        toast('导入 ' + (res.imported || 0) + ' 单，已存在 ' + (res.duplicated || 0) + ' 单'
+          + (errs.length ? ' · 拉取失败：' + errs[0] : ''), errs.length ? 'warn' : 'ok');
+        await refreshAfterAction();
+        return;
+      }
       if (act === 'view') {
         await openDetail(Number(id), el || null);
         return;
@@ -2760,7 +2598,7 @@ a { color: var(--accent); }
   function openSettings() {
     const card = $('#settingsCard');
     card.innerHTML = '<div class="modal-head"><div><h2 id="settingsTitle">连接后端</h2>'
-      + '<p class="sub">填入管理员令牌即可直连真实审核接口；留空则使用演示数据。</p></div>'
+      + '<p class="sub">填入管理员令牌即可直连审核接口；令牌只存在本机浏览器里。</p></div>'
       + '<button class="iconbtn" type="button" data-close aria-label="关闭">' + CLOSE_ICON + '</button></div>'
       + '<div class="modal-body">'
       + '<div class="field"><label for="setBase">API 地址</label>'
@@ -2799,25 +2637,20 @@ a { color: var(--accent); }
 
   async function tryConnect(announce) {
     if (!state.token) {
-      state.mode = 'demo';
-      state.lastError = null;
+      state.lastError = '未填写管理员令牌';
       setBanner();
-      if (announce) toast('未填写令牌，保持演示模式', 'warn');
+      if (announce) toast('未填写管理员令牌，不会加载任何数据', 'warn');
       return;
     }
     try {
       state.stats = await api('/api/admin/stats');
-      state.mode = 'live';
       state.lastError = null;
       if (announce) toast('已连接后端 API', 'ok');
     } catch (e) {
-      state.mode = 'demo';
-      if (e.status === 401) state.lastError = '令牌无效或已过期';
-      else state.lastError = '无法连接后端';
-      if (announce) toast(e.status === 401 ? '令牌无效，请检查后重试' : '无法连接后端，已切换到演示数据', 'danger');
+      state.lastError = e.status === 401 ? '令牌无效或已过期' : '无法连接后端';
+      if (announce) toast(state.lastError, 'danger');
     }
     setBanner();
-    // 连接成功后顺手刷新导航计数与门禁状态：一次往返拿齐首屏要用的信息
     updateNavCounts();
     setVersionStatus();
   }
@@ -2838,6 +2671,7 @@ a { color: var(--accent); }
     if (act === 'bulk-remove') return runBulk('bulk-remove', { title: '批量下架？', body: '下架后将从公开墙移除。', confirmText: '批量下架', danger: true });
     if (act === 'clear-sel') { state.queueSel.clear(); return renderCurrent(); }
     if (act === 'load-more') return renderQueue(true);
+    if (act === 'afdian-more') return renderAfdian(true);
     if (act === 'users-prev') return pageUsers(false);
     if (act === 'users-next') return pageUsers(true);
     return runAction(act, id, target);
@@ -2908,6 +2742,19 @@ a { color: var(--accent); }
       if (f) { state.feedbackStatus = f.dataset.fstatus; renderFeedback(); }
     });
 
+    // 赞助视图：换筛选一律重拉第一页（保留搜索以外的状态简单即可），翻页状态一并清空
+    $('#view-afdian').addEventListener('click', (e) => {
+      const f = e.target.closest('[data-afdfilter]');
+      if (!f) return;
+      state.afdianFilter = f.dataset.afdfilter;
+      state.afdianNext = null;
+      renderAfdian();
+    });
+    // 回调排查是原生 <details>：只在状态里记一下展开与否，重绘后不弹回去
+    $('#view-afdian').addEventListener('toggle', (e) => {
+      if (e.target && e.target.id === 'afHookDetails') state.afdianHooksOpen = e.target.open;
+    }, true);
+
     // 用户视图：状态筛选与搜索。搜索做防抖，且只重绘列表（工具条不重建 = 焦点不丢）
     $('#view-users').addEventListener('click', (e) => {
       const u = e.target.closest('[data-ustatus]');
@@ -2943,6 +2790,13 @@ a { color: var(--accent); }
       if (!t) return;
       if (t.dataset.act === 'refresh') { closeModal(); return renderCurrent(); }
       runAction(t.dataset.act, t.dataset.id, t);
+    });
+    // 绑定弹层里回车即提交，省一次伸手点按钮
+    $('#modalCard').addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || !e.target || e.target.id !== 'afUuid') return;
+      e.preventDefault();
+      const btn = $('#modalCard [data-act="afdian.bind.save"]');
+      if (btn) runAction('afdian.bind.save', btn.dataset.id, btn);
     });
     // 弹层内的即时反馈：头衔颜色色块、公告字数
     $('#modalCard').addEventListener('input', (e) => {
