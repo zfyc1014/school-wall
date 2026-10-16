@@ -93,6 +93,21 @@ db.pragma("auto_analyze = 0");
 
 /* ───────────────────────────── 结构 ───────────────────────────── */
 
+/**
+ * ⚠️ 顺序很关键：**先补列，再执行 schema.sql**。
+ *
+ * schema.sql 里有 `CREATE INDEX IF NOT EXISTS idx_posts_user ON posts(user_id, id DESC)`，
+ * 而旧库的 posts / comments 表已经存在 —— `CREATE TABLE IF NOT EXISTS` 对已有表是空操作，
+ * 不会补列。若先跑 schema.sql，就会在第一句引用 user_id 的索引上抛
+ * `SqliteError: no such column: user_id`，进程直接起不来。
+ *
+ * 这正是面板上升级旧库时踩到的坑：本地测试全程用全新库，恰好绕过了这条路径
+ * （现在由 scripts/upgrade-test.js 专门覆盖「旧库升级」）。
+ *
+ * 这里能调用下面才定义的函数，是因为函数声明会提升，且它们只依赖已初始化的 db。
+ */
+ensureUpgradeColumns();
+
 db.exec(fs.readFileSync(path.join(__dirname, "..", "schema.sql"), "utf8"));
 
 /* ───────────────────── v1.0.0 迁移（幂等）───────────────────── */
@@ -160,9 +175,16 @@ function dropColumnIfExists(table, column) {
   }
 }
 
-// 1) 补账号外键列
-addColumnIfMissing("posts", "user_id", "INTEGER");
-addColumnIfMissing("comments", "user_id", "INTEGER");
+/**
+ * schema.sql **之前**必须补好的列：只有「被索引引用」的那几个。
+ * 其余补列放在 schema 之后即可（它们不参与建索引，顺序无所谓）。
+ */
+function ensureUpgradeColumns() {
+  addColumnIfMissing("posts", "user_id", "INTEGER");
+  addColumnIfMissing("comments", "user_id", "INTEGER");
+}
+
+// 1) 其余补列（不参与索引）
 addColumnIfMissing("reports", "reporter_id", "INTEGER");
 addColumnIfMissing("feedback", "user_id", "INTEGER");
 

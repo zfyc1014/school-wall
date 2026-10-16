@@ -11,8 +11,9 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node scripts/api-test.js && node scripts/route-sweep.js && node scripts/db-check.js",
+    "test": "node scripts/api-test.js && node scripts/upgrade-test.js && node scripts/route-sweep.js && node scripts/db-check.js",
     "test:api": "node scripts/api-test.js",
+    "test:upgrade": "node scripts/upgrade-test.js",
     "test:sweep": "node scripts/route-sweep.js",
     "test:db": "node scripts/db-check.js",
     "db:check": "node scripts/db-check.js --real",
