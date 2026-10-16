@@ -1528,6 +1528,13 @@ route("GET", "/api/admin/stats", (ctx) => {
     replies: one("SELECT COUNT(*) AS n FROM forum_replies WHERE status='approved'"),
     dmsToday: one("SELECT COUNT(*) AS n FROM dm_messages WHERE created_at > " + (Date.now() - 86400000)),
     version: config.VERSION,
+    // 邮件通道：验证码是唯一的登录入口，配置状态必须在后台一眼可见
+    email: {
+      configured: config.EMAIL.configured,
+      from: config.EMAIL.from || "",
+      fromName: config.EMAIL.fromName || "",
+      ttlSeconds: config.CODE_TTL
+    },
     // 数据库体积与可回收空间：低配 VPS 上最该盯的两个数
     db: {
       fileBytes: disk.fileBytes,
@@ -2152,6 +2159,47 @@ route("POST", "/api/admin/replies/:id/:action", (ctx) => {
   if (!result.ok) throw httpError(404, "reply not found");
   audit("reply." + action, String(ctx.params.id), null, ctx.ip);
   sendJson(ctx.req, ctx.res, 200, result);
+});
+
+/**
+ * 邮件通道自检：给指定地址发一封测试邮件。
+ *
+ * 为什么值得单独做一个接口：验证码是唯一的登录入口，配置错了**用户根本进不来**，
+ * 而错误往往只出现在服务端日志里（面板上看不到）。这里把 Cloudflare 的原始错误
+ * 原样回给后台，运维点一下就知道是哪一步没配好。
+ */
+route("POST", "/api/admin/email/test", async (ctx) => {
+  if (!requireAdmin(ctx)) return;
+
+  const payload = await readJson(ctx.req);
+  const to = users.normalizeEmail(payload.to);
+  if (!users.isValidEmail(to)) {
+    return sendJson(ctx.req, ctx.res, 400, { error: "invalid_email", message: "收件地址不合法" });
+  }
+
+  const mail = email.codeMail({
+    code: "123456",
+    siteName: config.SITE_NAME,
+    ttlMinutes: Math.round(config.CODE_TTL / 60),
+    purpose: "login"
+  });
+  const result = await email.sendMail({
+    to,
+    subject: "[自检] " + mail.subject,
+    html: mail.html,
+    text: "这是一封配置自检邮件。\n\n" + mail.text
+  });
+
+  audit("email.test", to, result.ok ? "ok" : (result.error || "failed"), ctx.ip);
+  sendJson(ctx.req, ctx.res, 200, {
+    ok: Boolean(result.ok),
+    degraded: Boolean(result.degraded),
+    delivered: result.delivered || [],
+    queued: result.queued || [],
+    error: result.error || "",
+    configured: config.EMAIL.configured,
+    from: config.EMAIL.from || ""
+  });
 });
 
 /* ───────────────────────── 赞助（爱发电）管理 ───────────────────────── */

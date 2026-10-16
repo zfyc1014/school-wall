@@ -784,6 +784,7 @@ a { color: var(--accent); }
       ),
     afdianIgnore: (id) => (api('/api/admin/afdian/orders/' + id + '/ignore', { method: 'POST' })
       ),
+    emailTest: (to) => api('/api/admin/email/test', { method: 'POST', body: JSON.stringify({ to: to }) }),
     afdianSync: (pages) => (api('/api/admin/afdian/sync', { method: 'POST', body: JSON.stringify({ pages: pages }) })
       ),
     reports: (status) => (api('/api/admin/reports?status=' + encodeQ(status) + '&limit=200')
@@ -979,8 +980,34 @@ a { color: var(--accent); }
       + '<div class="card-head"><h2>运营概览</h2><span class="sub">账号规模与讨论活跃度</span></div>'
       + '<div class="card-pad">' + opsHtml + '</div></div>'
       + '<div class="card" style="margin-top:var(--space-5)">'
+      + '<div class="card-head"><h2>邮件通道</h2><span class="sub">登录验证码靠它发送</span></div>'
+      + '<div class="card-pad">' + emailCardHtml(stats) + '</div></div>'
+      + '<div class="card" style="margin-top:var(--space-5)">'
       + '<div class="card-head"><h2>内容总量</h2><span class="sub">来自统计接口</span></div>'
       + '<div class="card-pad">' + countHtml + '</div></div>';
+  }
+
+  /**
+   * 邮件通道卡片。
+   *
+   * 验证码是**唯一的登录入口**：邮件配置错了，用户不是「体验差一点」而是根本进不来，
+   * 而错误通常只出现在服务端日志里，后台看不见。所以这里既显示配置状态，
+   * 也提供一个「发一封测试邮件」的按钮，把 Cloudflare 的原始报错原样摊开。
+   */
+  function emailCardHtml(s) {
+    const e = (s && s.email) || {};
+    const head = e.configured
+      ? '<p class="meta">发信地址 <span class="mono">' + esc(e.from) + '</span>'
+        + (e.fromName ? '（' + esc(e.fromName) + '）' : '')
+        + '｜验证码有效期 ' + Math.round((Number(e.ttlSeconds) || 600) / 60) + ' 分钟</p>'
+      : '<p class="meta" style="color:var(--danger)">未配置 CF_ACCOUNT_ID / CF_EMAIL_TOKEN / CF_EMAIL_FROM：'
+        + '验证码不会外发，只会写进服务端日志与 server/data/outbox/ —— 用户收不到验证码就等于登不进来。</p>';
+    return head
+      + '<div class="row" style="gap:var(--space-2);margin-top:var(--space-3);flex-wrap:wrap">'
+      + '<input class="input" id="emailTestTo" type="email" autocomplete="off" placeholder="收件地址，例如 you@example.com" style="max-width:300px">'
+      + '<button class="btn btn-secondary btn-sm" type="button" data-act="email.test">发送测试邮件</button>'
+      + '</div>'
+      + '<div id="emailTestResult" class="meta" style="margin-top:var(--space-2)"></div>';
   }
 
   async function renderOverview() {
@@ -2339,7 +2366,34 @@ a { color: var(--accent); }
         await refreshAfterAction();
         return;
       }
-      if (act === 'user.open') { await openUserDetail(Number(id), el || null); return; }
+      if (act === 'email.test') {
+      const input = $('#emailTestTo');
+      const box = $('#emailTestResult');
+      const to = input ? String(input.value || '').trim() : '';
+      if (!to) { toast('先填一个收件地址', 'warn'); return; }
+      if (box) box.textContent = '正在发送…';
+      try {
+        const r = await store.emailTest(to);
+        if (r && r.ok) {
+          const delivered = (r.delivered || []).join('、');
+          if (box) {
+            box.innerHTML = '<span style="color:var(--success)">已交给 Cloudflare</span>'
+              + (delivered ? '（已投递：' + esc(delivered) + '）' : '（已受理，稍等片刻查收）');
+          }
+          toast('测试邮件已发送', 'ok');
+        } else {
+          if (box) {
+            box.innerHTML = '<span style="color:var(--danger)">发送失败：' + esc((r && r.error) || '未知错误') + '</span>'
+              + (r && r.degraded ? '<br>未配置邮件通道时，验证码只会写进服务端日志与 outbox。' : '');
+          }
+          toast('发送失败，卡片里有原因', 'danger');
+        }
+      } catch (err) {
+        if (box) box.innerHTML = '<span style="color:var(--danger)">请求失败：' + esc(errText(err)) + '</span>';
+      }
+      return;
+    }
+    if (act === 'user.open') { await openUserDetail(Number(id), el || null); return; }
       if (act === 'user.apply') { await runUserAction(Number(id), el ? el.dataset.op : '', el); return; }
       if (act === 'title.new') { openModal(titleFormHtml(null)); return; }
       if (act === 'title.edit') {

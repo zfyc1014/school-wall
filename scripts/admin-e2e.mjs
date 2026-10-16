@@ -163,6 +163,16 @@ async function main() {
     await page.screenshot(join(SHOTS, '05-admin-afdian.png'));
     ok('产出后台赞助页截图', true);
 
+    // 邮件通道自检卡片（验证码是唯一登录入口，配置状态必须在后台一眼可见）
+    // 注意用 textContent 而不是 innerText：innerText 对隐藏元素返回空串，
+    // 而这里刚切回概览视图，渲染还没完成。
+    await page.eval('document.querySelector(\'[data-view="overview"]\').click(); true');
+    await page.waitFor('(document.querySelector("#view-overview") || {}).textContent.includes("邮件通道")', { timeout: 8000 });
+    const hasTestBtn = await page.eval('!!document.querySelector(\'[data-act="email.test"]\') && !!document.querySelector("#emailTestTo")');
+    ok('概览有「邮件通道」卡片且带测试按钮', hasTestBtn);
+    const emailHint = await page.eval('document.querySelector("#view-overview").textContent.includes("未配置 CF_ACCOUNT_ID")');
+    ok('未配置时卡片如实给出告警（而不是假装正常）', emailHint);
+
     const errors = await page.eval('window.__errors || []');
     ok('没有未捕获的 JS 异常', Array.isArray(errors) && errors.length === 0, errors);
 

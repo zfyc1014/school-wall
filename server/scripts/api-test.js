@@ -543,6 +543,27 @@ async function main() {
       true);
   }
 
+  section("后台：邮件通道自检");
+  {
+    eq("未带令牌被拒", (await anon.post("/api/admin/email/test", { to: "someone@example.com" })).status, 401);
+    eq("非法收件地址被拒",
+      (await anon.post("/api/admin/email/test", { to: "not-an-email" }, { admin: true })).body.error,
+      "invalid_email");
+
+    // 测试环境没配 Cloudflare 凭据：必须**如实**回报失败（降级到日志 + outbox），
+    // 绝不能假装成功 —— 否则运维会以为通道通了，直到用户登录失败才发现。
+    const result = await anon.post("/api/admin/email/test", { to: "someone@example.com" }, { admin: true });
+    eq("未配置时返回 200（把原因说清楚，而不是 5xx）", result.status, 200);
+    eq("如实标记未发送成功", result.body.ok, false);
+    ok("标明走的是降级路径（日志 + outbox）", result.body.degraded === true, result.body);
+    ok("带上失败原因", String(result.body.error).length > 0, result.body.error);
+    eq("同时告知当前是否已配置", result.body.configured, false);
+
+    const stats = await anon.get("/api/admin/stats", { admin: true });
+    ok("统计接口暴露邮件配置状态（后台据此显示）",
+      Boolean(stats.body.email) && stats.body.email.configured === false, stats.body.email);
+  }
+
   section("退出登录与反馈");
   {
     eq("退出成功", (await alice.post("/api/auth/logout", {})).status, 200);
