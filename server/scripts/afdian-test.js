@@ -96,7 +96,7 @@ const server = spawn(process.execPath, [path.join(ROOT, "src", "server.js")], {
     AFDIAN_USER_ID,
     AFDIAN_TOKEN,
     AFDIAN_PAGE: "https://afdian.com/a/school-wall",
-    AFDIAN_REWARD_TITLE: "赞助者"
+    AFDIAN_REWARD_TIERS: "5:股东;10:@custom"
   },
   stdio: ["ignore", "pipe", "pipe"]
 });
@@ -174,7 +174,7 @@ async function call(method, url, { body, form, admin } = {}) {
   ok("发放内容已记录", String(list1.body.items[0].reward).includes("头衔"), list1.body.items[0].reward);
 
   const me = await call("GET", "/api/auth/me");
-  eq("用户拿到了「赞助者」头衔", me.body.user.title && me.body.user.title.name, "赞助者");
+  eq("发电 5 元自动拿到固定头衔「股东」", me.body.user.title && me.body.user.title.name, "股东");
 
   const second = await call("POST", "/api/afdian/webhook", { form: buildCallback(order1) });
   eq("平台重试仍然返回 ec=200", second.body.ec, 200);
@@ -205,7 +205,7 @@ async function call(method, url, { body, form, admin } = {}) {
   const unboundId = list4.body.items[0].id;
   const bound = await call("POST", "/api/admin/afdian/orders/" + unboundId + "/bind", { body: { uuid }, admin: true });
   eq("绑定成功", bound.status, 200);
-  ok("绑定后发放了奖励", String(bound.body.reward).length > 0, bound.body.reward);
+  ok("绑定后按档位发放了头衔", String(bound.body.reward).includes("头衔"), bound.body.reward);
 
   const badBind = await call("POST", "/api/admin/afdian/orders/" + unboundId + "/bind", { body: { uuid: "not-a-uuid" }, admin: true });
   eq("绑定不存在的用户被拒", badBind.body.error, "user_not_found");
@@ -219,9 +219,65 @@ async function call(method, url, { body, form, admin } = {}) {
   eq("已支付单数", stats.paid, 3);
   eq("金额按分累加（3 × 5.00）", stats.amount, "15.00");
   ok("回调就绪标记正确", stats.webhookReady === true && stats.apiReady === true);
-  eq("发奖头衔名可配置", stats.rewardTitle, "赞助者");
+  eq("档位表下发到后台（2 档）", (stats.tiers || []).length, 2);
 
   eq("未带令牌访问被拒", (await call("GET", "/api/admin/afdian")).status, 401);
+
+  console.log("\n按金额分档发奖（全自动，无需审批）");
+  const tierOrder = (amount, remark, no) => orderPayload({
+    out_trade_no: no, total_amount: amount, show_amount: amount, remark
+  });
+
+  // 先把用户身上的赞助头衔清掉，逐档验证
+  await call("POST", "/api/admin/users/1", { body: { action: "set_title", value: null }, admin: true });
+
+  const five = tierOrder("5.00", "标识 " + uuid, "TIER-5");
+  await call("POST", "/api/afdian/webhook", { form: buildCallback(five) });
+  let me2 = await call("GET", "/api/auth/me");
+  eq("发电 5 元 → 固定头衔「股东」", me2.body.user.title && me2.body.user.title.name, "股东");
+
+  const ten = tierOrder("10.00", "标识 " + uuid + " 头衔：夜跑的阿哲", "TIER-10");
+  await call("POST", "/api/afdian/webhook", { form: buildCallback(ten) });
+  me2 = await call("GET", "/api/auth/me");
+  eq("发电 10 元 → 留言里自定义的头衔", me2.body.user.title && me2.body.user.title.name, "夜跑的阿哲");
+
+  const tenBad = tierOrder("10.00", "标识 " + uuid + " 头衔：管理员小助手", "TIER-BAD");
+  await call("POST", "/api/afdian/webhook", { form: buildCallback(tenBad) });
+  const badRow = (await call("GET", "/api/admin/afdian?filter=all", { admin: true }))
+    .body.items.find((o) => o.outTradeNo === "TIER-BAD");
+  ok("自定义头衔冒名官方时被预审拦下并记录原因",
+    String(badRow.reward).includes("不可用"), badRow.reward);
+  me2 = await call("GET", "/api/auth/me");
+  eq("被拦下后回落到固定档「股东」", me2.body.user.title.name, "股东");
+
+  const tooSmall = tierOrder("4.99", "标识 " + uuid, "TIER-SMALL");
+  await call("POST", "/api/afdian/webhook", { form: buildCallback(tooSmall) });
+  const smallRow = (await call("GET", "/api/admin/afdian?filter=all", { admin: true }))
+    .body.items.find((o) => o.outTradeNo === "TIER-SMALL");
+  ok("未达最低档只记录不发奖", String(smallRow.reward).includes("未达到发奖档位"), smallRow.reward);
+
+  // 管理员手动指派的头衔不该被赞助顶掉
+  const manual = await call("POST", "/api/admin/titles", { body: { name: "版主", minLevel: 1, auto: false }, admin: true });
+  await call("POST", "/api/admin/users/1", { body: { action: "set_title", value: manual.body.id }, admin: true });
+  const tenAgain = tierOrder("10.00", "标识 " + uuid + " 头衔：另一个名字", "TIER-MANUAL");
+  await call("POST", "/api/afdian/webhook", { form: buildCallback(tenAgain) });
+  me2 = await call("GET", "/api/auth/me");
+  eq("管理员手动指派的头衔不被赞助覆盖", me2.body.user.title.name, "版主");
+  const manualRow = (await call("GET", "/api/admin/afdian?filter=all", { admin: true }))
+    .body.items.find((o) => o.outTradeNo === "TIER-MANUAL");
+  ok("不覆盖时也如实记录原因", String(manualRow.reward).includes("未覆盖"), manualRow.reward);
+
+  // 赞助头衔之间可以逐档升级（股东 → 自定义）
+  await call("POST", "/api/admin/users/1", { body: { action: "set_title", value: null }, admin: true });
+  await call("POST", "/api/afdian/webhook", { form: buildCallback(tierOrder("5.00", "标识 " + uuid, "TIER-UP-5")) });
+  await call("POST", "/api/afdian/webhook", { form: buildCallback(tierOrder("10.00", "标识 " + uuid + " 头衔：升级版", "TIER-UP-10")) });
+  me2 = await call("GET", "/api/auth/me");
+  eq("赞助头衔可以逐档升级（股东 → 自定义）", me2.body.user.title.name, "升级版");
+
+  const site2 = await call("GET", "/api/site");
+  ok("档位规则随站点信息下发（前端据此展示）",
+    Array.isArray(site2.body.afdian.tiers) && site2.body.afdian.tiers.length === 2
+    && site2.body.afdian.customKeyword === "头衔", site2.body.afdian);
 
   console.log("\n=== 通过 " + passed + " / 失败 " + failed + " ===");
   if (failed) {

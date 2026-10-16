@@ -298,6 +298,7 @@ CREATE TABLE IF NOT EXISTS afdian_orders (
   user_id      INTEGER,                     -- 匹配到的本站用户（可空，后台可手动绑定）
   matched_by   TEXT,                        -- remark_uuid | remark_email | admin | none
   reward       TEXT,                        -- 实际发放内容（追溯「谁因为哪一单拿到了什么」）
+  title_id     INTEGER,                     -- 本次发放的头衔 id（升级判定用：赞助给的头衔可被更高档位覆盖，手动头衔不行）
   raw          TEXT,                        -- 原始报文（截断保存，排查用）
   created_at   INTEGER NOT NULL,            -- 爱发电订单时间（毫秒）
   received_at  INTEGER NOT NULL             -- 本站收到时间

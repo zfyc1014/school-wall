@@ -227,10 +227,14 @@ async function main() {
     const hasSupport = await page.eval(hasText('支持校园墙'));
     ok('配置了爱发电主页时「我的」出现支持入口', hasSupport);
     await page.eval(clickText('.list-item', '支持校园墙'));
-    await page.waitFor('!!document.querySelector(".support-uuid code")', { timeout: 5000 });
-    const uuidShown = await page.eval('document.querySelector(".support-uuid code").innerText.trim()');
+    await page.waitFor('!!document.querySelector(".support-template")', { timeout: 5000 });
+    const template = await page.eval('document.querySelector(".support-template").innerText');
     const uuidReal = await page.eval('(async () => (await (await fetch("/api/auth/me")).json()).user.uuid)()');
-    ok('弹层里给出的 uuid 与账号一致（用户要把它填进下单留言）', uuidShown === uuidReal, { uuidShown, uuidReal });
+    ok('留言模板里带了用户自己的 uuid（下单直接粘这段）', template.includes(uuidReal), { template, uuidReal });
+    ok('模板里写清了自定义头衔怎么填', template.includes('头衔：'), template);
+    const tierRows = await page.eval('Array.from(document.querySelectorAll(".support-tiers li")).map((li) => li.innerText)');
+    ok('弹层列出档位：≥5 元「股东」、≥10 元自定义',
+      tierRows.length === 2 && tierRows[0].includes('股东') && tierRows[1].includes('自定义'), tierRows);
     const linkHref = await page.eval('(document.querySelector(".sheet-panel a.btn") || {}).href || ""');
     ok('弹层里的按钮指向爱发电主页', String(linkHref).includes('afdian.com/a/school-wall'), linkHref);
     await page.eval(clickText('.sheet-panel .btn-icon', ''));

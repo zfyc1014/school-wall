@@ -68,15 +68,35 @@ const NICKNAME_COOLDOWN_H = Math.max(0, Number(process.env.NICKNAME_COOLDOWN_H |
  * 三者缺任意一个，赞助功能就视为未配置：接口 404、前端不显示入口，
  * 服务本身完全不受影响 —— 赞助是可选功能，不该成为部署门槛。
  *
- * AFDIAN_REWARD_TITLE：下单留言里填了本站 uuid / 邮箱时自动发放的头衔名；
- * 留空 = 只记录不自动发奖，全部交给后台手动绑定。
+ * **按金额分档发奖**（AFDIAN_REWARD_TIERS，默认 5:股东;10:@custom）：
+ *   `金额:头衔名` 用英文分号分隔，取「不超过订单金额的最高档」；
+ *   `@custom` 表示用用户在留言里自填的头衔（关键词 `头衔：xxxx`，见 AFDIAN_CUSTOM_KEYWORD）。
+ *   自定义头衔不可用（没写/太长/含违禁词/冒名官方）时，自动回落到该金额以下的最高固定档；
+ *   如果连固定档都没有，就只记录不发奖 —— 全程无需人工审批。
  * ------------------------------------------------------------------- */
+
+/** 解析档位表：`5:股东;10:@custom` → [{cents:500,title:'股东'},{cents:1000,title:'@custom'}] */
+function parseTiers(raw) {
+  return String(raw == null ? "" : raw)
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const idx = part.indexOf(":");
+      const yuan = Number(part.slice(0, idx));
+      const title = part.slice(idx + 1).trim();
+      return { cents: Math.round(yuan * 100), title };
+    })
+    .filter((t) => Number.isFinite(t.cents) && t.cents > 0 && t.title)
+    .sort((a, b) => a.cents - b.cents);
+}
 const AFDIAN = {
   userId: String(process.env.AFDIAN_USER_ID || "").trim(),
   token: String(process.env.AFDIAN_TOKEN || "").trim(),
   page: String(process.env.AFDIAN_PAGE || "").trim(),
   apiBase: String(process.env.AFDIAN_API_BASE || "https://afdian.com/api/open").trim(),
-  rewardTitle: String(process.env.AFDIAN_REWARD_TITLE == null ? "赞助者" : process.env.AFDIAN_REWARD_TITLE).trim(),
+  tiers: parseTiers(process.env.AFDIAN_REWARD_TIERS == null ? "5:股东;10:@custom" : process.env.AFDIAN_REWARD_TIERS),
+  customKeyword: String(process.env.AFDIAN_CUSTOM_KEYWORD || "头衔").trim() || "头衔",
   rewardExp: Math.max(0, Number(process.env.AFDIAN_REWARD_EXP || 0)),
   timeoutMs: Math.max(1000, Number(process.env.AFDIAN_TIMEOUT_MS || 8000))
 };
@@ -98,8 +118,13 @@ function publicConfig() {
     siteName: SITE_NAME,
     emailConfigured: EMAIL.configured,
     features: FEATURES,
-    // 前端据此决定要不要显示「支持校园墙」入口；没配置就完全不提这件事
-    afdian: AFDIAN.page ? { page: AFDIAN.page } : null
+    // 前端据此决定要不要显示「支持校园墙」入口；没配置就完全不提这件事。
+    // 档位规则也一并下发：用户得先知道「发多少、写什么」才会去下单。
+    afdian: AFDIAN.page ? {
+      page: AFDIAN.page,
+      tiers: AFDIAN.tiers.map((t) => ({ amount: (t.cents / 100).toFixed(2), title: t.title })),
+      customKeyword: AFDIAN.customKeyword
+    } : null
   };
 }
 
@@ -116,6 +141,7 @@ module.exports = {
   FORUM_PREMOD,
   NICKNAME_COOLDOWN_H,
   AFDIAN,
+  parseTiers,
   FEATURES,
   publicConfig
 };

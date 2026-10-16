@@ -26,6 +26,7 @@ const crypto = require("crypto");
 const db = require("./db");
 const config = require("./config");
 const users = require("./users");
+const { classifyNickname } = require("./moderation");
 
 const RECENT_MAX = 20;
 /** 最近若干次回调尝试（含被拒的），供后台排查「为什么没到账」 */
@@ -173,6 +174,49 @@ function matchUser(remark) {
   return null;
 }
 
+/** 金额（字符串）→ 分，避免浮点比较出岔子 */
+function centsOf(amount) {
+  return Math.max(0, Math.round((Number(amount) || 0) * 100));
+}
+
+/** 取「不超过该金额的最高档位」 */
+function pickTier(cents, tiers) {
+  let hit = null;
+  for (const tier of tiers) {
+    if (tier.cents <= cents) hit = tier;
+  }
+  return hit;
+}
+
+/** 取「不超过该金额的最高**固定**档位」—— 自定义头衔不可用时的回落目标 */
+function pickFixedTier(cents, tiers) {
+  let hit = null;
+  for (const tier of tiers) {
+    if (tier.title !== "@custom" && tier.cents <= cents) hit = tier;
+  }
+  return hit;
+}
+
+/**
+ * 从留言里抠出自定义头衔。
+ *
+ * 留言同时承担两件事（匹配账号 + 指定头衔），所以用一个关键词来分隔：
+ *   `我的标识：<uuid>` / `头衔：夜跑的阿哲`
+ * 关键词可通过 AFDIAN_CUSTOM_KEYWORD 改（默认「头衔」，同时接受「称号」「title」）。
+ * 只取第一段连续的非空白文本，长度交给后面统一校验。
+ */
+function extractCustomTitle(remark) {
+  const text = String(remark || "");
+  if (!text) return "";
+  const keywords = [config.AFDIAN.customKeyword, "称号", "title"].filter(Boolean);
+  for (const keyword of keywords) {
+    const re = new RegExp(keyword + "\\s*[:：]?\\s*([^\\s，,。;；、\\n]{1,24})", "i");
+    const m = text.match(re);
+    if (m && m[1]) return m[1].trim();
+  }
+  return "";
+}
+
 /** 找到（必要时创建）赞助者头衔 */
 function ensureRewardTitle(name) {
   const wanted = String(name || "").trim();
@@ -188,25 +232,84 @@ function ensureRewardTitle(name) {
 }
 
 /**
- * 发奖。规则刻意保守：
- *   - 头衔只在用户**没有手动头衔**时设置，避免把「版主」这类身份覆盖掉；
- *   - 经验按配置发放（默认 0，等级尽量保持由内容决定）。
- * @returns {string} 人话描述，写进订单的 reward 列便于追溯
+ * 判断能不能用赞助头衔覆盖用户当前的头衔。
+ *
+ * 规则：**赞助头衔可以被更高的档位覆盖，管理员手动指派的不能被覆盖**。
+ * 靠 `afdian_orders.title_id` 判断「当前这个头衔是不是赞助发的」——
+ * 这样 5 元拿到「股东」的人后来又发电 10 元，能顺利升级成自定义头衔，
+ * 而「版主」这类人工身份不会被一笔赞助顶掉。
+ */
+function canReplaceTitle(user, titleId) {
+  const fresh = users.findById(user.id);
+  if (!fresh || !fresh.title_id) return true;
+  if (fresh.title_id === titleId) return true;
+  const granted = db.prepare(
+    "SELECT 1 AS hit FROM afdian_orders WHERE user_id = ? AND title_id = ? LIMIT 1"
+  ).get(user.id, fresh.title_id);
+  return Boolean(granted);
+}
+
+/**
+ * 按金额分档发奖（全自动，无需审批）。
+ *
+ * 档位表默认 `5:股东;10:@custom`：
+ *   - 发电 ≥5 元 → 固定头衔「股东」
+ *   - 发电 ≥10 元 → 留言里自定义的头衔（`头衔：xxx`）
+ *   - 自定义头衔不可用（没写/含违禁词/冒名官方）→ 回落到该金额以下的最高固定档
+ *   - 连固定档都没有（金额低于最低档）→ 只记录不发奖
+ *
+ * @returns {{text: string, titleId: number|null}} text 写进订单 reward 列便于追溯
  */
 function grantReward(user, order) {
   const notes = [];
+  let grantedTitleId = null;
+  const cents = centsOf(order.amount);
+  const tiers = config.AFDIAN.tiers;
 
-  if (config.AFDIAN.rewardTitle) {
-    const title = ensureRewardTitle(config.AFDIAN.rewardTitle);
-    if (title) {
-      const fresh = users.findById(user.id);
-      if (!fresh.title_id) {
-        users.setUserTitle(user.id, title.id);
-        notes.push(`头衔「${title.name}」`);
+  if (tiers.length) {
+    const tier = pickTier(cents, tiers);
+    if (!tier) {
+      const min = tiers[0].cents / 100;
+      notes.push(`金额 ${(cents / 100).toFixed(2)} 元未达到发奖档位（最低 ${min} 元）`);
+    } else {
+      let wanted = tier.title;
+      let why = "";
+      if (wanted === "@custom") {
+        const custom = extractCustomTitle(order.remark);
+        if (!custom) {
+          const fallback = pickFixedTier(cents, tiers);
+          wanted = fallback ? fallback.title : "";
+          why = "留言里没写自定义头衔";
+        } else {
+          // 头衔会挂在这个人主页上，必须过一遍和昵称同样的预审：
+          // 违禁词、联系方式、冒名官方（否则花 10 元就能叫「管理员」）
+          const verdict = classifyNickname(custom);
+          if (verdict.rejected) {
+            const fallback = pickFixedTier(cents, tiers);
+            wanted = fallback ? fallback.title : "";
+            why = `自定义头衔「${custom}」不可用（${verdict.flags.join("/")}）`;
+          } else {
+            wanted = custom;
+          }
+        }
+      }
+
+      if (!wanted) {
+        notes.push(why || "没有可发放的头衔");
       } else {
-        // 已有手动头衔：不动它，但仍然记录一次（管理员能看到这单没发头衔）
-        const current = users.allTitles().find((t) => t.id === fresh.title_id);
-        notes.push(`已有头衔「${current ? current.name : "?"}」，未覆盖`);
+        const title = ensureRewardTitle(wanted);
+        if (!title) {
+          notes.push(`头衔「${wanted}」创建失败`);
+        } else if (canReplaceTitle(user, title.id)) {
+          users.setUserTitle(user.id, title.id);
+          grantedTitleId = title.id;
+          notes.push(`头衔「${title.name}」`);
+          if (why) notes.push(why);
+        } else {
+          const fresh = users.findById(user.id);
+          const current = users.allTitles().find((t) => t.id === fresh.title_id);
+          notes.push(`已有管理员指派的头衔「${current ? current.name : "?"}」，未覆盖`);
+        }
       }
     }
   }
@@ -216,7 +319,7 @@ function grantReward(user, order) {
     notes.push(`经验 +${config.AFDIAN.rewardExp}`);
   }
 
-  return notes.join("、");
+  return { text: notes.join("、"), titleId: grantedTitleId };
 }
 
 /**
@@ -253,15 +356,19 @@ function handleOrder(rawOrder, source = "webhook") {
 
   // 只有「支付成功」才发奖；其它状态（退款/未支付）只记录
   let reward = "";
+  let titleId = null;
   if (match && order.status === 2) {
-    reward = grantReward(match.user, order);
-    db.prepare("UPDATE afdian_orders SET reward = ? WHERE id = ?").run(reward || null, info.lastInsertRowid);
+    const granted = grantReward(match.user, order);
+    reward = granted.text;
+    titleId = granted.titleId;
+    db.prepare("UPDATE afdian_orders SET reward = ?, title_id = ? WHERE id = ?")
+      .run(reward || null, titleId, info.lastInsertRowid);
   } else if (match && order.status !== 2) {
     reward = "订单状态不是已支付，未发奖";
     db.prepare("UPDATE afdian_orders SET reward = ? WHERE id = ?").run(reward, info.lastInsertRowid);
   }
 
-  return { ok: true, duplicated: false, matched: Boolean(match), reward, source };
+  return { ok: true, duplicated: false, matched: Boolean(match), reward, titleId, source };
 }
 
 /* ───────────────────────── 查询 API（补单/对账）───────────────────────── */
@@ -381,7 +488,8 @@ function stats() {
     enabled: config.AFDIAN.enabled,
     webhookReady: config.AFDIAN.webhookReady,
     apiReady: config.AFDIAN.apiReady,
-    rewardTitle: config.AFDIAN.rewardTitle,
+    tiers: config.AFDIAN.tiers.map((t) => ({ amount: (t.cents / 100).toFixed(2), title: t.title })),
+    customKeyword: config.AFDIAN.customKeyword,
     rewardExp: config.AFDIAN.rewardExp,
     page: config.AFDIAN.page,
     total: one("SELECT COUNT(*) FROM afdian_orders"),
@@ -399,10 +507,12 @@ function bindOrder(orderId, uuid) {
   const user = users.findByUuid(uuid);
   if (!user) return { ok: false, error: "user_not_found" };
 
-  const reward = row.status === 2 ? grantReward(user, row) : "订单状态不是已支付，未发奖";
-  db.prepare("UPDATE afdian_orders SET user_id = ?, matched_by = 'admin', reward = ? WHERE id = ?")
-    .run(user.id, reward, row.id);
-  return { ok: true, reward, user: users.publicUser(user) };
+  const granted = row.status === 2
+    ? grantReward(user, row)
+    : { text: "订单状态不是已支付，未发奖", titleId: null };
+  db.prepare("UPDATE afdian_orders SET user_id = ?, matched_by = 'admin', reward = ?, title_id = ? WHERE id = ?")
+    .run(user.id, granted.text || null, granted.titleId, row.id);
+  return { ok: true, reward: granted.text, user: users.publicUser(user) };
 }
 
 /** 后台忽略一单（例如测试单、自己给自己下单） */

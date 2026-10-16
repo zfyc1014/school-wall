@@ -48,3 +48,25 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .support-foot { display: flex; align-items: center; gap: 6px; justify-content: center; }
+/* ── 赞助档位与留言模板 ── */
+.support-tiers { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.support-tiers li {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  padding: 8px 12px; border-radius: var(--radius-md);
+  background: var(--surface-2); font-size: var(--text-sm);
+}
+.support-tier-amount { color: var(--muted); }
+.support-tier-title { font-weight: 600; }
+.support-template {
+  margin: var(--space-2) 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--fg-2);
+}

@@ -32,25 +32,47 @@ if (dbArg) process.env.DB_PATH = dbArg.slice(5);
  */
 if (process.env.DB_CHECK_CHILD !== "1") {
   const { spawnSync } = require("child_process");
+  const fsMod = require("fs");
+  const osMod = require("os");
+
+  /*
+   * 子进程的输出**走临时文件而不是管道**。
+   *
+   * 原因：Node 写管道是异步的，子进程一旦在退出阶段被原生断言打断，
+   * 缓冲区里没冲刷出去的内容（包括那行结论）就一起没了 —— 父进程只能看到「没有结论」。
+   * 写文件是同步的，abort 也保得住已经写下的内容。
+   */
+  const logFile = path.join(osMod.tmpdir(), "wall-dbcheck-" + process.pid + ".log");
+  const fd = fsMod.openSync(logFile, "w");
   const child = spawnSync(process.execPath, [__filename].concat(process.argv.slice(2)), {
     env: Object.assign({}, process.env, { DB_CHECK_CHILD: "1" }),
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"]
+    stdio: ["ignore", fd, fd]
   });
+  fsMod.closeSync(fd);
 
-  const out = child.stdout || "";
+  let out = "";
+  try { out = fsMod.readFileSync(logFile, "utf8"); } catch { /* 读不到就按失败处理 */ }
+  try { fsMod.unlinkSync(logFile); } catch { /* ignore */ }
   process.stdout.write(out);
+
   const verdict = /__VERDICT__ (ok|fail:([0-9]+))/.exec(out);
 
-  if (!verdict) {
-    if (child.stderr) process.stderr.write(child.stderr);
+  // 兜底：万一子进程在写出判定行**之前**就被断言打断，只要输出里能看见结论文字，
+  // 就按结论判定 —— 结论是脚本自己算出来的，进程怎么死的与它无关。
+  let ok = verdict ? verdict[1] === "ok" : null;
+  if (ok === null) {
+    if (/===\s*全部通过\s*===/.test(out)) ok = true;
+    else if (/===\s*有 \d+ 项异常/.test(out)) ok = false;
+  }
+
+  if (ok === null) {
     console.error("[db-check] 没能拿到体检结论（子进程退出码 " + child.status + "，signal " + child.signal + "）");
     process.exit(1);
   }
   if (child.status === 134 || child.signal === "SIGABRT") {
     console.log("[db-check] 注：子进程在退出阶段触发了 better-sqlite3 的原生断言（SIGABRT）；结论已在上面拿到，与体检结果无关。");
   }
-  process.exit(verdict[1] === "ok" ? 0 : 1);
+  process.exit(ok ? 0 : 1);
 }
 
 const db = require("../src/db");
@@ -238,9 +260,14 @@ function finish(code) {
 
   try { db.close(); } catch { /* ignore */ }
 
-  // 判定行：父进程只认它（见文件末尾的 spawn 包装）
-  console.log("__VERDICT__ " + (code ? "fail:" + failed : "ok"));
-  process.exitCode = code;
+  // 判定行必须**同步写**：这个进程有可能在退出阶段被原生断言打断（SIGABRT），
+  // 而 Node 对管道 stdout 是异步写 —— 异步写的内容会随进程一起消失，
+  // 父进程就只看到「没有结论」。writeSync 保证它先落到管道里。
+  const verdictLine = "__VERDICT__ " + (code ? "fail:" + failed : "ok") + "\n";
+  try { require("fs").writeSync(1, verdictLine); } catch { /* 管道断了也要继续 */ }
+
+  // 结论已经落地，直接退出；不再走「自然排空 → 拆卸环境」那条会偶发断言的路
+  process.exit(code);
 }
 
 if (recountOnly) {

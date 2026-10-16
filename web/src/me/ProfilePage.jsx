@@ -23,7 +23,8 @@ export function ProfilePage({ site, onOpenFeedback }) {
   const [busy, setBusy] = useState(false);
   const [supportOpen, setSupportOpen] = useState(false);
   // 只有站点配置了爱发电主页才显示入口：没配置就完全不提这件事
-  const afdianPage = site && site.afdian && site.afdian.page ? site.afdian.page : '';
+  const afdian = (site && site.afdian) || null;
+  const afdianPage = afdian && afdian.page ? afdian.page : '';
 
   useEffect(() => {
     if (ready && user) refresh();
@@ -149,7 +150,13 @@ export function ProfilePage({ site, onOpenFeedback }) {
       </div>
 
       {afdianPage ? (
-        <SupportSheet open={supportOpen} onClose={() => setSupportOpen(false)} page={afdianPage} />
+        <SupportSheet
+          open={supportOpen}
+          onClose={() => setSupportOpen(false)}
+          page={afdianPage}
+          tiers={afdian.tiers || []}
+          customKeyword={afdian.customKeyword || '头衔'}
+        />
       ) : null}
     </div>
   );

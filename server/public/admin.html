@@ -1918,8 +1918,10 @@ a { color: var(--accent); }
           st.webhookReady ? 'AFDIAN_TOKEN 已配置，回调能过签名校验' : '缺少 AFDIAN_TOKEN：回调一律被拒，赞助不会到账')
       + afdianStateRow('订单查询 API', st.apiReady ? 'actioned' : 'open', st.apiReady ? '已就绪' : '未配置',
           st.apiReady ? 'AFDIAN_USER_ID + TOKEN 已配置，可查询与补单' : '缺少 AFDIAN_USER_ID：无法查询订单、无法补单')
-      + afdianStateRow('发奖头衔', st.rewardTitle ? 'actioned' : '', st.rewardTitle ? st.rewardTitle : '不自动发奖',
-          st.rewardTitle ? '匹配到用户时自动授予该头衔' : 'AFDIAN_REWARD_TITLE 为空：只记录订单，发奖全靠手动绑定')
+      + afdianStateRow('发奖档位', (st.tiers || []).length ? 'actioned' : '', (st.tiers || []).length ? (st.tiers || []).length + ' 档' : '不自动发奖',
+          (st.tiers || []).length
+            ? (st.tiers || []).map((t) => '≥' + t.amount + ' 元 → ' + (t.title === '@custom' ? '自定义头衔' : t.title)).join('；')
+            : 'AFDIAN_REWARD_TIERS 为空：只记录订单，发奖全靠手动绑定')
       + afdianStateRow('发奖经验', Number(st.rewardExp) > 0 ? 'actioned' : '', Number(st.rewardExp) > 0 ? '+' + st.rewardExp : '不发经验',
           Number(st.rewardExp) > 0 ? 'AFDIAN_REWARD_EXP 设置的经验值' : 'AFDIAN_REWARD_EXP 为 0：等级保持由内容决定')
       + afdianStateRow('爱发电主页', st.page ? 'actioned' : '', st.page ? '已配置' : '未配置',
@@ -1955,9 +1957,12 @@ a { color: var(--accent); }
   function afdianRuleHtml(s) {
     const st = s || {};
     return '<p class="meta-dim" style="margin:var(--space-3) 0 0">发奖规则：用户在下单留言里填自己的 uuid 或注册邮箱，回调到达时就会自动匹配并发奖 —— '
-      + (st.rewardTitle ? '发头衔「' + esc(st.rewardTitle) + '」' : '不发头衔（AFDIAN_REWARD_TITLE 为空）')
+      + ((st.tiers || []).length
+      ? '按金额发头衔（' + (st.tiers || []).map((t) => '≥' + esc(t.amount) + ' 元 ' + (t.title === '@custom' ? '自定义' : '「' + esc(t.title) + '」')).join('，') + '）'
+      : '不发头衔（AFDIAN_REWARD_TIERS 为空）')
       + '，' + (Number(st.rewardExp) > 0 ? '经验 +' + esc(st.rewardExp) : '不发经验')
-      + '；用户已有手动头衔时不覆盖。匹配不到的订单留在「待绑定」里，等管理员手动绑定。</p>';
+      + '；自定义档位要在留言里写「' + esc(st.customKeyword || '头衔') + '：想要的名字」（会过一遍违禁词与冒名官方预审，不合格自动落回低一档，全程无需审批）；'
+      + '管理员手动指派的头衔不会被覆盖，赞助头衔之间可以逐档升级；匹配不到的订单留在「待绑定」里。</p>';
   }
 
   function afdianUserLine(o) {

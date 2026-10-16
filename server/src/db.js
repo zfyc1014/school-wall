@@ -187,6 +187,7 @@ function ensureUpgradeColumns() {
 // 1) 其余补列（不参与索引）
 addColumnIfMissing("reports", "reporter_id", "INTEGER");
 addColumnIfMissing("feedback", "user_id", "INTEGER");
+addColumnIfMissing("afdian_orders", "title_id", "INTEGER");
 
 // 2) 点赞主体的语义升级：IP 哈希 → 登录用户
 renameColumnIfExists("likes", "ip_hash", "actor");
