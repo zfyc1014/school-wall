@@ -182,17 +182,29 @@ function report() {
 /* ───────────────────────────── 入口 ───────────────────────────── */
 
 /**
- * 收尾：**先写干净退出标记，再关连接**，最后用 exitCode 让进程自然结束。
+ * 收尾：先写干净退出标记 → 回收语句对象 → 关连接 → 用 exitCode 让进程自然结束。
  *
- * 为什么不直接 process.exit()：better-sqlite3 的语句对象还在时强拆 V8 环境，
- * 会触发原生断言（RemoveEnvironmentCleanupHook / Statement 析构）→ SIGABRT(134)，
- * 退出码失去意义、systemd 也会当成异常退出。这个坑在 src/server.js 里已经踩过。
+ * 中间那步「回收语句对象」是必须的，不是洁癖：
+ * better-sqlite3 的 Statement 析构函数会碰原生环境，如果它们拖到 V8 开始拆卸
+ * 环境时才被 GC，就会撞上
+ *   Assertion failed: (env) != nullptr   （RemoveEnvironmentCleanupHook → Statement 析构）
+ * 进程以 SIGABRT(134) 结束 —— 实测本脚本曾以约一半概率如此（退出码在 0 与 134 之间跳），
+ * 于是 npm run verify 会随机失败。手动 GC 让这些对象在环境健康时就析构掉。
+ *
+ * Node 默认不带 --expose-gc，用 v8.setFlagsFromString + 新上下文取回 gc；
+ * 拿不到也退回自然退出（结果仍然正确，只是有概率再出现 134）。
  */
 function finish(code) {
   try {
     db.shutdown();
-    db.close();
   } catch { /* 关库失败也要给出退出码 */ }
+
+  try {
+    require("v8").setFlagsFromString("--expose-gc");
+    require("vm").runInNewContext("gc")();
+  } catch { /* 拿不到 gc 就跳过 */ }
+
+  try { db.close(); } catch { /* ignore */ }
   process.exitCode = code;
 }
 
