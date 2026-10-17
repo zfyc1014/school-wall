@@ -108,7 +108,22 @@ if (!PORT) {
 
 /** 面板环境：此时默认监听 0.0.0.0 才对容器外可达 */
 const IS_PANEL = IS_PANEL_ENV;
-const HOST = process.env.HOST || process.env.SERVER_IP || (IS_PANEL ? "0.0.0.0" : "127.0.0.1");
+
+/**
+ * 监听地址。
+ *
+ * ⚠️ 面板部署最常见的一个「服务正常但访问不进去」：.env 里沿用了服务器的
+ * HOST=127.0.0.1，而面板是从**容器外**转发进来的 —— 监听回环地址等于外网永远连不上，
+ * 日志里却只显示「http://127.0.0.1:11075」，看起来一切正常。
+ * 面板上把 HOST 配成回环没有任何合法用途，所以这里直接纠正并告警。
+ */
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+let HOST = process.env.HOST || process.env.SERVER_IP || (IS_PANEL ? "0.0.0.0" : "127.0.0.1");
+if (IS_PANEL && LOOPBACK_HOSTS.has(String(HOST).trim().toLowerCase())) {
+  console.warn(`[warn] HOST=${HOST} 在面板部署下无效：面板从容器外转发请求，`
+    + "监听回环地址会导致**外网完全连不上**（日志却看着正常）。已自动改为 0.0.0.0");
+  HOST = "0.0.0.0";
+}
 
 /** 默认静态根：优先用 Vite 构建产物 web/dist，退回仓库根（源码目录） */
 const DEFAULT_WEB_ROOT = fs.existsSync(path.join(__dirname, "..", "..", "web", "dist", "index.html"))
