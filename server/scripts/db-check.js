@@ -43,9 +43,10 @@ if (process.env.DB_CHECK_CHILD !== "1") {
    * 写文件是同步的，abort 也保得住已经写下的内容。
    */
   const logFile = path.join(osMod.tmpdir(), "wall-dbcheck-" + process.pid + ".log");
+  const verdictFile = logFile + ".verdict";
   const fd = fsMod.openSync(logFile, "w");
   const child = spawnSync(process.execPath, [__filename].concat(process.argv.slice(2)), {
-    env: Object.assign({}, process.env, { DB_CHECK_CHILD: "1" }),
+    env: Object.assign({}, process.env, { DB_CHECK_CHILD: "1", DB_CHECK_VERDICT_FILE: verdictFile }),
     stdio: ["ignore", fd, fd]
   });
   fsMod.closeSync(fd);
@@ -55,7 +56,12 @@ if (process.env.DB_CHECK_CHILD !== "1") {
   try { fsMod.unlinkSync(logFile); } catch { /* ignore */ }
   process.stdout.write(out);
 
-  const verdict = /__VERDICT__ (ok|fail:([0-9]+))/.exec(out);
+  // 结论优先读独立文件：子进程在退出阶段被原生断言打断时，stdout 里的内容可能来不及落盘，
+  // 但 fs.writeFileSync 写出的结论文件一定在（这比解析输出可靠得多）。
+  let verdictText = "";
+  try { verdictText = fsMod.readFileSync(verdictFile, "utf8"); } catch { /* 没写出来 */ }
+  try { fsMod.unlinkSync(verdictFile); } catch { /* ignore */ }
+  const verdict = /__VERDICT__ (ok|fail:([0-9]+))/.exec(verdictText || out);
 
   // 兜底：万一子进程在写出判定行**之前**就被断言打断，只要输出里能看见结论文字，
   // 就按结论判定 —— 结论是脚本自己算出来的，进程怎么死的与它无关。
@@ -111,7 +117,9 @@ const EXPECTED_TABLES = [
  * 少一个会让某个热查询变成全表扫描，多一个则是纯粹的写入放大。
  */
 const EXPECTED_INDEXES = [
-  "idx_users_created", "idx_auth_codes_lookup", "idx_sessions_user", "idx_sessions_expiry",
+  // users(phone) 是**唯一**索引（部分索引：NULL 不算重复）：手机号登录靠它查人，
+  // 同时保证一个号码只能绑一个账号
+  "idx_users_created", "idx_users_phone", "idx_auth_codes_lookup", "idx_sessions_user", "idx_sessions_expiry",
   "idx_schools_active", "idx_announcements_active",
   "idx_posts_feed", "idx_posts_hot", "idx_posts_cat", "idx_posts_user",
   "idx_comments_post", "idx_comments_queue", "idx_comments_user",
@@ -264,6 +272,11 @@ function finish(code) {
   // 而 Node 对管道 stdout 是异步写 —— 异步写的内容会随进程一起消失，
   // 父进程就只看到「没有结论」。writeSync 保证它先落到管道里。
   const verdictLine = "__VERDICT__ " + (code ? "fail:" + failed : "ok") + "\n";
+  // 写独立文件（父进程据此判定），同时照常打到 stdout 供人看
+  try {
+    const target = process.env.DB_CHECK_VERDICT_FILE;
+    if (target) require("fs").writeFileSync(target, verdictLine, "utf8");
+  } catch { /* 结论文件写不出来也不能让体检结果丢失 */ }
   try { require("fs").writeSync(1, verdictLine); } catch { /* 管道断了也要继续 */ }
 
   // 结论已经落地，直接退出；不再走「自然排空 → 拆卸环境」那条会偶发断言的路

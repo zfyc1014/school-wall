@@ -137,20 +137,31 @@ export const api = {
   feedback: (data) => request('/api/feedback', { method: 'POST', body: data }),
 
   auth: {
-    // 配了 Turnstile 就必须带 token；服务端在发信前校验（前端不校验 token 本身）
-    requestCode: (email, turnstileToken) => request('/api/auth/code', {
-      method: 'POST',
-      body: turnstileToken ? { email, turnstileToken } : { email },
-      notifyLogin: false
-    }),
-    verify: (email, code) => request('/api/auth/verify', { method: 'POST', body: { email, code }, notifyLogin: false }),
+    // 双通道：传 { email } 或 { phone }。配了 Turnstile 就必须带 token
+    // （服务端在发信前校验，前端不校验 token 本身）。
+    requestCode: (target, turnstileToken) => {
+      const body = typeof target === 'string' ? { email: target } : { ...target };
+      if (turnstileToken) body.turnstileToken = turnstileToken;
+      return request('/api/auth/code', { method: 'POST', body, notifyLogin: false });
+    },
+    verify: (target, code) => {
+      const body = typeof target === 'string' ? { email: target, code } : { ...target, code };
+      return request('/api/auth/verify', { method: 'POST', body, notifyLogin: false });
+    },
     register: (data) => request('/api/auth/register', { method: 'POST', body: data, notifyLogin: false }),
     logout: () => request('/api/auth/logout', { method: 'POST', body: {}, notifyLogin: false }),
     me: () => request('/api/auth/me', { notifyLogin: false })
   },
 
   me: {
-    update: (patch) => request('/api/me', { method: 'PATCH', body: patch })
+    update: (patch) => request('/api/me', { method: 'PATCH', body: patch }),
+    // 手机号绑定：发码也要过人机验证（短信每条都花钱，登录后也不能放任脚本刷）
+    bindPhoneCode: (phone, turnstileToken) => request('/api/me/phone/code', {
+      method: 'POST',
+      body: turnstileToken ? { phone, turnstileToken } : { phone }
+    }),
+    bindPhoneVerify: (phone, code) => request('/api/me/phone/verify', { method: 'POST', body: { phone, code } }),
+    unbindPhone: () => request('/api/me/phone', { method: 'DELETE' })
   },
 
   users: {

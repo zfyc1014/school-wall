@@ -36,6 +36,50 @@ const EMAIL = {
 };
 EMAIL.configured = Boolean(EMAIL.accountId && EMAIL.token && EMAIL.from);
 
+/* ───────────────────────── Brevo（邮件 + 短信）─────────────────────────
+ *
+ * 配置来自 https://app.brevo.com/settings/keys/api ：
+ *   BREVO_API_KEY        v3 API key（**只放 server/.env，绝不提交**）
+ *   BREVO_SENDER_EMAIL   已验证的发件地址（Brevo → Senders 里必须是 active 状态）
+ *   BREVO_SENDER_NAME    发件人显示名，默认站名
+ *   BREVO_SMS_SENDER    短信 sender 名（Brevo 短信 sender 需审核通过，≤11 位字母数字）
+ *   BREVO_API_BASE       默认 https://api.brevo.com/v3，测试时指向本地 mock
+ *
+ * 邮件通道的优先级由 MAIL_PROVIDER 决定：
+ *   auto（默认）= Brevo 配好就用 Brevo，否则用 Cloudflare，都没有就降级到日志 + outbox
+ *   brevo / cloudflare / log = 强制指定（排查问题时有用）
+ *
+ * ⚠️ Brevo 账号默认可能开着「授权 IP」限制：服务器的出口 IP 没加白名单的话，
+ *    所有 API 调用都会 401（错误信息里会点名 IP）。运维要先去加白名单。
+ * ------------------------------------------------------------------- */
+const BREVO = {
+  apiKey: String(process.env.BREVO_API_KEY || "").trim(),
+  senderEmail: String(process.env.BREVO_SENDER_EMAIL || "").trim(),
+  senderName: String(process.env.BREVO_SENDER_NAME || SITE_NAME).trim(),
+  smsSender: String(process.env.BREVO_SMS_SENDER || "").trim(),
+  apiBase: String(process.env.BREVO_API_BASE || "https://api.brevo.com/v3").replace(/\/+$/, ""),
+  timeoutMs: Math.max(1000, Number(process.env.BREVO_TIMEOUT_MS || 8000))
+};
+BREVO.enabled = Boolean(BREVO.apiKey);
+BREVO.emailReady = Boolean(BREVO.apiKey && BREVO.senderEmail);
+BREVO.smsReady = Boolean(BREVO.apiKey && BREVO.smsSender);
+
+/**
+ * 邮件实际走哪个通道。sendMail 只认这个结果，调用方不需要关心 provider。
+ * 注意 Cloudflare 的 from 与 Brevo 的 sender 是两套配置，互不挪用。
+ */
+const MAIL_PROVIDER_RAW = String(process.env.MAIL_PROVIDER || "auto").trim().toLowerCase();
+const MAIL_PROVIDER = (() => {
+  if (MAIL_PROVIDER_RAW === "brevo") return BREVO.emailReady ? "brevo" : "log";
+  if (MAIL_PROVIDER_RAW === "cloudflare") return EMAIL.configured ? "cloudflare" : "log";
+  if (MAIL_PROVIDER_RAW === "log") return "log";
+  if (BREVO.emailReady) return "brevo";
+  if (EMAIL.configured) return "cloudflare";
+  return "log";
+})();
+EMAIL.provider = MAIL_PROVIDER;
+EMAIL.configured = MAIL_PROVIDER !== "log";
+
 /** 本地调试：把验证码直接回带在响应里。生产环境强制关闭（见 auth 模块的断言）。 */
 const CODE_ECHO = process.env.AUTH_CODE_ECHO === "1" && process.env.NODE_ENV !== "production";
 
@@ -147,7 +191,12 @@ function publicConfig() {
     version: VERSION,
     siteName: SITE_NAME,
     emailConfigured: EMAIL.configured,
-    features: FEATURES,
+    features: {
+      forum: FEATURES.forum,
+      dm: FEATURES.dm,
+      // 手机登录只有在短信通道真正可用时才开放（前端据此显示「手机号」切换）
+      phoneLogin: BREVO.smsReady
+    },
     // 前端据此决定要不要显示「支持校园墙」入口；没配置就完全不提这件事。
     // 档位规则也一并下发：用户得先知道「发多少、写什么」才会去下单。
     // site key 是公开的（前端要拿它渲染 widget）；secret 永远不下发
@@ -172,6 +221,7 @@ module.exports = {
   SESSION_COOKIE,
   FORUM_PREMOD,
   NICKNAME_COOLDOWN_H,
+  BREVO,
   TURNSTILE,
   AFDIAN,
   parseTiers,

@@ -11,7 +11,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node scripts/api-test.js && node scripts/upgrade-test.js && node scripts/afdian-test.js && node scripts/turnstile-test.js && node scripts/route-sweep.js && node scripts/db-check.js",
+    "test": "node scripts/api-test.js && node scripts/run-suite.js scripts/upgrade-test.js && node scripts/afdian-test.js && node scripts/turnstile-test.js && node scripts/brevo-test.js && node scripts/route-sweep.js && node scripts/db-check.js",
     "test:api": "node scripts/api-test.js",
     "test:upgrade": "node scripts/upgrade-test.js",
     "test:afdian": "node scripts/afdian-test.js",

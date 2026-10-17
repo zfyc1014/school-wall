@@ -248,9 +248,48 @@ function isValidEmail(raw) {
   return email.length <= 254 && EMAIL_RE.test(email);
 }
 
+/* ───────────────────────────── 手机号 ─────────────────────────────
+ *
+ * 统一存 E.164（+8613800138000）。归一化按国内用户的实际输入习惯设计：
+ *   13800138000       → +8613800138000   （11 位手机号，默认 +86）
+ *   +86 138 0013 8000 → +8613800138000   （带国家码、带空格）
+ *   008613800138000   → +8613800138000   （国际前缀 00）
+ *   8613800138000     → +8613800138000   （漏了 + 号）
+ * 只做「形状」校验（8–15 位），真实性交给短信验证码 —— 别在这里维护号段规则，
+ * 号段会变，写死只会误伤新号段的用户。
+ */
+function normalizePhone(raw) {
+  let s = String(raw == null ? "" : raw).trim();
+  if (!s) return "";
+  s = s.replace(/[\s()\-]/g, "");
+  if (s.startsWith("00")) s = "+" + s.slice(2);
+  if (!s.startsWith("+")) {
+    if (/^1\d{10}$/.test(s)) return "+86" + s;
+    if (/^86\d{11}$/.test(s)) return "+" + s;
+    s = "+" + s.replace(/\D/g, "");
+  }
+  const digits = s.slice(1).replace(/\D/g, "");
+  return digits ? "+" + digits : "";
+}
+
+function isValidPhone(raw) {
+  const phone = normalizePhone(raw);
+  if (!/^\+\d{8,15}$/.test(phone)) return false;
+  return !/^\+0/.test(phone); // E.164 的国家码不以 0 开头
+}
+
+/** 打码显示：+8613800138000 → +86138****8000（后台列表/日志用） */
+function maskPhone(raw) {
+  const phone = normalizePhone(raw);
+  if (!phone) return "";
+  const tail = phone.slice(-4);
+  const head = phone.slice(0, Math.max(4, phone.length - 8));
+  return head + "****" + tail;
+}
+
 /* ───────────────────────────── 用户读写 ───────────────────────────── */
 
-const USER_COLUMNS = `id, uuid, email, nickname, nickname_flagged, school, avatar, bio,
+const USER_COLUMNS = `id, uuid, email, phone, phone_verified_at, nickname, nickname_flagged, school, avatar, bio,
   title_id, level, exp, status, muted_until, last_nickname_at, ip_hash, ua_hash,
   created_at, last_login_at, last_seen_at`;
 
@@ -274,6 +313,36 @@ function createUser({ email, nickname, school, avatar = "", ipHash = null, uaHas
 
 function findByEmail(email) {
   return db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE email = ?`).get(normalizeEmail(email)) || null;
+}
+
+function findByPhone(phone) {
+  const normalized = normalizePhone(phone);
+  if (!normalized) return null;
+  return db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE phone = ?`).get(normalized) || null;
+}
+
+/**
+ * 绑定/更换手机号。唯一性由 idx_users_phone 兜底 ——
+ * 先查一遍只是为了给用户一句人话，并发下仍然靠约束。
+ */
+function setPhone(userId, phone) {
+  const normalized = normalizePhone(phone);
+  if (!isValidPhone(normalized)) return { ok: false, error: "invalid_phone" };
+  const owner = findByPhone(normalized);
+  if (owner && owner.id !== Number(userId)) return { ok: false, error: "phone_taken" };
+  try {
+    db.prepare("UPDATE users SET phone = ?, phone_verified_at = ? WHERE id = ?")
+      .run(normalized, Date.now(), Number(userId));
+    return { ok: true, phone: normalized };
+  } catch (err) {
+    if (String(err.message || "").includes("UNIQUE")) return { ok: false, error: "phone_taken" };
+    throw err;
+  }
+}
+
+function clearPhone(userId) {
+  db.prepare("UPDATE users SET phone = NULL, phone_verified_at = NULL WHERE id = ?").run(Number(userId));
+  return { ok: true };
 }
 
 function findByUuid(uuid) {
@@ -301,11 +370,14 @@ function publicUser(row, { self = false, stats = null, titles = allTitles() } = 
     title: titleFor(row, titles),
     level: row.level,
     exp: row.exp,
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    // 对外只暴露「是否已验证」，号码本身属于隐私
+    phoneVerified: Boolean(row.phone_verified_at)
   };
   if (stats) out.stats = stats;
   if (self) {
     out.email = row.email;
+    out.phone = row.phone || "";
     out.status = row.status;
     out.nicknameCooldownUntil = row.last_nickname_at
       ? row.last_nickname_at + config.NICKNAME_COOLDOWN_H * 3600000
@@ -334,6 +406,8 @@ function adminUser(row, extra = {}) {
     id: row.id,
     uuid: row.uuid,
     email: row.email,
+    phone: row.phone || "",
+    phoneVerified: Boolean(row.phone_verified_at),
     nickname: row.nickname,
     nicknameFlagged: row.nickname_flagged || "",
     school: row.school,
@@ -564,32 +638,48 @@ function randomCode() {
   return String(crypto.randomInt(0, 1000000)).padStart(6, "0");
 }
 
-/** 该邮箱最近一次发码时间（用于重发间隔与小时配额判断） */
-function lastCodeAt(email) {
+/** 按通道归一化目标地址：邮箱小写、手机号 E.164 */
+function normalizeTarget(target, channel) {
+  return channel === "phone" ? normalizePhone(target) : normalizeEmail(target);
+}
+
+/**
+ * 该目标最近一次**未使用**的发码时间（用于重发间隔判断）。
+ *
+ * 只算未消费的码是有意的：重发间隔防的是「连点 + 未验证的骚扰」，
+ * 而刚验证成功的用户（例如刚绑定完手机号、转去用短信登录）不该被自己刚做的成功操作挡住。
+ * 攻击者拿不到验证码，也就无法让这个字段变空，防护效果不打折。
+ */
+function lastCodeAt(target, channel = "email") {
   const row = db.prepare(
-    "SELECT created_at FROM auth_codes WHERE email = ? ORDER BY created_at DESC LIMIT 1"
-  ).get(normalizeEmail(email));
+    "SELECT created_at FROM auth_codes WHERE email = ? AND channel = ? AND consumed_at IS NULL"
+    + " ORDER BY created_at DESC LIMIT 1"
+  ).get(normalizeTarget(target, channel), channel);
   return row ? row.created_at : 0;
 }
 
-function codesInLastHour(email) {
+function codesInLastHour(target, channel = "email") {
   const row = db.prepare(
-    "SELECT COUNT(*) AS n FROM auth_codes WHERE email = ? AND created_at > ?"
-  ).get(normalizeEmail(email), Date.now() - 3600000);
+    "SELECT COUNT(*) AS n FROM auth_codes WHERE email = ? AND channel = ? AND created_at > ?"
+  ).get(normalizeTarget(target, channel), channel, Date.now() - 3600000);
   return row ? row.n : 0;
 }
 
-/** 发码：旧的未用验证码立即作废（同一邮箱同时只有一个有效码） */
-function issueCode(email, { ipHash = null, purpose = "login" } = {}) {
-  const normalized = normalizeEmail(email);
+/**
+ * 发码：旧的未用验证码立即作废（同一目标同时只有一个有效码）。
+ * @param {string} target 邮箱或手机号
+ * @param {{channel?: "email"|"phone", ipHash?: string|null, purpose?: string}} opts
+ */
+function issueCode(target, { channel = "email", ipHash = null, purpose = "login" } = {}) {
+  const normalized = normalizeTarget(target, channel);
   const code = randomCode();
   const now = Date.now();
-  db.prepare("UPDATE auth_codes SET consumed_at = ? WHERE email = ? AND consumed_at IS NULL")
-    .run(now, normalized);
+  db.prepare("UPDATE auth_codes SET consumed_at = ? WHERE email = ? AND channel = ? AND consumed_at IS NULL")
+    .run(now, normalized, channel);
   db.prepare(
-    `INSERT INTO auth_codes (email, code_hash, purpose, ip_hash, created_at, expires_at)
-     VALUES (?,?,?,?,?,?)`
-  ).run(normalized, hmac(normalized + ":" + code), purpose, ipHash, now, now + config.CODE_TTL * 1000);
+    `INSERT INTO auth_codes (email, channel, code_hash, purpose, ip_hash, created_at, expires_at)
+     VALUES (?,?,?,?,?,?,?)`
+  ).run(normalized, channel, hmac(normalized + ":" + code), purpose, ipHash, now, now + config.CODE_TTL * 1000);
   return { code, expiresAt: now + config.CODE_TTL * 1000, ttlSeconds: config.CODE_TTL };
 }
 
@@ -597,15 +687,15 @@ function issueCode(email, { ipHash = null, purpose = "login" } = {}) {
  * 校验验证码。失败返回 remaining（剩余尝试次数），5 次即作废 ——
  * 否则 6 位码可以被在线暴力枚举。
  */
-function verifyCode(email, rawCode) {
-  const normalized = normalizeEmail(email);
+function verifyCode(target, rawCode, channel = "email") {
+  const normalized = normalizeTarget(target, channel);
   const code = String(rawCode == null ? "" : rawCode).trim();
   if (!/^\d{6}$/.test(code)) return { ok: false, error: "invalid_code", remaining: null };
 
   const row = db.prepare(
     `SELECT id, code_hash, attempts, expires_at FROM auth_codes
-      WHERE email = ? AND consumed_at IS NULL ORDER BY created_at DESC LIMIT 1`
-  ).get(normalized);
+      WHERE email = ? AND channel = ? AND consumed_at IS NULL ORDER BY created_at DESC LIMIT 1`
+  ).get(normalized, channel);
 
   if (!row) return { ok: false, error: "code_expired" };
   if (row.expires_at <= Date.now()) {
@@ -890,6 +980,12 @@ module.exports = {
   verifyCode,
   lastCodeAt,
   codesInLastHour,
+  normalizePhone,
+  isValidPhone,
+  maskPhone,
+  findByPhone,
+  setPhone,
+  clearPhone,
   issueRegisterToken,
   peekRegisterToken,
   consumeRegisterToken,

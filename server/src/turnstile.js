@@ -26,10 +26,13 @@ function enabled() {
 }
 
 /**
- * @param {{token?: string, ip?: string}} input
+ * @param {{token?: string, ip?: string, action?: string}} input
+ *   action：本次请求对应的 widget 动作名，默认用 TURNSTILE_ACTION。
+ *           一个站可以有多个受保护面（登录、绑定手机号…），每面签发自己的 action，
+ *           服务端只接受与本面匹配的 token。
  * @returns {Promise<{ok: boolean, skipped?: boolean, status?: number, code?: string, reason?: string}>}
  */
-async function verify({ token, ip } = {}) {
+async function verify({ token, ip, action } = {}) {
   if (!enabled()) return { ok: true, skipped: true };
 
   const expectedHosts = config.TURNSTILE.hostnames;
@@ -75,8 +78,9 @@ async function verify({ token, ip } = {}) {
   }
 
   // action 必须与签发时一致（防止拿别处的 token 来顶这个动作）
-  if (result.action !== config.TURNSTILE.action) {
-    console.warn(`[turnstile] action 不匹配：期望 ${config.TURNSTILE.action}，实际 ${result.action}`);
+  const expectedAction = action || config.TURNSTILE.action;
+  if (result.action !== expectedAction) {
+    console.warn(`[turnstile] action 不匹配：期望 ${expectedAction}，实际 ${result.action}`);
     return { ok: false, status: 403, code: "turnstile_failed", reason: "action_mismatch" };
   }
 

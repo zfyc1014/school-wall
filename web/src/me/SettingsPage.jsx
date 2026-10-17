@@ -7,6 +7,7 @@ import { Avatar, AVATAR_KEYS } from '../components/Avatar.jsx';
 import { UserBadge } from '../components/UserBadge.jsx';
 import { Empty, Loading } from '../components/Empty.jsx';
 import { IconBack, IconSchool } from '../components/icons.jsx';
+import { PhoneBind } from './PhoneBind.jsx';
 import { timeAgo } from '../lib/format.js';
 
 /**
@@ -141,6 +142,8 @@ export function SettingsPage() {
           {busy ? '保存中…' : '保存'}
         </button>
       </section>
+
+      <PhoneBind />
 
       <section className="list" style={{ marginTop: 16 }}>
         <div className="list-item" style={{ cursor: 'default' }}>

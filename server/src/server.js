@@ -40,6 +40,8 @@ const { limit } = require("./rate-limit");
 const config = require("./config");
 const users = require("./users");
 const email = require("./email");
+const sms = require("./sms");
+const brevo = require("./brevo");
 const forum = require("./forum");
 const social = require("./social");
 const announce = require("./announce");
@@ -162,11 +164,18 @@ function fatalConfig(message) {
 // 这里要的是「不可离线爆破」）。复用 IP_HASH_SECRET，避免再多一个必填项。
 users.configure({ secret: IP_SECRET });
 
-// 生产环境的邮件通道自检：不配置就等于「用户收不到验证码」，
+// 生产环境的通道自检：不配置就等于「用户收不到验证码」，
 // 必须在启动日志里说清楚，而不是等第一个用户登录失败才发现。
 if (IS_PROD && !config.EMAIL.configured) {
-  console.warn("[warn] 未配置 Cloudflare 邮件通道（CF_ACCOUNT_ID / CF_EMAIL_TOKEN / CF_EMAIL_FROM）："
+  console.warn("[warn] 未配置邮件通道（BREVO_API_KEY + BREVO_SENDER_EMAIL，或 CF_ACCOUNT_ID / CF_EMAIL_TOKEN / CF_EMAIL_FROM）："
     + "邮箱验证码不会外发，只会写入 server/data/outbox/ 与服务端日志");
+}
+if (IS_PROD && config.BREVO.enabled && !config.BREVO.emailReady) {
+  console.warn("[warn] BREVO_API_KEY 已配置但缺 BREVO_SENDER_EMAIL：Brevo 无法发信（发件地址必须是 Brevo 里已验证的那个）");
+}
+if (IS_PROD && config.BREVO.enabled && !config.BREVO.smsReady) {
+  console.warn("[warn] 短信通道未就绪（缺 BREVO_SMS_SENDER）：手机号登录保持关闭。"
+    + "Brevo 的短信 sender 需要先审核通过");
 }
 // 学校名单为空 = 没人能完成注册，属于必须让运维看见的配置缺失
 if (!users.schoolList().length) {
@@ -690,8 +699,9 @@ route("POST", "/api/auth/code", async (ctx) => {
 
   /**
    * Turnstile 校验放在最前面：这是唯一会对外发信、也是注册漏斗第一道门的入口。
-   * 放在限流**之前**是有意的 —— 被脚本刷的时候，先挡在门外，不消耗限流额度，
-   * 也就不会把正常用户挤掉。
+   * 它**同时覆盖邮箱与手机两个通道** —— 校验逻辑在通道分流之前，不存在「短信通道绕过」
+   * 这种漏洞（短信每条都是真金白银，更不能只保护邮箱一侧）。
+   * 放在限流**之前**是有意的 —— 被脚本刷的时候，先挡在门外，不消耗限流额度。
    */
   const human = await turnstile.verify({
     token: payload.turnstileToken || payload["cf-turnstile-response"],
@@ -709,24 +719,39 @@ route("POST", "/api/auth/code", async (ctx) => {
     });
   }
 
-  const emailAddr = users.normalizeEmail(payload.email);
+  // 通道判定：带 phone 且不带 email → 短信；否则走邮箱。
+  // 两个通道共用同一条限流与「5 次错误作废」逻辑，只是投递方式不同。
+  const wantsPhone = !payload.email && String(payload.phone || "").trim() !== "";
+  const channel = wantsPhone ? "phone" : "email";
+  const target = channel === "phone"
+    ? users.normalizePhone(payload.phone)
+    : users.normalizeEmail(payload.email);
 
-  if (!users.isValidEmail(emailAddr)) {
+  if (channel === "phone" && !users.isValidPhone(target)) {
+    return sendJson(ctx.req, ctx.res, 400, { error: "invalid_phone", message: "手机号格式不正确" });
+  }
+  if (channel === "email" && !users.isValidEmail(target)) {
     return sendJson(ctx.req, ctx.res, 400, { error: "invalid_email", message: "邮箱格式不正确" });
   }
+  if (channel === "phone" && !config.BREVO.smsReady) {
+    return sendJson(ctx.req, ctx.res, 503, {
+      error: "sms_unavailable",
+      message: "手机号登录暂不可用，请使用邮箱登录"
+    });
+  }
 
-  // 两层限流：按 IP 防扫号，按邮箱防轰炸同一个人
+  // 两层限流：按 IP 防扫号，按目标防轰炸同一个人
   const ipBucket = limit(`auth-code-ip:${ctx.ipHash}`, 10, 10 * 60 * 1000);
   if (!ipBucket.ok) {
     return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: ipBucket.retryAfter });
   }
-  const mailBucket = limit(`auth-code-mail:${emailAddr}`, config.CODE_HOURLY_MAX, 60 * 60 * 1000);
-  if (!mailBucket.ok) {
-    return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: mailBucket.retryAfter });
+  const targetBucket = limit(`auth-code:${channel}:${target}`, config.CODE_HOURLY_MAX, 60 * 60 * 1000);
+  if (!targetBucket.ok) {
+    return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: targetBucket.retryAfter });
   }
 
   // 重发间隔：避免连点造成「收件箱里 5 封验证码，不知道填哪封」
-  const last = users.lastCodeAt(emailAddr);
+  const last = users.lastCodeAt(target, channel);
   if (last && Date.now() - last < config.CODE_RESEND_SEC * 1000) {
     return sendJson(ctx.req, ctx.res, 429, {
       error: "rate_limited",
@@ -734,29 +759,51 @@ route("POST", "/api/auth/code", async (ctx) => {
     });
   }
 
-  const existing = users.findByEmail(emailAddr);
+  // 手机通道只给**已绑定**的账号发短信：否则任何人都能拿这个接口当免费短信炮台，
+  // 每一条都是真金白银。代价是「手机号是否注册过」可被探测（有限流兜底），
+  // 但相比被刷爆短信费，这个取舍更划算；而且提示语直接告诉用户该先绑邮箱。
+  const existing = channel === "phone" ? users.findByPhone(target) : users.findByEmail(target);
+  if (channel === "phone" && !existing) {
+    return sendJson(ctx.req, ctx.res, 400, {
+      error: "phone_not_bound",
+      message: "该手机号还没有绑定账号：请先用邮箱登录，再到「我的 → 设置」里绑定手机号"
+    });
+  }
   if (existing && existing.status === "banned") {
     return sendJson(ctx.req, ctx.res, 403, { error: "account_banned", message: "该账号已被封禁" });
   }
 
-  const { code, ttlSeconds } = users.issueCode(emailAddr, { ipHash: ctx.ipHash });
-  const mail = email.codeMail({
-    code,
-    siteName: config.SITE_NAME,
-    ttlMinutes: Math.round(ttlSeconds / 60),
-    purpose: existing ? "login" : "register"
-  });
+  const purpose = existing ? "login" : "register";
+  const { code, ttlSeconds } = users.issueCode(target, { channel, ipHash: ctx.ipHash, purpose });
 
-  const sent = await email.sendMail({
-    to: emailAddr,
-    subject: mail.subject,
-    html: mail.html,
-    text: mail.text
-  });
+  let sent;
+  if (channel === "phone") {
+    const text = sms.codeSms({
+      code,
+      siteName: config.SITE_NAME,
+      ttlMinutes: Math.round(ttlSeconds / 60),
+      purpose
+    });
+    sent = await sms.sendSms({ to: target, content: text, tag: "login" });
+  } else {
+    const mail = email.codeMail({
+      code,
+      siteName: config.SITE_NAME,
+      ttlMinutes: Math.round(ttlSeconds / 60),
+      purpose
+    });
+    sent = await email.sendMail({ to: target, subject: mail.subject, html: mail.html, text: mail.text });
+  }
 
   // 发信失败也要把验证码留在服务端（outbox + 日志），否则用户彻底卡死；
-  // 但响应里要如实告诉前端「邮件没发出去」，不能假装成功。
-  const body = { ok: true, expiresIn: ttlSeconds, delivered: Boolean(sent.ok) };
+  // 但响应里要如实告诉前端「没发出去」，不能假装成功。
+  const body = {
+    ok: true,
+    channel,
+    expiresIn: ttlSeconds,
+    delivered: Boolean(sent.ok),
+    provider: sent.provider || ""
+  };
   if (config.CODE_ECHO) body.devCode = code;
 
   sendJson(ctx.req, ctx.res, 200, body, { "Cache-Control": "no-store" });
@@ -770,12 +817,22 @@ route("POST", "/api/auth/verify", async (ctx) => {
   }
 
   const payload = await readJson(ctx.req);
-  const emailAddr = users.normalizeEmail(payload.email);
-  if (!users.isValidEmail(emailAddr)) {
+
+  // 与发码一致的双通道判定
+  const wantsPhone = !payload.email && String(payload.phone || "").trim() !== "";
+  const channel = wantsPhone ? "phone" : "email";
+  const target = channel === "phone"
+    ? users.normalizePhone(payload.phone)
+    : users.normalizeEmail(payload.email);
+
+  if (channel === "phone" && !users.isValidPhone(target)) {
+    return sendJson(ctx.req, ctx.res, 400, { error: "invalid_phone" });
+  }
+  if (channel === "email" && !users.isValidEmail(target)) {
     return sendJson(ctx.req, ctx.res, 400, { error: "invalid_email" });
   }
 
-  const result = users.verifyCode(emailAddr, payload.code);
+  const result = users.verifyCode(target, payload.code, channel);
   if (!result.ok) {
     const status = result.error === "code_expired" ? 410 : 401;
     return sendJson(ctx.req, ctx.res, status, {
@@ -785,15 +842,25 @@ route("POST", "/api/auth/verify", async (ctx) => {
     });
   }
 
-  const user = users.findByEmail(emailAddr);
+  const user = channel === "phone" ? users.findByPhone(target) : users.findByEmail(target);
+
+  // 手机号只用于登录已绑定的账号：不提供「手机号注册」——
+  // 账号主身份仍是邮箱（学校、uuid、历史内容都挂在它上面）。
+  if (channel === "phone" && !user) {
+    return sendJson(ctx.req, ctx.res, 400, {
+      error: "phone_not_bound",
+      message: "该手机号还没有绑定账号，请先用邮箱登录并绑定手机号"
+    });
+  }
 
   // 新用户：不直接建号 —— 还必须选学校、起昵称。用一次性令牌承接上一步。
   if (!user) {
-    const issued = users.issueRegisterToken(emailAddr, { ipHash: ctx.ipHash });
+    const issued = users.issueRegisterToken(target, { ipHash: ctx.ipHash });
     return sendJson(ctx.req, ctx.res, 200, {
       needProfile: true,
       token: issued.token,
-      email: emailAddr
+      email: target,
+      channel
     }, { "Cache-Control": "no-store" });
   }
 
@@ -898,6 +965,134 @@ route("GET", "/api/auth/me", (ctx) => {
     user: ctx.user
       ? users.publicUser(ctx.user, { self: true, stats: users.statsFor(ctx.user.id) })
       : null
+  }, { "Cache-Control": "no-store" });
+});
+
+/* ───────────────────── 手机号绑定（登录后的第二通道）─────────────────────
+ *
+ * 为什么单独一组接口而不是塞进 PATCH /api/me：
+ *   绑定手机号是一次**带验证码的凭证变更**，和改昵称/头像不是一回事，
+ *   混在一起会让「改资料」这个接口同时踩到短信限流与 Turnstile。
+ * 发码同样要过 Turnstile（action=bind_phone）：短信每条都花钱，
+ * 不能因为「用户已登录」就放任脚本刷。
+ * ------------------------------------------------------------------ */
+
+// POST /api/me/phone/code { phone, turnstileToken }
+route("POST", "/api/me/phone/code", async (ctx) => {
+  const user = requireLogin(ctx);
+  if (!user) return;
+
+  const payload = await readJson(ctx.req);
+
+  const human = await turnstile.verify({
+    token: payload.turnstileToken || payload["cf-turnstile-response"],
+    ip: ctx.ip,
+    action: "bind_phone"
+  });
+  if (!human.ok) {
+    return sendJson(ctx.req, ctx.res, human.status || 403, {
+      error: human.code || "turnstile_failed",
+      message: human.code === "turnstile_required" ? "请先完成人机验证" : "人机验证未通过，请重试",
+      reason: human.reason || ""
+    });
+  }
+
+  if (!config.BREVO.smsReady) {
+    return sendJson(ctx.req, ctx.res, 503, {
+      error: "sms_unavailable",
+      message: "短信通道未启用，暂时无法绑定手机号"
+    });
+  }
+
+  const phone = users.normalizePhone(payload.phone);
+  if (!users.isValidPhone(phone)) {
+    return sendJson(ctx.req, ctx.res, 400, { error: "invalid_phone", message: "手机号格式不正确" });
+  }
+
+  const owner = users.findByPhone(phone);
+  if (owner && owner.id === user.id) {
+    return sendJson(ctx.req, ctx.res, 409, { error: "phone_already_bound", message: "这个手机号已经绑定在你的账号上了" });
+  }
+  if (owner) {
+    return sendJson(ctx.req, ctx.res, 409, { error: "phone_taken", message: "该手机号已被其他账号绑定" });
+  }
+
+  // 限流：按账号防连点，按号码防把别人的手机号当靶子
+  const userBucket = limit(`phone-code-user:${user.id}`, 5, 10 * 60 * 1000);
+  if (!userBucket.ok) {
+    return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: userBucket.retryAfter });
+  }
+  const phoneBucket = limit(`phone-code-target:${phone}`, 3, 60 * 60 * 1000);
+  if (!phoneBucket.ok) {
+    return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: phoneBucket.retryAfter });
+  }
+
+  const { code, ttlSeconds } = users.issueCode(phone, { channel: "phone", ipHash: ctx.ipHash, purpose: "bind" });
+  const sent = await sms.sendSms({
+    to: phone,
+    content: sms.codeSms({
+      code,
+      siteName: config.SITE_NAME,
+      ttlMinutes: Math.round(ttlSeconds / 60),
+      purpose: "bind"
+    }),
+    tag: "bind"
+  });
+
+  const body = { ok: true, expiresIn: ttlSeconds, delivered: Boolean(sent.ok) };
+  if (config.CODE_ECHO) body.devCode = code;
+  sendJson(ctx.req, ctx.res, 200, body, { "Cache-Control": "no-store" });
+});
+
+// POST /api/me/phone/verify { phone, code }
+route("POST", "/api/me/phone/verify", async (ctx) => {
+  const user = requireLogin(ctx);
+  if (!user) return;
+
+  const bucket = limit(`phone-verify:${user.id}`, 10, 10 * 60 * 1000);
+  if (!bucket.ok) {
+    return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: bucket.retryAfter });
+  }
+
+  const payload = await readJson(ctx.req);
+  const phone = users.normalizePhone(payload.phone);
+  if (!users.isValidPhone(phone)) {
+    return sendJson(ctx.req, ctx.res, 400, { error: "invalid_phone", message: "手机号格式不正确" });
+  }
+
+  const result = users.verifyCode(phone, payload.code, "phone");
+  if (!result.ok) {
+    const status = result.error === "code_expired" ? 410 : 401;
+    return sendJson(ctx.req, ctx.res, status, {
+      error: result.error,
+      message: result.error === "code_expired" ? "验证码已失效，请重新获取" : "验证码不正确",
+      remaining: result.remaining
+    });
+  }
+
+  const bound = users.setPhone(user.id, phone);
+  if (!bound.ok) {
+    const status = bound.error === "phone_taken" ? 409 : 400;
+    return sendJson(ctx.req, ctx.res, status, {
+      error: bound.error,
+      message: bound.error === "phone_taken" ? "该手机号已被其他账号绑定" : "手机号格式不正确"
+    });
+  }
+
+  const fresh = users.findById(user.id);
+  sendJson(ctx.req, ctx.res, 200, {
+    user: users.publicUser(fresh, { self: true, stats: users.statsFor(fresh.id) })
+  }, { "Cache-Control": "no-store" });
+});
+
+// DELETE /api/me/phone —— 解绑（换号/手机丢了时的自救路径）
+route("DELETE", "/api/me/phone", (ctx) => {
+  const user = requireLogin(ctx);
+  if (!user) return;
+  users.clearPhone(user.id);
+  const fresh = users.findById(user.id);
+  sendJson(ctx.req, ctx.res, 200, {
+    user: users.publicUser(fresh, { self: true, stats: users.statsFor(fresh.id) })
   }, { "Cache-Control": "no-store" });
 });
 
@@ -1568,12 +1763,19 @@ route("GET", "/api/admin/stats", (ctx) => {
     replies: one("SELECT COUNT(*) AS n FROM forum_replies WHERE status='approved'"),
     dmsToday: one("SELECT COUNT(*) AS n FROM dm_messages WHERE created_at > " + (Date.now() - 86400000)),
     version: config.VERSION,
-    // 邮件通道：验证码是唯一的登录入口，配置状态必须在后台一眼可见
+    // 邮件/短信通道：验证码是唯一的登录入口，配置状态必须在后台一眼可见
     email: {
       configured: config.EMAIL.configured,
-      from: config.EMAIL.from || "",
-      fromName: config.EMAIL.fromName || "",
+      provider: config.EMAIL.provider,
+      from: config.EMAIL.provider === "brevo" ? config.BREVO.senderEmail : (config.EMAIL.from || ""),
+      fromName: config.EMAIL.provider === "brevo" ? config.BREVO.senderName : (config.EMAIL.fromName || ""),
       ttlSeconds: config.CODE_TTL
+    },
+    brevo: {
+      enabled: config.BREVO.enabled,
+      emailReady: config.BREVO.emailReady,
+      smsReady: config.BREVO.smsReady,
+      smsSender: config.BREVO.smsSender || ""
     },
     // 数据库体积与可回收空间：低配 VPS 上最该盯的两个数
     db: {
@@ -2233,12 +2435,45 @@ route("POST", "/api/admin/email/test", async (ctx) => {
   audit("email.test", to, result.ok ? "ok" : (result.error || "failed"), ctx.ip);
   sendJson(ctx.req, ctx.res, 200, {
     ok: Boolean(result.ok),
+    provider: result.provider || config.EMAIL.provider,
     degraded: Boolean(result.degraded),
     delivered: result.delivered || [],
     queued: result.queued || [],
     error: result.error || "",
     configured: config.EMAIL.configured,
-    from: config.EMAIL.from || ""
+    from: config.EMAIL.provider === "brevo" ? config.BREVO.senderEmail : (config.EMAIL.from || "")
+  });
+});
+
+/**
+ * 短信通道自检：给指定号码发一条测试短信。
+ *
+ * 与邮件自检同理：短信通道配错时用户收不到验证码，而错误只在服务端日志里。
+ * 这里把 Brevo 的原始拒绝原因（尤其是「IP 不在授权名单」）原样回给后台。
+ */
+route("POST", "/api/admin/sms/test", async (ctx) => {
+  if (!requireAdmin(ctx)) return;
+
+  const payload = await readJson(ctx.req);
+  const phone = users.normalizePhone(payload.to);
+  if (!users.isValidPhone(phone)) {
+    return sendJson(ctx.req, ctx.res, 400, { error: "invalid_phone", message: "收信号码不合法（需要 E.164，或国内 11 位手机号）" });
+  }
+
+  const content = "【自检】" + config.SITE_NAME + " 短信通道已接通，这条是后台发出的测试短信。";
+  const result = await sms.sendSms({ to: phone, content, tag: "selfcheck" });
+  audit("sms.test", phone, result.ok ? "ok" : (result.error || "failed"), ctx.ip);
+
+  // 顺带把 Brevo 账号信息带回去：套餐/额度不足是最常见的「发不出去」原因
+  const account = config.BREVO.enabled ? await brevo.accountInfo() : { ok: false, error: "未配置 BREVO_API_KEY" };
+
+  sendJson(ctx.req, ctx.res, 200, {
+    ok: Boolean(result.ok),
+    provider: result.provider || "",
+    error: result.error || "",
+    configured: config.BREVO.smsReady,
+    sender: config.BREVO.smsSender || "",
+    account
   });
 });
 
@@ -2538,9 +2773,14 @@ server.listen(PORT, HOST, () => {
   if (ENV_LOADED) console.log(`[env] 已从 ${ENV_FILE} 读取 ${ENV_LOADED} 项配置`);
   console.log(`[up] 静态根目录 ${WEB_ROOT}`);
   console.log(`[up] 数据库 ${db.DB_PATH}（页缓存 ${db.CACHE_MB}MB）`);
-  console.log(`[up] 邮件通道 ${config.EMAIL.configured
-    ? "Cloudflare Email Service 已配置"
-    : "未配置（验证码写入 server/data/outbox/）"}`);
+  console.log(`[up] 邮件通道 ${config.EMAIL.provider === "brevo"
+    ? "Brevo（" + config.BREVO.senderEmail + "）"
+    : config.EMAIL.provider === "cloudflare"
+      ? "Cloudflare Email Service"
+      : "未配置（验证码写入 server/data/outbox/）"}`);
+  console.log(`[up] 短信通道 ${config.BREVO.smsReady
+    ? "Brevo（sender " + config.BREVO.smsSender + "）"
+    : "未配置（手机号登录关闭）"}`);
   console.log(`[up] 学校名单 ${users.schoolList().length} 所`
     + `｜论坛 ${config.FEATURES.forum ? "开启" : "关闭"}`
     + `｜私信 ${config.FEATURES.dm ? "开启" : "关闭"}`);

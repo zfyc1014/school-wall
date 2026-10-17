@@ -63,6 +63,25 @@
   并清理实名时代遗留对象；历史内容没有作者，留空即可（前台本来也不展示作者）。
 - 升级后请到后台补两件事：**添加学校名单**、配置 **Cloudflare 邮件通道**。
 
+### 追加 · Brevo 双通道验证码（邮件 + 短信）（可选功能）
+
+> 仍属 v1.0.0 交付范围。不配置 `BREVO_*` 时行为与之前完全一致（邮件仍可走 Cloudflare 或降级日志）。
+
+- **发信通道可插拔**（`server/src/email.js`）：`brevo` / `cloudflare` / `log` 三选一，由
+  `MAIL_PROVIDER` 决定（默认 auto：Brevo 配好优先用 Brevo）。已配 Cloudflare 的部署不必迁移。
+- **短信通道**（`server/src/sms.js` + `server/src/brevo.js`）：Brevo v3 `/transactionalSMS/sms`；
+  短信文案按中文 70 字内设计，避免按多条计费。
+- **手机号登录**：`users.phone`（E.164，唯一部分索引）+ 绑定流程
+  （`POST /api/me/phone/code` / `verify` / `DELETE /api/me/phone`）。
+  登录接口 `/api/auth/code` 与 `/api/auth/verify` 同时接受 `{email}` 或 `{phone}`。
+- **防刷设计**：未绑定号码不发短信（防短信费被刷）；手机号发码同样过人机验证；
+  重发间隔只统计**未消费**的验证码 —— 刚验证成功的用户不会被自己的成功操作挡住。
+- **Brevo 错误翻译**（`explain()`）：401「IP 不在授权名单」、sender 未验证、额度不足
+  都翻成「该去后台改哪里」，并在后台「邮件/短信自检」里原样展示。
+- 后台新增 `POST /api/admin/sms/test`，并让 `/api/admin/stats` 返回邮件 provider 与短信就绪状态。
+- 新增 `server/scripts/brevo-test.js`（42 项，mock 掉 Brevo API）：邮件/短信发送参数、
+  错误降级、手机号归一化、绑定/重复绑定、未绑定不发短信、双通道登录、后台自检、未配置关闭。
+
 ### 追加 · Cloudflare Turnstile 人机验证（可选功能）
 <span id="turnstile"></span>
 

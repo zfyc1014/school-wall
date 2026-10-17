@@ -44,7 +44,9 @@ DROP INDEX IF EXISTS idx_reports_open; -- 与 idx_reports_status 前缀重复，
 CREATE TABLE IF NOT EXISTS users (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
   uuid             TEXT    NOT NULL UNIQUE,
-  email            TEXT    NOT NULL UNIQUE,          -- 小写归一后存储
+  email            TEXT    NOT NULL UNIQUE,          -- 小写归一后存储；账号主身份
+  phone            TEXT,                             -- E.164（+8613800138000）；绑定后才可手机登录
+  phone_verified_at INTEGER,                         -- 短信验证通过的时间；NULL = 未绑定
   nickname         TEXT    NOT NULL,
   nickname_flagged TEXT,                             -- 命中预筛的规则名；非空即需人工复核
   school           TEXT    NOT NULL,
@@ -64,14 +66,21 @@ CREATE TABLE IF NOT EXISTS users (
 );
 -- 后台「最新注册」列表：ORDER BY created_at DESC, id DESC
 CREATE INDEX IF NOT EXISTS idx_users_created ON users(created_at DESC, id DESC);
+-- 手机号唯一（部分索引：NULL 不算重复，未绑定的用户不互相冲突）。
+-- ⚠️ 这条索引依赖 users.phone 列：老库必须先由 db.js 的 ensureUpgradeColumns() 补列，
+--    否则 schema 执行到这里会直接报 "no such column"（v1.0.0 踩过同一个坑）。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone) WHERE phone IS NOT NULL;
 
--- 邮箱验证码。只存 HMAC，不存明文 —— 数据库泄露也不能直接拿来登录。
+-- 登录验证码（邮箱或短信）。只存 HMAC，不存明文 —— 数据库泄露也不能直接拿来登录。
 -- attempts 计数与 expires_at 一起构成「5 次错误即作废」的实现。
+-- 注意：email 列是**目标地址**的通用载体 —— channel='email' 时是邮箱，
+-- channel='phone' 时是 E.164 手机号。历史列名没有改（改名要重建表，风险大于收益）。
 CREATE TABLE IF NOT EXISTS auth_codes (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   email       TEXT    NOT NULL,
+  channel     TEXT    NOT NULL DEFAULT 'email',   -- email | phone
   code_hash   TEXT    NOT NULL,
-  purpose     TEXT    NOT NULL DEFAULT 'login',   -- login | register
+  purpose     TEXT    NOT NULL DEFAULT 'login',   -- login | register | bind
   attempts    INTEGER NOT NULL DEFAULT 0,
   ip_hash     TEXT,
   created_at  INTEGER NOT NULL,

@@ -182,12 +182,17 @@ function dropColumnIfExists(table, column) {
 function ensureUpgradeColumns() {
   addColumnIfMissing("posts", "user_id", "INTEGER");
   addColumnIfMissing("comments", "user_id", "INTEGER");
+  // 手机号参与唯一索引（idx_users_phone），所以必须和上面几个一样抢在 schema 之前补列
+  addColumnIfMissing("users", "phone", "TEXT");
+  addColumnIfMissing("users", "phone_verified_at", "INTEGER");
 }
 
 // 1) 其余补列（不参与索引）
 addColumnIfMissing("reports", "reporter_id", "INTEGER");
 addColumnIfMissing("feedback", "user_id", "INTEGER");
 addColumnIfMissing("afdian_orders", "title_id", "INTEGER");
+// 验证码表新增「通道」列（老库补列；不参与索引，放 schema 之后即可）
+addColumnIfMissing("auth_codes", "channel", "TEXT NOT NULL DEFAULT 'email'");
 
 // 2) 点赞主体的语义升级：IP 哈希 → 登录用户
 renameColumnIfExists("likes", "ip_hash", "actor");

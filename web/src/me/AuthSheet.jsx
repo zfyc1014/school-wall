@@ -39,6 +39,10 @@ export function AuthSheet({ site }) {
   const [tsToken, setTsToken] = useState('');
   const [tsReset, setTsReset] = useState(0);
   const [tsError, setTsError] = useState('');
+  // 登录通道：邮箱（默认）或手机号。手机通道只在服务端短信通道就绪时出现。
+  const [channel, setChannel] = useState('email');
+  const [phone, setPhone] = useState('');
+  const phoneLoginEnabled = Boolean(site && site.features && site.features.phoneLogin);
 
   // 打开时重置：上次填到一半的邮箱/验证码不应该被下一个人看到
   useEffect(() => {
@@ -50,6 +54,8 @@ export function AuthSheet({ site }) {
     setTsToken('');
     setTsError('');
     setTsReset((n) => n + 1);
+    setChannel('email');
+    setPhone('');
   }, [authOpen]);
 
   // 重发倒计时：服务端 60 秒内只允许发一次，前端跟着走，避免用户白点
@@ -71,8 +77,13 @@ export function AuthSheet({ site }) {
     }
   }, [schoolsLoaded]);
 
+  /** 当前通道要发送的目标：邮箱 → {email}，手机 → {phone} */
+  const codeTarget = () => (channel === 'phone' ? { phone: phone.trim() } : { email: email.trim() });
+  const identifier = () => (channel === 'phone' ? phone.trim() : email.trim());
+  const identifierReady = () => (channel === 'phone' ? /^\+?[\d\s()-]{6,20}$/.test(phone.trim()) : email.trim().length > 3);
+
   const sendCode = async () => {
-    const value = email.trim();
+    const value = identifier();
     if (!value) return;
     // 配了 Turnstile 就必须拿到 token 才能发：token 是发给服务端的，前端拦一下只是省一次空请求
     if (turnstileCfg && !tsToken) {
@@ -81,7 +92,7 @@ export function AuthSheet({ site }) {
     }
     setBusy(true);
     try {
-      const result = await api.auth.requestCode(value, tsToken || undefined);
+      const result = await api.auth.requestCode(codeTarget(), tsToken || undefined);
       setStep('code');
       setCooldown(60);
       if (result && result.devCode) {
@@ -108,7 +119,7 @@ export function AuthSheet({ site }) {
     }
     setBusy(true);
     try {
-      const result = await api.auth.verify(email.trim(), code.trim());
+      const result = await api.auth.verify(codeTarget(), code.trim());
       if (result && result.user) {
         completeAuth(result.user);
         toast('欢迎回来');
@@ -155,19 +166,59 @@ export function AuthSheet({ site }) {
       {step === 'email' ? (
         <div className="stack-lg">
           <div className="field">
-            <label className="field-label" htmlFor="auth-email">邮箱</label>
-            <input
-              id="auth-email"
-              className="input"
-              type="email"
-              inputMode="email"
-              autoComplete="email"
-              placeholder="you@example.com"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              onKeyDown={(event) => { if (event.key === 'Enter') sendCode(); }}
-            />
-            <p className="meta">用邮箱验证码登录，没有密码，也不需要手机号。</p>
+            {phoneLoginEnabled ? (
+              <div className="seg" role="tablist" aria-label="登录方式" style={{ marginBottom: 12 }}>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={channel === 'email'}
+                  className={'seg-btn' + (channel === 'email' ? ' is-active' : '')}
+                  onClick={() => { setChannel('email'); setTsToken(''); setTsReset((n) => n + 1); }}
+                >
+                  邮箱
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={channel === 'phone'}
+                  className={'seg-btn' + (channel === 'phone' ? ' is-active' : '')}
+                  onClick={() => { setChannel('phone'); setTsToken(''); setTsReset((n) => n + 1); }}
+                >
+                  手机号
+                </button>
+              </div>
+            ) : null}
+            <label className="field-label" htmlFor="auth-email">{channel === 'phone' ? '手机号' : '邮箱'}</label>
+            {channel === 'phone' ? (
+              <input
+                id="auth-phone"
+                className="input"
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                placeholder="13800138000"
+                value={phone}
+                onChange={(event) => setPhone(event.target.value)}
+                onKeyDown={(event) => { if (event.key === 'Enter') sendCode(); }}
+              />
+            ) : (
+              <input
+                id="auth-email"
+                className="input"
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+                placeholder="you@example.com"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                onKeyDown={(event) => { if (event.key === 'Enter') sendCode(); }}
+              />
+            )}
+            <p className="meta">
+              {channel === 'phone'
+                ? '手机号需先在「我的 → 设置」里绑定，才能用短信验证码登录。'
+                : '用邮箱验证码登录，没有密码，不需要手机号。'}
+            </p>
           </div>
           {turnstileCfg ? (
             <div className="turnstile-block">
@@ -186,7 +237,7 @@ export function AuthSheet({ site }) {
           <button
             className="btn btn-primary btn-block"
             type="button"
-            disabled={busy || !email.trim() || (turnstileCfg && !tsToken)}
+            disabled={busy || !identifierReady() || (turnstileCfg && !tsToken)}
             onClick={sendCode}
           >
             {busy ? '发送中…' : '获取验证码'}
@@ -209,7 +260,7 @@ export function AuthSheet({ site }) {
               onChange={(event) => setCode(event.target.value.replace(/\D/g, ''))}
               onKeyDown={(event) => { if (event.key === 'Enter') verify(); }}
             />
-            <p className="meta">已发送到 {email}</p>
+            <p className="meta">已发送到 {channel === 'phone' ? phone.trim() : email}</p>
           </div>
           <button className="btn btn-primary btn-block" type="button" disabled={busy} onClick={verify}>
             {busy ? '验证中…' : '登录'}
