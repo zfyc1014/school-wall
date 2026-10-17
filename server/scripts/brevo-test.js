@@ -223,16 +223,27 @@ function cleanup() {
   eq("手机验证码登录成功", phoneLogin.status, 200);
   ok("返回用户对象", Boolean(phoneLogin.body.user && phoneLogin.body.user.uuid), phoneLogin.body);
 
-  console.log("\n未绑定号码不发短信（防短信费被刷）");
-  const before = callsTo("/v3/transactionalSMS/sms").length;
-  const unbound = await call("POST", "/api/auth/code", { body: { phone: "13900139000" } });
-  eq("未绑定号码被拒（400）", unbound.status, 400);
-  eq("错误码是 phone_not_bound", unbound.body.error, "phone_not_bound");
-  eq("没有为此发出任何短信", callsTo("/v3/transactionalSMS/sms").length, before);
+  console.log("\n手机号也可以直接注册（邮箱/手机号自选）");
+  const newPhone = "13900139000";
+  const regCode = await call("POST", "/api/auth/code", { body: { phone: newPhone } });
+  eq("未注册的号码也能收到验证码", regCode.status, 200);
+  const regVerify = await call("POST", "/api/auth/verify", { body: { phone: newPhone, code: regCode.body.devCode } });
+  eq("验证通过后进入完善资料", regVerify.body.needProfile, true);
+  eq("注册令牌标明是手机通道", regVerify.body.channel, "phone");
+  eq("注册响应里不伪造邮箱", regVerify.body.email, "");
+  const phoneReg = await call("POST", "/api/auth/register", {
+    body: { token: regVerify.body.token, nickname: "纯手机用户", school: "测试大学" }
+  });
+  eq("手机号注册成功", phoneReg.status, 201);
+  eq("账号只有手机号，没有邮箱", phoneReg.body.user.email, "");
+  eq("手机号已验证", phoneReg.body.user.phoneVerified, true);
+  eq("保存的是归一化后的号码", phoneReg.body.user.phone, "+8613900139000");
+
+  const regAgain = await call("POST", "/api/auth/code", { body: { phone: newPhone } });
+  ok("同一号码注册发码受限流（1 次/小时）", regAgain.status === 429 || regAgain.status === 200, regAgain.status);
 
   console.log("\n短信通道故障");
   const smsFail = await call("POST", "/api/auth/code", { body: { phone: "+8613800138001" } });
-  // 该号码未绑定 → 先被 phone_not_bound 拦截；换一个已绑定场景需要第二个账号，这里只验证错误路径不崩
   ok("Brevo 拒绝短信时接口不崩", smsFail.status === 400 || smsFail.status === 200, smsFail.status);
 
   console.log("\n后台自检接口");

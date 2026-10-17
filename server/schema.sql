@@ -44,9 +44,11 @@ DROP INDEX IF EXISTS idx_reports_open; -- 与 idx_reports_status 前缀重复，
 CREATE TABLE IF NOT EXISTS users (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
   uuid             TEXT    NOT NULL UNIQUE,
-  email            TEXT    NOT NULL UNIQUE,          -- 小写归一后存储；账号主身份
-  phone            TEXT,                             -- E.164（+8613800138000）；绑定后才可手机登录
-  phone_verified_at INTEGER,                         -- 短信验证通过的时间；NULL = 未绑定
+  -- 邮箱与手机号**至少有一个**：注册时用户自选一种，两者都可以作为登录身份。
+  -- 手机号注册的用户 email 为 NULL —— 所以 email 这里不能加 NOT NULL。
+  email            TEXT    UNIQUE,                   -- 小写归一后存储
+  phone            TEXT,                             -- E.164（+8613800138000）
+  phone_verified_at INTEGER,                         -- 短信验证通过的时间；NULL = 未验证
   nickname         TEXT    NOT NULL,
   nickname_flagged TEXT,                             -- 命中预筛的规则名；非空即需人工复核
   school           TEXT    NOT NULL,
@@ -62,7 +64,9 @@ CREATE TABLE IF NOT EXISTS users (
   ua_hash          TEXT,
   created_at       INTEGER NOT NULL,
   last_login_at    INTEGER,
-  last_seen_at     INTEGER
+  last_seen_at    INTEGER,
+  -- 硬约束：不允许出现「既没邮箱也没手机号」的账号（否则永远登录不进来）
+  CHECK (email IS NOT NULL OR phone IS NOT NULL)
 );
 -- 后台「最新注册」列表：ORDER BY created_at DESC, id DESC
 CREATE INDEX IF NOT EXISTS idx_users_created ON users(created_at DESC, id DESC);
@@ -102,10 +106,12 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_user   ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
 
--- 一次性注册令牌：邮箱验证通过但还没填昵称/学校时签发，15 分钟有效。
+-- 一次性注册令牌：验证码通过但还没填昵称/学校时签发，15 分钟有效。
+-- email 列是**目标地址**的通用载体（与 auth_codes 同口径）：channel=phone 时存的是 E.164 手机号。
 CREATE TABLE IF NOT EXISTS register_tokens (
   token_hash TEXT    PRIMARY KEY,
   email      TEXT    NOT NULL,
+  channel    TEXT    NOT NULL DEFAULT 'email',      -- email | phone
   ip_hash    TEXT,
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,

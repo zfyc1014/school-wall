@@ -71,10 +71,13 @@
   `MAIL_PROVIDER` 决定（默认 auto：Brevo 配好优先用 Brevo）。已配 Cloudflare 的部署不必迁移。
 - **短信通道**（`server/src/sms.js` + `server/src/brevo.js`）：Brevo v3 `/transactionalSMS/sms`；
   短信文案按中文 70 字内设计，避免按多条计费。
+- **邮箱 / 手机号自选注册**：两者都是登录身份，不强制先有邮箱。`users.email` 改为可空
+  （老库整表重建迁移：事务内重建 + legacy_alter_table 保住子表外键 + foreign_key_check），
+  并用 CHECK 保证「至少有一个登录身份」；手机号注册的账号解绑会被拒绝。
 - **手机号登录**：`users.phone`（E.164，唯一部分索引）+ 绑定流程
   （`POST /api/me/phone/code` / `verify` / `DELETE /api/me/phone`）。
   登录接口 `/api/auth/code` 与 `/api/auth/verify` 同时接受 `{email}` 或 `{phone}`。
-- **防刷设计**：未绑定号码不发短信（防短信费被刷）；手机号发码同样过人机验证；
+- **防刷设计**：新号码注册额外限流（每号码 1 次/小时、每 IP 3 次/小时）；手机号发码同样过人机验证；
   重发间隔只统计**未消费**的验证码 —— 刚验证成功的用户不会被自己的成功操作挡住。
 - **Brevo 错误翻译**（`explain()`）：401「IP 不在授权名单」、sender 未验证、额度不足
   都翻成「该去后台改哪里」，并在后台「邮件/短信自检」里原样展示。

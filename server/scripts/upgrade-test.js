@@ -260,6 +260,95 @@ async function waitForServer() {
   ok("第二次启动（重复迁移）依然正常", secondUp, secondLog);
   try { second.kill(); } catch { /* ignore */ }
 
+  /* ── 3. v1.0 形态的库（users.email NOT NULL）→ 迁移为可空 ───────── */
+  // 这条路径最危险：整表重建。所以单独用一个 v1.0 形态的库验证数据与约束都留住了。
+  console.log("\nusers.email 可空迁移（老库整表重建）");
+  const legacy2 = path.join(TMP, "v10.db");
+  {
+    const Database = require("better-sqlite3");
+    const d = new Database(legacy2);
+    d.exec(`
+      CREATE TABLE users (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        uuid       TEXT    NOT NULL UNIQUE,
+        email      TEXT    NOT NULL UNIQUE,
+        nickname   TEXT    NOT NULL,
+        school     TEXT    NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX idx_users_created ON users(created_at DESC, id DESC);
+      CREATE TABLE sessions (
+        token_hash   TEXT    PRIMARY KEY,
+        user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at   INTEGER NOT NULL,
+        expires_at   INTEGER NOT NULL,
+        last_seen_at INTEGER NOT NULL
+      ) WITHOUT ROWID;
+      INSERT INTO users (uuid, email, nickname, school, created_at)
+        VALUES ('legacy-uuid-1', 'old@example.com', '老用户', '旧大学', 1700000000000);
+      INSERT INTO sessions (token_hash, user_id, created_at, expires_at, last_seen_at)
+        VALUES ('legacy-session', 1, 1700000000000, 1900000000000, 1700000000000);
+    `);
+    d.close();
+  }
+
+  const legacyPort = PORT + 1;
+  const legacyApp = spawn(process.execPath, [path.join(ROOT, "src", "server.js")], {
+    cwd: ROOT,
+    env: {
+      ...process.env, OD_SKIP_ENV_FILE: "1", NODE_ENV: "test", HOST: "127.0.0.1",
+      PORT: String(legacyPort), DB_PATH: legacy2, ADMIN_TOKEN, IP_HASH_SECRET: IP_SECRET,
+      AUTH_CODE_ECHO: "1", FORCE_HTTPS: "0"
+    },
+    stdio: ["ignore", "ignore", "pipe"]
+  });
+  let legacyLog = "";
+  legacyApp.stderr.on("data", (c) => { legacyLog += String(c); });
+  let legacyUp = false;
+  {
+    const deadline2 = Date.now() + 15000;
+    while (Date.now() < deadline2) {
+      try {
+        if ((await fetch("http://127.0.0.1:" + legacyPort + "/api/health")).ok) { legacyUp = true; break; }
+      } catch { /* wait */ }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+  ok("v1.0 库迁移后服务能启动", legacyUp, legacyLog.split("\n").slice(-8).join(" | "));
+  try { legacyApp.kill(); } catch { /* ignore */ }
+  await new Promise((r) => setTimeout(r, 300));
+
+  {
+    const Database = require("better-sqlite3");
+    const d = new Database(legacy2);
+    const emailCol = d.prepare("PRAGMA table_info(users)").all().find((c) => c.name === "email");
+    ok("users.email 已变为可空", Boolean(emailCol) && emailCol.notnull === 0, emailCol);
+    const legacyRow = d.prepare("SELECT uuid, nickname, school, phone FROM users WHERE uuid = 'legacy-uuid-1'").get();
+    ok("老用户数据完整保留", Boolean(legacyRow && legacyRow.nickname === "老用户" && legacyRow.school === "旧大学"), legacyRow);
+    const idx = d.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name IN ('idx_users_created','idx_users_phone')")
+      .pluck().all();
+    ok("users 的索引在重建后重新建好", idx.includes("idx_users_created") && idx.includes("idx_users_phone"), idx);
+    eq("老会话没有被破坏（外键仍指向 users）",
+      d.prepare("PRAGMA foreign_key_check").all().length, 0);
+    eq("sessions 里的老会话还在", d.prepare("SELECT COUNT(*) FROM sessions").pluck().get(), 1);
+    // CHECK 约束：不能出现「既没邮箱也没手机号」的账号
+    let checkFailed = false;
+    try {
+      d.prepare("INSERT INTO users (uuid, nickname, school, created_at) VALUES ('bad-uuid','无身份','某校',?)")
+        .run(Date.now());
+    } catch { checkFailed = true; }
+    ok("CHECK 约束拒绝「无邮箱也无手机号」的账号", checkFailed);
+    // 手机号注册形态可以写入
+    let phoneInserted = false;
+    try {
+      d.prepare("INSERT INTO users (uuid, phone, phone_verified_at, nickname, school, created_at) VALUES ('p-uuid-1','+8613711112222',?,?,?,?)")
+        .run(Date.now(), "手机用户", "旧大学", Date.now());
+      phoneInserted = true;
+    } catch { phoneInserted = false; }
+    ok("可以插入只有手机号的账号（自选注册的前提）", phoneInserted);
+    d.close();
+  }
+
   console.log("\n=== 通过 " + passed + " / 失败 " + failed + " ===");
   if (failed) {
     console.log("失败项：" + failures.join("、"));

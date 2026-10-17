@@ -19,6 +19,29 @@
 
 const path = require("path");
 
+/**
+ * 子进程模式：把所有输出**同步**追加到一个文件里。
+ *
+ * 为什么不能只依赖 stdout：实测 Node 24 + better-sqlite3 在 Windows 上，
+ * 只要进程里加载过原生模块，退出阶段就偶发撞
+ *   Assertion failed: (env) != nullptr   → SIGABRT(134)
+ * 而且 process.exit() 时**缓冲区里的 stdout 会整块丢失**（连已经 console.log 过的内容都没了）。
+ * appendFileSync 是直接的系统调用，写下去就一定在。
+ */
+const LOG_FILE = process.env.DB_CHECK_CHILD === "1" ? process.env.DB_CHECK_LOG_FILE : "";
+if (LOG_FILE) {
+  const fsSync = require("fs");
+  try { fsSync.writeFileSync(LOG_FILE, ""); } catch { /* ignore */ }
+  for (const method of ["log", "warn", "error"]) {
+    const original = console[method].bind(console);
+    console[method] = (...parts) => {
+      const line = parts.map((p) => String(p)).join(" ") + "\n";
+      try { fsSync.appendFileSync(LOG_FILE, line); } catch { /* ignore */ }
+      original(...parts);
+    };
+  }
+}
+
 const args = process.argv.slice(2);
 const recountOnly = args.includes("--recount");
 const dbArg = args.find((a) => a.startsWith("--db="));
@@ -28,43 +51,41 @@ if (dbArg) process.env.DB_PATH = dbArg.slice(5);
  * ── 父进程：只负责调度与判定 ────────────────────────────────────────────
  *
  * 必须在 require("../src/db") **之前**：父进程一旦加载了 better-sqlite3，
- * 它自己也会在退出阶段撞上那个原生断言（见文件末尾的说明），包装就白做了。
+ * 它自己也会在退出阶段撞上那个原生断言，包装就白做了。
  */
 if (process.env.DB_CHECK_CHILD !== "1") {
   const { spawnSync } = require("child_process");
   const fsMod = require("fs");
   const osMod = require("os");
 
-  /*
-   * 子进程的输出**走临时文件而不是管道**。
-   *
-   * 原因：Node 写管道是异步的，子进程一旦在退出阶段被原生断言打断，
-   * 缓冲区里没冲刷出去的内容（包括那行结论）就一起没了 —— 父进程只能看到「没有结论」。
-   * 写文件是同步的，abort 也保得住已经写下的内容。
-   */
   const logFile = path.join(osMod.tmpdir(), "wall-dbcheck-" + process.pid + ".log");
   const verdictFile = logFile + ".verdict";
-  const fd = fsMod.openSync(logFile, "w");
+  try { fsMod.unlinkSync(logFile); } catch { /* 不存在就算了 */ }
+  try { fsMod.unlinkSync(verdictFile); } catch { /* 不存在就算了 */ }
+
   const child = spawnSync(process.execPath, [__filename].concat(process.argv.slice(2)), {
-    env: Object.assign({}, process.env, { DB_CHECK_CHILD: "1", DB_CHECK_VERDICT_FILE: verdictFile }),
-    stdio: ["ignore", fd, fd]
+    env: Object.assign({}, process.env, {
+      DB_CHECK_CHILD: "1",
+      DB_CHECK_LOG_FILE: logFile,
+      DB_CHECK_VERDICT_FILE: verdictFile
+    }),
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
   });
-  fsMod.closeSync(fd);
 
+  // 日志与结论都以「子进程自己写的文件」为准；管道只做兜底
   let out = "";
-  try { out = fsMod.readFileSync(logFile, "utf8"); } catch { /* 读不到就按失败处理 */ }
-  try { fsMod.unlinkSync(logFile); } catch { /* ignore */ }
-  process.stdout.write(out);
-
-  // 结论优先读独立文件：子进程在退出阶段被原生断言打断时，stdout 里的内容可能来不及落盘，
-  // 但 fs.writeFileSync 写出的结论文件一定在（这比解析输出可靠得多）。
+  try { out = fsMod.readFileSync(logFile, "utf8"); } catch { /* 没写出来 */ }
+  if (!out) out = (child.stdout || "") + (child.stderr || "");
   let verdictText = "";
   try { verdictText = fsMod.readFileSync(verdictFile, "utf8"); } catch { /* 没写出来 */ }
+  try { fsMod.unlinkSync(logFile); } catch { /* ignore */ }
   try { fsMod.unlinkSync(verdictFile); } catch { /* ignore */ }
-  const verdict = /__VERDICT__ (ok|fail:([0-9]+))/.exec(verdictText || out);
 
-  // 兜底：万一子进程在写出判定行**之前**就被断言打断，只要输出里能看见结论文字，
-  // 就按结论判定 —— 结论是脚本自己算出来的，进程怎么死的与它无关。
+  process.stdout.write(out);
+
+  const verdict = /__VERDICT__ (ok|fail:([0-9]+))/.exec(verdictText || out);
+  // 兜底：只要输出里能看见结论文字，就按结论判定 —— 进程怎么死的与体检结果无关
   let ok = verdict ? verdict[1] === "ok" : null;
   if (ok === null) {
     if (/===\s*全部通过\s*===/.test(out)) ok = true;
@@ -76,7 +97,7 @@ if (process.env.DB_CHECK_CHILD !== "1") {
     process.exit(1);
   }
   if (child.status === 134 || child.signal === "SIGABRT") {
-    console.log("[db-check] 注：子进程在退出阶段触发了 better-sqlite3 的原生断言（SIGABRT）；结论已在上面拿到，与体检结果无关。");
+    console.log("[db-check] 注：子进程在退出阶段触发了 better-sqlite3 的原生断言（SIGABRT）；结论已在上方，与体检结果无关。");
   }
   process.exit(ok ? 0 : 1);
 }
@@ -272,6 +293,7 @@ function finish(code) {
   // 而 Node 对管道 stdout 是异步写 —— 异步写的内容会随进程一起消失，
   // 父进程就只看到「没有结论」。writeSync 保证它先落到管道里。
   const verdictLine = "__VERDICT__ " + (code ? "fail:" + failed : "ok") + "\n";
+  try { if (LOG_FILE) require("fs").appendFileSync(LOG_FILE, verdictLine); } catch { /* ignore */ }
   // 写独立文件（父进程据此判定），同时照常打到 stdout 供人看
   try {
     const target = process.env.DB_CHECK_VERDICT_FILE;

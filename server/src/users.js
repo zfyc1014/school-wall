@@ -299,15 +299,27 @@ function makeUuid() {
 
 /**
  * 建号。uuid 由服务端生成（不接受客户端传入），school 在此写死后不再可变。
+ *
+ * 邮箱与手机号**至少给一个**（注册时用户自选）：
+ *   - 邮箱注册：email 有值，phone 为空；
+ *   - 手机号注册：phone 有值（且已通过短信验证，phone_verified_at 直接置位），email 为 NULL。
+ * 数据库还有 CHECK 约束兜底，这里先挡一次是为了给出清楚的 JS 错误而不是 SQLite 报错。
  */
-function createUser({ email, nickname, school, avatar = "", ipHash = null, uaHash = null }) {
+function createUser({ email = null, phone = null, nickname, school, avatar = "", ipHash = null, uaHash = null }) {
   const now = Date.now();
   const uuid = makeUuid();
   const nick = String(nickname).trim();
+  const mail = email ? normalizeEmail(email) : null;
+  const tel = phone ? normalizePhone(phone) : null;
+  if (!mail && !tel) throw new Error("createUser: 需要邮箱或手机号之一");
   const info = db.prepare(
-    `INSERT INTO users (uuid, email, nickname, school, avatar, ip_hash, ua_hash, created_at, last_login_at, last_seen_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?)`
-  ).run(uuid, normalizeEmail(email), nick, normalizeSchool(school), AVATAR_SET.has(avatar) ? avatar : "", ipHash, uaHash, now, now, now);
+    `INSERT INTO users (uuid, email, phone, phone_verified_at, nickname, school, avatar, ip_hash, ua_hash,
+                        created_at, last_login_at, last_seen_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+  ).run(
+    uuid, mail, tel, tel ? now : null, nick, normalizeSchool(school),
+    AVATAR_SET.has(avatar) ? avatar : "", ipHash, uaHash, now, now, now
+  );
   return findById(info.lastInsertRowid);
 }
 
@@ -376,7 +388,8 @@ function publicUser(row, { self = false, stats = null, titles = allTitles() } = 
   };
   if (stats) out.stats = stats;
   if (self) {
-    out.email = row.email;
+    // 手机号注册的账号没有邮箱：前端所有展示都要能接受空串
+    out.email = row.email || "";
     out.phone = row.phone || "";
     out.status = row.status;
     out.nicknameCooldownUntil = row.last_nickname_at
@@ -719,12 +732,14 @@ function verifyCode(target, rawCode, channel = "email") {
 
 const REGISTER_TTL_MS = 15 * 60 * 1000;
 
-function issueRegisterToken(email, { ipHash = null } = {}) {
+/** 签发注册令牌。target 可以是邮箱或 E.164 手机号（channel 区分），两者都算登录身份。 */
+function issueRegisterToken(target, { channel = "email", ipHash = null } = {}) {
   const token = crypto.randomBytes(24).toString("base64url");
   const now = Date.now();
+  const normalized = channel === "phone" ? normalizePhone(target) : normalizeEmail(target);
   db.prepare(
-    "INSERT INTO register_tokens (token_hash, email, ip_hash, created_at, expires_at) VALUES (?,?,?,?,?)"
-  ).run(hashToken(token), normalizeEmail(email), ipHash, now, now + REGISTER_TTL_MS);
+    "INSERT INTO register_tokens (token_hash, email, channel, ip_hash, created_at, expires_at) VALUES (?,?,?,?,?,?)"
+  ).run(hashToken(token), normalized, channel, ipHash, now, now + REGISTER_TTL_MS);
   return { token, expiresAt: now + REGISTER_TTL_MS };
 }
 
@@ -738,10 +753,10 @@ function issueRegisterToken(email, { ipHash = null } = {}) {
  */
 function peekRegisterToken(token) {
   const row = db.prepare(
-    "SELECT email, expires_at, used_at FROM register_tokens WHERE token_hash = ?"
+    "SELECT email, channel, expires_at, used_at FROM register_tokens WHERE token_hash = ?"
   ).get(hashToken(String(token || "")));
   if (!row || row.used_at || row.expires_at <= Date.now()) return { ok: false, error: "invalid_token" };
-  return { ok: true, email: row.email };
+  return { ok: true, target: row.email, channel: row.channel || "email" };
 }
 
 /** 一次性消费：建号成功后调用，重放即失效 */

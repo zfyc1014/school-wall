@@ -187,12 +187,63 @@ function ensureUpgradeColumns() {
   addColumnIfMissing("users", "phone_verified_at", "INTEGER");
 }
 
+/**
+ * 迁移：users.email 允许为空（支持「邮箱或手机号任选其一」注册）。
+ *
+ * 为什么必须重建表：SQLite 不能 ALTER 掉 NOT NULL 约束。
+ * 为什么安全：
+ *   1. 整段在一个事务里（DDL 在 SQLite 里也是事务性的，失败自动回滚）；
+ *   2. 期间关闭外键检查，且 **legacy_alter_table=ON** 让 RENAME 不去改写
+ *      子表（sessions/posts/...）里指向 users 的外键定义；
+ *   3. 新表结构直接来自 schema.sql（不手写一份，避免与 schema 漂移）；
+ *   4. 复制数据时保留原 id，AUTOINCREMENT 序列会随后续插入自动对齐；
+ *   5. 结束后跑 foreign_key_check，有问题立刻告警。
+ * 新库不会走到这里（schema.sql 建出来就是可空），只对旧库生效一次。
+ */
+function migrateUsersEmailNullable() {
+  if (!tableExists("users")) return false;
+  const emailCol = db.prepare("PRAGMA table_info(users)").all().find((c) => c.name === "email");
+  if (!emailCol || !emailCol.notnull) return false;
+
+  const columns = db.prepare("PRAGMA table_info(users)").all().map((c) => c.name);
+  const colList = columns.join(", ");
+  console.log("[db] 迁移：users.email 改为可空（邮箱/手机号自选注册）…");
+
+  db.pragma("foreign_keys = OFF");
+  try {
+    db.exec("BEGIN");
+    db.exec("PRAGMA legacy_alter_table = ON");
+    db.exec("ALTER TABLE users RENAME TO users_legacy");
+    // 索引跟着旧表走、名字还在，必须先删掉，否则 schema 里的 IF NOT EXISTS 会跳过
+    db.exec("DROP INDEX IF EXISTS idx_users_created");
+    db.exec("DROP INDEX IF EXISTS idx_users_phone");
+    db.exec(fs.readFileSync(path.join(__dirname, "..", "schema.sql"), "utf8"));
+    db.exec(`INSERT INTO users (${colList}) SELECT ${colList} FROM users_legacy`);
+    db.exec("DROP TABLE users_legacy");
+    db.exec("PRAGMA legacy_alter_table = OFF");
+    db.exec("COMMIT");
+  } catch (err) {
+    try { db.exec("ROLLBACK"); } catch { /* ignore */ }
+    db.pragma("foreign_keys = ON");
+    console.error("[db] 迁移失败，users.email 仍为 NOT NULL：" + err.message);
+    throw err;
+  }
+  db.pragma("foreign_keys = ON");
+  const bad = db.prepare("PRAGMA foreign_key_check").all();
+  if (bad.length) console.error("[db] 迁移后外键检查未通过：" + JSON.stringify(bad.slice(0, 3)));
+  else console.log("[db] 迁移完成：users.email 已可空，数据与索引已保留");
+  return true;
+}
+
 // 1) 其余补列（不参与索引）
 addColumnIfMissing("reports", "reporter_id", "INTEGER");
 addColumnIfMissing("feedback", "user_id", "INTEGER");
 addColumnIfMissing("afdian_orders", "title_id", "INTEGER");
 // 验证码表新增「通道」列（老库补列；不参与索引，放 schema 之后即可）
 addColumnIfMissing("auth_codes", "channel", "TEXT NOT NULL DEFAULT 'email'");
+addColumnIfMissing("register_tokens", "channel", "TEXT NOT NULL DEFAULT 'email'");
+// 邮箱改可空要整表重建，放在补列之后、索引已就绪时执行一次
+migrateUsersEmailNullable();
 
 // 2) 点赞主体的语义升级：IP 哈希 → 登录用户
 renameColumnIfExists("likes", "ip_hash", "actor");

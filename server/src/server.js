@@ -759,18 +759,23 @@ route("POST", "/api/auth/code", async (ctx) => {
     });
   }
 
-  // 手机通道只给**已绑定**的账号发短信：否则任何人都能拿这个接口当免费短信炮台，
-  // 每一条都是真金白银。代价是「手机号是否注册过」可被探测（有限流兜底），
-  // 但相比被刷爆短信费，这个取舍更划算；而且提示语直接告诉用户该先绑邮箱。
   const existing = channel === "phone" ? users.findByPhone(target) : users.findByEmail(target);
-  if (channel === "phone" && !existing) {
-    return sendJson(ctx.req, ctx.res, 400, {
-      error: "phone_not_bound",
-      message: "该手机号还没有绑定账号：请先用邮箱登录，再到「我的 → 设置」里绑定手机号"
-    });
-  }
   if (existing && existing.status === "banned") {
     return sendJson(ctx.req, ctx.res, 403, { error: "account_banned", message: "该账号已被封禁" });
+  }
+
+  // 邮箱与手机号都可以直接注册（用户自选，不强制先有邮箱）。
+  // 但短信是花钱的：**新号码注册**额外加两道更严的闸 —— 每个号码 1 次/小时、
+  // 每个 IP 3 次/小时。配合 Turnstile，把「拿接口当免费短信炮台」的成本抬到不可行。
+  if (channel === "phone" && !existing) {
+    const newPhone = limit(`auth-code-phone-new:${target}`, 1, 60 * 60 * 1000);
+    if (!newPhone.ok) {
+      return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: newPhone.retryAfter });
+    }
+    const newPhoneIp = limit(`auth-code-phone-new-ip:${ctx.ipHash}`, 3, 60 * 60 * 1000);
+    if (!newPhoneIp.ok) {
+      return sendJson(ctx.req, ctx.res, 429, { error: "rate_limited", retryAfter: newPhoneIp.retryAfter });
+    }
   }
 
   const purpose = existing ? "login" : "register";
@@ -844,23 +849,16 @@ route("POST", "/api/auth/verify", async (ctx) => {
 
   const user = channel === "phone" ? users.findByPhone(target) : users.findByEmail(target);
 
-  // 手机号只用于登录已绑定的账号：不提供「手机号注册」——
-  // 账号主身份仍是邮箱（学校、uuid、历史内容都挂在它上面）。
-  if (channel === "phone" && !user) {
-    return sendJson(ctx.req, ctx.res, 400, {
-      error: "phone_not_bound",
-      message: "该手机号还没有绑定账号，请先用邮箱登录并绑定手机号"
-    });
-  }
-
   // 新用户：不直接建号 —— 还必须选学校、起昵称。用一次性令牌承接上一步。
+  // 邮箱与手机号两条通道都走这里（用户自选注册方式）。
   if (!user) {
-    const issued = users.issueRegisterToken(target, { ipHash: ctx.ipHash });
+    const issued = users.issueRegisterToken(target, { channel, ipHash: ctx.ipHash });
     return sendJson(ctx.req, ctx.res, 200, {
       needProfile: true,
       token: issued.token,
-      email: target,
-      channel
+      channel,
+      email: channel === "email" ? target : "",
+      phone: channel === "phone" ? target : ""
     }, { "Cache-Control": "no-store" });
   }
 
@@ -920,13 +918,19 @@ route("POST", "/api/auth/register", async (ctx) => {
     return sendJson(ctx.req, ctx.res, 400, { error: "invalid_school", message: "请从列表中选择学校" });
   }
 
-  if (users.findByEmail(pending.email)) {
+  const pendingChannel = pending.channel === "phone" ? "phone" : "email";
+  if (pendingChannel === "email" && users.findByEmail(pending.target)) {
     return sendJson(ctx.req, ctx.res, 409, { error: "already_registered", message: "该邮箱已注册，请直接登录" });
+  }
+  if (pendingChannel === "phone" && users.findByPhone(pending.target)) {
+    return sendJson(ctx.req, ctx.res, 409, { error: "already_registered", message: "该手机号已注册，请直接登录" });
   }
 
   const avatar = users.AVATARS.includes(payload.avatar) ? payload.avatar : "";
   const user = users.createUser({
-    email: pending.email,
+    email: pendingChannel === "email" ? pending.target : null,
+    // 手机号注册时这个号码已经过短信验证，phone_verified_at 直接置位
+    phone: pendingChannel === "phone" ? pending.target : null,
     nickname,
     school,
     avatar,
@@ -1089,6 +1093,13 @@ route("POST", "/api/me/phone/verify", async (ctx) => {
 route("DELETE", "/api/me/phone", (ctx) => {
   const user = requireLogin(ctx);
   if (!user) return;
+  // 手机号注册的账号没有邮箱：解绑等于把自己锁在门外
+  if (!user.email) {
+    return sendJson(ctx.req, ctx.res, 409, {
+      error: "phone_is_login_identity",
+      message: "这个账号是用手机号注册的，解绑后将无法登录。如需更换号码，请先用新号码登录绑定流程。"
+    });
+  }
   users.clearPhone(user.id);
   const fresh = users.findById(user.id);
   sendJson(ctx.req, ctx.res, 200, {
