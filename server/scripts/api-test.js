@@ -262,26 +262,23 @@ async function main() {
     ok("两个账号 uuid 不同", aliceUuid !== bobUuid);
   }
 
-  section("表白墙：匿名、先审后发、字数不限");
+  section("表白墙：匿名、过词库即发布、字数不限");
   {
     eq("未登录发帖被拒", (await anon.post("/api/posts", { cat: "表白", body: "未登录也想发" })).status, 401);
 
     const longBody = "这是一条很长的表白，".repeat(200); // 2000 字，远超旧版的 500 字上限
     const created = await alice.post("/api/posts", { cat: "表白", body: longBody });
     eq("超长正文可以发布（已取消字数限制）", created.status, 201);
-    eq("先审后发：状态是 pending", created.body.status, "pending");
+    eq("干净内容直接发布（不排队等人审）", created.body.status, "approved");
 
     eq("空内容被拒", (await alice.post("/api/posts", { cat: "表白", body: "   " })).body.error, "empty");
     eq("非法分类被 400", (await alice.post("/api/posts", { cat: "不存在的分类", body: "内容" })).status, 400);
-    eq("未审核的内容不出现在列表里", (await anon.get("/api/posts")).body.items.length, 0);
+    eq("发布后立刻出现在信息流里", (await anon.get("/api/posts")).body.items.length, 1);
 
     const queue = await anon.get("/api/admin/queue?type=posts", { admin: true });
-    eq("后台队列里能看到待审帖子", queue.body.items.length, 1);
-    postId = queue.body.items[0].id;
-
-    await anon.post("/api/admin/posts/" + postId + "/approve", {}, { admin: true });
+    eq("干净内容不进后台队列", queue.body.items.length, 0);
     const feed = await anon.get("/api/posts");
-    eq("审核通过后出现在列表里", feed.body.items.length, 1);
+    postId = feed.body.items[0].id;
     const item = feed.body.items[0];
     ok("信息流不返回任何作者字段",
       !("nickname" in item) && !("user" in item) && !("uuid" in item) && !("userId" in item),
@@ -293,13 +290,11 @@ async function main() {
     eq("再点一次取消（按用户去重）", (await alice.post("/api/posts/" + postId + "/like", {})).body.liked, false);
     eq("第三次又点赞且计数为 1", (await alice.post("/api/posts/" + postId + "/like", {})).body.likes, 1);
 
-    eq("评论先审后发", (await alice.post("/api/posts/" + postId + "/comments", { body: "加油" })).body.status, "pending");
-    eq("未审核的评论不公开", (await anon.get("/api/posts/" + postId + "/comments")).body.items.length, 0);
+    eq("评论同样直接发布", (await alice.post("/api/posts/" + postId + "/comments", { body: "加油" })).body.status, "approved");
+    eq("评论立刻可见", (await anon.get("/api/posts/" + postId + "/comments")).body.items.length, 1);
 
     const cQueue = await anon.get("/api/admin/queue?type=comments", { admin: true });
-    eq("评论进后台队列", cQueue.body.items.length, 1);
-    await anon.post("/api/admin/comments/" + cQueue.body.items[0].id + "/approve", {}, { admin: true });
-    eq("通过后评论可见", (await anon.get("/api/posts/" + postId + "/comments")).body.items.length, 1);
+    eq("干净评论不进后台队列", cQueue.body.items.length, 0);
     eq("帖子评论数已累加", (await anon.get("/api/posts")).body.items[0].comments, 1);
 
     eq("登录用户可以举报", (await bob.post("/api/reports", { postId, reason: "测试举报" })).status, 201);
@@ -371,6 +366,13 @@ async function main() {
     const daveUuid = (await dave.get("/api/auth/me")).body.user.uuid;
     await bob.post("/api/friends/requests", { uuid: daveUuid });
     const mutual = await dave.post("/api/friends/requests", { uuid: bobUuid });
+    // 撤回：自己发出的、对方还没处理的请求可以收回（否则发错人只能等对方点拒绝）
+    eq("发起一条可撤回的请求", (await carol.post("/api/friends/requests", { uuid: daveUuid })).body.status, "pending");
+    eq("对方能看到", (await dave.get("/api/friends")).body.incoming.length >= 1, true);
+    eq("本人撤回成功", (await carol.del("/api/friends/requests/" + daveUuid)).status, 200);
+    eq("撤回后对方列表里没了", (await dave.get("/api/friends")).body.incoming.length, 0);
+    eq("重复撤回报错", (await carol.del("/api/friends/requests/" + daveUuid)).status, 400);
+
     eq("对方已发过请求时，我这边一按即成为好友", mutual.body.status, "accepted");
     eq("双方好友数都 +1", (await bob.get("/api/friends")).body.friends.length, 2);
   }
@@ -503,6 +505,18 @@ async function main() {
     eq("主题队列可读", q1.body.type, "threads");
     const q2 = await anon.get("/api/admin/queue?type=replies", { admin: true });
     eq("回复队列可读", q2.body.type, "replies");
+  }
+
+  section("审核：命中词库的内容仍然转人工");
+  {
+    const flaggedPost = await bob.post("/api/posts", { cat: "表白", body: "这条包含测试违禁词" });
+    eq("命中词库的表白转人工", flaggedPost.body.status, "pending");
+    eq("它不会出现在公开列表里", (await anon.get("/api/posts")).body.items.length, 1); // 只有上面那条干净的
+    const pq = await anon.get("/api/admin/queue?type=posts", { admin: true });
+    eq("同时进后台待审队列", pq.body.items.length, 1);
+    eq("队列项带命中标记", Boolean(pq.body.items[0].flag), true);
+    await anon.post("/api/admin/posts/" + pq.body.items[0].id + "/approve", {}, { admin: true });
+    eq("人工放行后可见", (await anon.get("/api/posts")).body.items.length, 2);
   }
 
   section("审核：命中预筛的论坛内容进队列");

@@ -149,6 +149,21 @@ function declineRequest(userId, requesterUuid) {
   return { ok: true };
 }
 
+/**
+ * 撤回自己**发出、对方还没处理**的好友请求。
+ *
+ * 之前只能等对方操作：发给一个不想加的人是撤回不了的，请求就永久挂在那里。
+ * 只允许删「我发起的 + 仍是 pending」的行，别人的请求或已成立的好友关系都动不了。
+ */
+function cancelRequest(userId, peerUuid) {
+  const peer = users.findByUuid(peerUuid);
+  if (!peer) return { ok: false, error: "not_found" };
+  const info = db.prepare(
+    "DELETE FROM friendships WHERE status = 'pending' AND requester_id = ? AND addressee_id = ?"
+  ).run(userId, peer.id);
+  return { ok: info.changes > 0, error: info.changes ? undefined : "no_pending_request" };
+}
+
 /** 删除好友：直接删行（聊天记录保留，重新加回来还能看到历史） */
 function removeFriend(userId, peerUuid) {
   const peer = users.findByUuid(peerUuid);
@@ -321,6 +336,7 @@ module.exports = {
   sendRequest,
   acceptRequest,
   declineRequest,
+  cancelRequest,
   removeFriend,
   blockUser,
   unblockUser,

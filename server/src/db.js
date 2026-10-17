@@ -242,6 +242,10 @@ addColumnIfMissing("afdian_orders", "title_id", "INTEGER");
 // 验证码表新增「通道」列（老库补列；不参与索引，放 schema 之后即可）
 addColumnIfMissing("auth_codes", "channel", "TEXT NOT NULL DEFAULT 'email'");
 addColumnIfMissing("register_tokens", "channel", "TEXT NOT NULL DEFAULT 'email'");
+// 概览页的「IP 来源 / 设备」：粗粒度画像，不参与索引
+addColumnIfMissing("users", "last_country", "TEXT");
+addColumnIfMissing("users", "last_device", "TEXT");
+addColumnIfMissing("users", "last_ip_masked", "TEXT");
 // 邮箱改可空要整表重建，放在补列之后、索引已就绪时执行一次
 migrateUsersEmailNullable();
 

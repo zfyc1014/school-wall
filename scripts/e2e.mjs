@@ -252,17 +252,17 @@ async function main() {
     await page.eval(clickText('.sheet-foot .btn', '发布'));
     await page.waitFor('!document.querySelector(".sheet-panel")', { timeout: 8000 });
 
-    // 后台把这条帖子审过
+    // 过词库即发布：干净内容不需要人工审核
     const queue = await api('/api/admin/queue?type=posts', { admin: true });
-    ok('帖子进入后台待审队列', queue.body.items.length === 1, queue.body.items.length);
+    ok('干净内容不进后台待审队列', queue.body.items.length === 0, queue.body.items.length);
+    const feed = await api('/api/posts');
     ok('超长正文完整入库（未被截断）',
-      queue.body.items[0].body.length === longText.length,
-      { got: queue.body.items[0].body.length, want: longText.length });
-    await api(`/api/admin/posts/${queue.body.items[0].id}/approve`, { method: 'POST', body: {}, admin: true });
+      feed.body.items[0].body.length === longText.length,
+      { got: feed.body.items[0].body.length, want: longText.length });
 
     await page.goto(BASE + '/', { waitMs: 900 });
     await page.waitFor('!!document.querySelector(".post")', { timeout: 8000 });
-    ok('审核通过后出现在墙上', await page.eval(hasText('这是一段很长的表白')));
+    ok('发布后直接出现在墙上', await page.eval(hasText('这是一段很长的表白')));
     const postBody = await page.eval('document.querySelector(".post-body").innerText');
     ok('长文默认折叠为 8 行', postBody.length > 0);
     ok('卡片上不出现任何作者信息', !(await page.eval(hasText('小满'))));

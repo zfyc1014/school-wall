@@ -290,6 +290,7 @@ function maskPhone(raw) {
 /* ───────────────────────────── 用户读写 ───────────────────────────── */
 
 const USER_COLUMNS = `id, uuid, email, phone, phone_verified_at, nickname, nickname_flagged, school, avatar, bio,
+  last_country, last_device, last_ip_masked,
   title_id, level, exp, status, muted_until, last_nickname_at, ip_hash, ua_hash,
   created_at, last_login_at, last_seen_at`;
 
@@ -437,6 +438,9 @@ function adminUser(row, extra = {}) {
     lastLoginAt: row.last_login_at || 0,
     lastSeenAt: row.last_seen_at || 0,
     ipHash: row.ip_hash || "",
+    lastCountry: row.last_country || "",
+    lastDevice: row.last_device || "",
+    lastIpMasked: row.last_ip_masked || "",
     uaHash: row.ua_hash || "",
     counts,
     ...extra
@@ -444,7 +448,19 @@ function adminUser(row, extra = {}) {
 }
 
 /** 记一次登录：刷新 last_login_at / last_seen_at，并按天发放登录经验 */
-function touchLogin(userId) {
+/**
+ * 记一次登录：更新最后登录时间，并顺带记录粗粒度的来源画像。
+ * @param {{country?: string, device?: string, ipMasked?: string}} [meta]
+ */
+function touchLogin(userId, meta) {
+  const m = meta || {};
+  if (m.country || m.device || m.ipMasked) {
+    db.prepare(
+      "UPDATE users SET last_login_at = ?, last_country = COALESCE(?, last_country),"
+      + " last_device = COALESCE(?, last_device), last_ip_masked = COALESCE(?, last_ip_masked) WHERE id = ?"
+    ).run(Date.now(), m.country || null, m.device || null, m.ipMasked || null, Number(userId));
+    return;
+  }
   const now = Date.now();
   const row = db.prepare("SELECT last_login_at FROM users WHERE id = ?").get(userId);
   db.prepare("UPDATE users SET last_login_at = ?, last_seen_at = ? WHERE id = ?").run(now, now, userId);
@@ -618,6 +634,13 @@ function destroySession(token) {
 
 function destroyUserSessions(userId) {
   db.prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
+}
+
+/** 某个账号当前有效的会话数（后台详情用；「强制下线」前后对比很直观） */
+function countSessions(userId) {
+  const row = db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE user_id = ? AND expires_at > ?")
+    .get(Number(userId), Date.now());
+  return row ? row.n : 0;
 }
 
 function pruneSessions() {
@@ -902,6 +925,12 @@ function clearNicknameFlag(userId) {
   return { ok: true };
 }
 
+/** 清掉昵称冷却（用于用户误操作后由管理员放行） */
+function resetNicknameCooldown(userId) {
+  db.prepare("UPDATE users SET last_nickname_at = NULL WHERE id = ?").run(Number(userId));
+  return { ok: true };
+}
+
 function setNicknameFlag(userId, flags) {
   db.prepare("UPDATE users SET nickname_flagged = ? WHERE id = ?").run(flags || null, userId);
   return { ok: true };
@@ -1018,5 +1047,7 @@ module.exports = {
   renameUser,
   clearNicknameFlag,
   setNicknameFlag,
-  listUsers
+  listUsers,
+  countSessions,
+  resetNicknameCooldown
 };

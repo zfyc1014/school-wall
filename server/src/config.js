@@ -99,6 +99,13 @@ const SESSION_COOKIE = String(process.env.SESSION_COOKIE || "od_session").trim()
 /** 论坛是否全量先审后发（默认 0：只有命中预筛的内容才转人工） */
 const FORUM_PREMOD = process.env.FORUM_PREMOD === "1";
 
+/**
+ * 表白墙/评论是否全量先审后发。**默认 0 = 命中违规词库才转人工，否则直接发布**。
+ * 这是当前的运营口径：先过程序化词库，干净内容立刻可见，被词库命中的才进后台队列。
+ * 想回到「全部先审」把它设成 1 即可（代码路径与命中词库时完全一致）。
+ */
+const CONTENT_PREMOD = process.env.CONTENT_PREMOD === "1";
+
 /** 昵称修改冷却（小时），默认 168 小时 = 7 天 */
 const NICKNAME_COOLDOWN_H = Math.max(0, Number(process.env.NICKNAME_COOLDOWN_H || 168));
 
@@ -220,6 +227,7 @@ module.exports = {
   SESSION_DAYS,
   SESSION_COOKIE,
   FORUM_PREMOD,
+  CONTENT_PREMOD,
   NICKNAME_COOLDOWN_H,
   BREVO,
   TURNSTILE,

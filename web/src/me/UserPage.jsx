@@ -166,7 +166,17 @@ export function UserPage({ uuid }) {
         ) : null}
 
         {relation === 'pending_out' ? (
-          <button className="btn btn-secondary btn-block" type="button" disabled>等待对方验证</button>
+          <>
+            <button className="btn btn-secondary btn-block" type="button" disabled>等待对方验证</button>
+            <button
+              className="btn btn-ghost btn-block"
+              type="button"
+              disabled={busy}
+              onClick={() => act(async () => { await api.friends.cancelRequest(target.uuid); toast('已撤回好友请求'); })}
+            >
+              撤回请求
+            </button>
+          </>
         ) : null}
 
         {relation === 'pending_in' ? (

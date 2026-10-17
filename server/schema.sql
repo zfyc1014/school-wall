@@ -65,6 +65,10 @@ CREATE TABLE IF NOT EXISTS users (
   created_at       INTEGER NOT NULL,
   last_login_at    INTEGER,
   last_seen_at    INTEGER,
+  -- 概览页的「IP 来源 / 访问设备」：只存粗粒度信息，不落原始 IP（站长看不到完整 IP）
+  last_country     TEXT,                             -- Cloudflare CF-IPCountry，如 CN / HK
+  last_device      TEXT,                             -- 解析后的设备标签，如「iPhone · Safari」
+  last_ip_masked   TEXT,                             -- 打码 IP，如 1.2.3.*
   -- 硬约束：不允许出现「既没邮箱也没手机号」的账号（否则永远登录不进来）
   CHECK (email IS NOT NULL OR phone IS NOT NULL)
 );

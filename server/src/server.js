@@ -148,6 +148,24 @@ const ADMIN_RATE_LIMIT = Number(process.env.ADMIN_RATE_LIMIT || 10);
 const ADMIN_API_RATE_LIMIT = Number(process.env.ADMIN_API_RATE_LIMIT || 600);
 const IS_PROD = process.env.NODE_ENV === "production";
 
+/**
+ * 机器人拦截：**写操作**一律先过一道客户端检查。
+ *
+ * 这是「Cloudflare 边缘 + 应用内」两层里的应用内那层：
+ *   - 边缘：Cloudflare Bot Fight Mode / WAF 对**所有**访问做挑战（部署文档里有开关步骤）；
+ *   - 应用内：明显的脚本 UA（curl/wget/python/requests/node/axios/headless…）
+ *     直接拒绝写操作，避免有人绕过前端直接打接口。
+ * 默认只在生产开启（测试脚本用 node/框架自带 UA，不受影响），可用 BOT_GUARD=0/1 覆盖。
+ */
+const BOT_GUARD = process.env.BOT_GUARD === "1"
+  || (IS_PROD && process.env.BOT_GUARD !== "0");
+
+function looksLikeScript(uaRaw) {
+  const ua = String(uaRaw || "");
+  if (!ua) return true; // 空 UA 基本只有脚本会发
+  return /curl|wget|python|requests|httpclient|okhttp|go-http|java\/|libwww|node-fetch|node\.js|axios|undici|scrapy|selenium|puppeteer|playwright|headless|phantomjs|bot\b|crawler|spider/i.test(ua);
+}
+
 const CATS = ["表白", "树洞", "寻人", "失物", "致谢"];
 
 function secretOrFatal(name, min) {
@@ -274,6 +292,45 @@ function clientIp(req) {
     if (real) return String(real).trim();
   }
   return (req.socket && req.socket.remoteAddress) || "0.0.0.0";
+}
+
+/**
+ * 从 UA 里解析出**人能看懂**的设备标签（概览页要用）。
+ * 概览页回答的是「用户都从哪来、用什么设备」，不需要精确型号 ——
+ * 存「iPhone · Safari」比存整串 UA 更有用，也更省空间、更不侵犯隐私。
+ */
+function describeDevice(uaRaw) {
+  const ua = String(uaRaw || "");
+  if (!ua) return "未知";
+  const mobile = /iPhone|iPad|iPod|Android|Mobile|Windows Phone/i.test(ua);
+  let os = "其他";
+  if (/iPhone|iPad|iPod/.test(ua)) os = "iOS";
+  else if (/Android/.test(ua)) os = "Android";
+  else if (/Windows NT/.test(ua)) os = "Windows";
+  else if (/Macintosh|Mac OS X/.test(ua)) os = "macOS";
+  else if (/Linux/.test(ua)) os = "Linux";
+  let app = "其他";
+  if (/MicroMessenger/i.test(ua)) app = "微信";
+  else if (/QQ\//i.test(ua)) app = "QQ";
+  else if (/Edg\//i.test(ua)) app = "Edge";
+  else if (/OPR\/|Opera/i.test(ua)) app = "Opera";
+  else if (/Firefox\//i.test(ua)) app = "Firefox";
+  else if (/Chrome\//i.test(ua)) app = "Chrome";
+  else if (/Safari\//i.test(ua)) app = "Safari";
+  else if (/curl|wget|python|node|axios|okhttp/i.test(ua)) app = "脚本";
+  return os + (mobile && os === "其他" ? " · 移动端" : "") + " · " + app;
+}
+
+/** 打码 IP：只保留网段，够排障/看来源，但不能反查个人。IPv4 → 1.2.3.*；IPv6 → 前 3 段 */
+function maskIp(ipRaw) {
+  const ip = String(ipRaw || "").trim();
+  if (!ip) return "";
+  if (ip.includes(":")) {
+    const parts = ip.split(":").filter(Boolean);
+    return parts.length >= 3 ? parts.slice(0, 3).join(":") + ":*" : ip.slice(0, 12) + "*";
+  }
+  const parts = ip.split(".");
+  return parts.length === 4 ? parts.slice(0, 3).join(".") + ".*" : ip;
 }
 
 function hashIp(ip) {
@@ -908,7 +965,7 @@ route("POST", "/api/auth/verify", async (ctx) => {
   }
 
   const session = users.createSession(user.id, { ipHash: ctx.ipHash, uaHash: ctx.uaHash });
-  users.touchLogin(user.id);
+  users.touchLogin(user.id, { country: ctx.country, device: ctx.device, ipMasked: ctx.ipMasked });
 
   sendJson(ctx.req, ctx.res, 200, {
     user: users.publicUser(users.findById(user.id), { self: true, stats: users.statsFor(user.id) })
@@ -987,6 +1044,7 @@ route("POST", "/api/auth/register", async (ctx) => {
   users.consumeRegisterToken(payload.token);
 
   const session = users.createSession(user.id, { ipHash: ctx.ipHash, uaHash: ctx.uaHash });
+  users.touchLogin(user.id, { country: ctx.country, device: ctx.device, ipMasked: ctx.ipMasked });
   sendJson(ctx.req, ctx.res, 201, {
     user: users.publicUser(users.findById(user.id), { self: true, stats: users.statsFor(user.id) })
   }, {
@@ -1338,14 +1396,20 @@ route("POST", "/api/posts", async (ctx) => {
   }
 
   const mod = classify(body);
+  /**
+   * 发布口径：**先过违规词库，干净内容直接发布，不排队等人审**。
+   * 命中词库的才进后台待审队列（CONTENT_PREMOD=1 可退回全量先审）。
+   */
+  const status = mod.flagged ? "pending" : (config.CONTENT_PREMOD ? "pending" : "approved");
   const info = db
     .prepare(
       `INSERT INTO posts (user_id, cat, body, status, flag, ip_hash, ua_hash, created_at)
        VALUES (?,?,?,?,?,?,?,?)`
     )
-    .run(user.id, cat, body, "pending", mod.flagged ? mod.flags.join(",") : null, ctx.ipHash, ctx.uaHash, Date.now());
+    .run(user.id, cat, body, status, mod.flagged ? mod.flags.join(",") : null, ctx.ipHash, ctx.uaHash, Date.now());
 
-  sendJson(ctx.req, ctx.res, 201, { id: info.lastInsertRowid, status: "pending" });
+  if (status === "approved") bumpFeedCache();
+  sendJson(ctx.req, ctx.res, 201, { id: info.lastInsertRowid, status });
 });
 
 // POST /api/posts/:id/like —— 幂等切换（同一个人再点即取消）
@@ -1425,18 +1489,26 @@ route("POST", "/api/posts/:id/comments", async (ctx) => {
 
   const mod = classify(body);
 
-  // 先审后发同样适用于评论：一律 pending，人工通过后才出现在帖子下。
-  // 为什么不做「命中规则才转人工、否则直接公开」：那属于发布后审核 ——
-  // 一旦规则漏判，违规评论已经公开出去了，正是被处罚的那种模式。
-  // comment_count 只在审核通过时 +1（见 applyCommentReview），因此这里不动。
-  const info = db
-    .prepare(
-      `INSERT INTO comments (post_id, user_id, body, status, flag, ip_hash, created_at)
-       VALUES (?,?,?,?,?,?,?)`
-    )
-    .run(postId, user.id, body, "pending", mod.flagged ? mod.flags.join(",") : null, ctx.ipHash, Date.now());
+  // 与表白同口径：命中词库才进待审，干净评论直接公开。
+  // 直接公开时必须**立刻**把 comment_count +1 —— 审核路径里是 applyCommentReview 在做，
+  // 这里漏掉的话墙上显示的评论数会永远少一批。
+  const status = mod.flagged ? "pending" : (config.CONTENT_PREMOD ? "pending" : "approved");
+  const insert = db.transaction(() => {
+    const info = db
+      .prepare(
+        `INSERT INTO comments (post_id, user_id, body, status, flag, ip_hash, created_at)
+         VALUES (?,?,?,?,?,?,?)`
+      )
+      .run(postId, user.id, body, status, mod.flagged ? mod.flags.join(",") : null, ctx.ipHash, Date.now());
+    if (status === "approved") {
+      db.prepare("UPDATE posts SET comment_count = comment_count + 1 WHERE id = ?").run(postId);
+    }
+    return info.lastInsertRowid;
+  });
 
-  sendJson(ctx.req, ctx.res, 201, { id: info.lastInsertRowid, status: "pending" });
+  const commentId = insert();
+  if (status === "approved") bumpFeedCache();
+  sendJson(ctx.req, ctx.res, 201, { id: commentId, status });
 });
 
 // POST /api/reports  { postId, reason }
@@ -1667,6 +1739,20 @@ route("POST", "/api/friends/requests/:uuid/:action", (ctx) => {
 });
 
 // DELETE /api/friends/:uuid —— 删除好友
+// DELETE /api/friends/requests/:uuid —— 撤回自己发出的好友请求（对方还没处理时）
+route("DELETE", "/api/friends/requests/:uuid", (ctx) => {
+  const user = requireLogin(ctx);
+  if (!user) return;
+  const result = social.cancelRequest(user.id, ctx.params.uuid);
+  if (!result.ok) {
+    return sendJson(ctx.req, ctx.res, 400, {
+      error: result.error,
+      message: result.error === "no_pending_request" ? "没有可撤回的请求" : "操作失败"
+    });
+  }
+  sendJson(ctx.req, ctx.res, 200, { ok: true });
+});
+
 route("DELETE", "/api/friends/:uuid", (ctx) => {
   const user = requireLogin(ctx);
   if (!user) return;
@@ -1822,6 +1908,20 @@ route("GET", "/api/admin/stats", (ctx) => {
       from: config.EMAIL.provider === "brevo" ? config.BREVO.senderEmail : (config.EMAIL.from || ""),
       fromName: config.EMAIL.provider === "brevo" ? config.BREVO.senderName : (config.EMAIL.fromName || ""),
       ttlSeconds: config.CODE_TTL
+    },
+    // 概览页的「IP 来源 / 访问设备」：来自用户最近一次登录的粗粒度画像
+    geo: {
+      countries: db.prepare(
+        "SELECT last_country AS code, COUNT(*) AS n FROM users WHERE last_country IS NOT NULL AND last_country <> ''"
+        + " GROUP BY last_country ORDER BY n DESC LIMIT 8"
+      ).all(),
+      devices: db.prepare(
+        "SELECT last_device AS name, COUNT(*) AS n FROM users WHERE last_device IS NOT NULL AND last_device <> ''"
+        + " GROUP BY last_device ORDER BY n DESC LIMIT 8"
+      ).all(),
+      withProfile: db.prepare(
+        "SELECT COUNT(*) AS n FROM users WHERE last_country IS NOT NULL OR last_device IS NOT NULL"
+      ).get().n
     },
     brevo: {
       enabled: config.BREVO.enabled,
@@ -2265,7 +2365,20 @@ route("GET", "/api/admin/users/:id", (ctx) => {
     }))
   };
 
-  sendJson(ctx.req, ctx.res, 200, { user: users.adminUser(row), recent });
+  // 后台「看得更多」：当前在线会话数、赞助记录、最近登录来源 —— 处理投诉/退款/异常账号时最常用
+  const afdianOrders = db.prepare(
+    "SELECT id, out_trade_no, amount, status, matched_by, reward, created_at FROM afdian_orders WHERE user_id = ? ORDER BY id DESC LIMIT 10"
+  ).all(row.id);
+  const afdianTotal = db.prepare(
+    "SELECT COALESCE(SUM(CAST(amount AS REAL)), 0) AS total, COUNT(*) AS n FROM afdian_orders WHERE user_id = ? AND status = 2"
+  ).get(row.id);
+
+  sendJson(ctx.req, ctx.res, 200, {
+    user: users.adminUser(row),
+    recent,
+    sessions: users.countSessions(row.id),
+    afdian: { orders: afdianOrders, totalAmount: Number(afdianTotal.total || 0).toFixed(2), paidCount: afdianTotal.n }
+  });
 });
 
 // POST /api/admin/users/:id  { action, value }
@@ -2300,6 +2413,19 @@ route("POST", "/api/admin/users/:id", async (ctx) => {
       break;
     case "reset_exp":
       result = users.setUserExp(row.id, 0);
+      break;
+    case "force_logout":
+      // 强制下线：删掉该用户所有会话（对方下次请求即变未登录）
+      users.destroyUserSessions(row.id);
+      result = { ok: true };
+      break;
+    case "clear_phone":
+      // 解绑手机号（用户反馈号码被占用/换号时用）
+      users.clearPhone(row.id);
+      result = { ok: true };
+      break;
+    case "reset_nickname_cooldown":
+      result = users.resetNicknameCooldown(row.id);
       break;
     default:
       return sendJson(ctx.req, ctx.res, 400, { error: "unknown_action" });
@@ -2741,11 +2867,23 @@ const server = http.createServer(async (req, res) => {
      */
     secure: Boolean(req.socket && req.socket.encrypted)
       || (TRUST_PROXY && String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() === "https"),
-    params: {}
+    params: {},
+    /** 粗粒度画像：概览页的「IP 来源 / 访问设备」直接用这几个字段 */
+    country: String(req.headers["cf-ipcountry"] || "").toUpperCase().slice(0, 8),
+    device: describeDevice(req.headers["user-agent"]),
+    ipMasked: maskIp(clientIp(req))
   };
 
   try {
     if (ctx.pathname.startsWith("/api/")) {
+      // 机器人拦截：只挡写操作（GET 放行，否则搜索引擎/预览抓取会被误伤）
+      if (BOT_GUARD && req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS"
+          && looksLikeScript(req.headers["user-agent"])) {
+        return sendJson(req, res, 403, {
+          error: "bot_detected",
+          message: "检测到自动化客户端。请使用浏览器访问本站；机器人流量会被 Cloudflare 拦截。"
+        });
+      }
       // 会话只在 API 请求上解析：静态产物每个请求都查一次库毫无意义。
       // 解析失败（过期/被删/被封禁）一律按未登录处理，不抛错。
       ctx.token = users.tokenFromCookie(req.headers.cookie);

@@ -711,6 +711,22 @@ cp server/data/wall.db* /tmp/wall-db-backup/
 
 **规则：服务器上永远只改 `server/.env`，不要改 `server/.env.example`。**
 
+### ⑪ 让「脚本/机器人访问」先在 Cloudflare 过验证
+
+应用内已经有一层（`BOT_GUARD`：明显的脚本 UA 直接拒绝写操作），但真正的第一道闸应该在边缘。
+域名接在 Cloudflare 之后时，按下面开，**访问会先经过 Cloudflare 的挑战**：
+
+1. Dashboard → **Security → WAF → Bot Fight Mode** 开启（免费版可用，会挑战已知机器人）。
+2. （可选，更稳）**Security → WAF → Custom rules** 建一条：
+   表达式 `(http.request.method in {"POST" "PUT" "PATCH" "DELETE"})` → Action **Managed Challenge**，
+   只挑战写请求，读请求不受影响。
+3. **Security → Settings → Security Level** 调到 *Medium* 以上。
+4. 源站只接受 Cloudflare 回源（防火墙只放行 Cloudflare IP 段，或开 Authenticated Origin Pulls），
+   否则别人直连源站就绕过了边缘规则。
+
+> 开了边缘质询后，**直连面板地址（`IP:端口`）不经过 Cloudflare**，也就没有这层保护。
+> 正式上线建议只通过域名访问。
+
 ## 11. 常用运维命令
 
 ```bash

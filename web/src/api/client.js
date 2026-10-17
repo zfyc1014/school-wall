@@ -191,6 +191,8 @@ export const api = {
     list: () => request('/api/friends'),
     request: (uuid, message) => request('/api/friends/requests', { method: 'POST', body: { uuid, message } }),
     accept: (uuid) => request('/api/friends/requests/' + encodeURIComponent(uuid) + '/accept', { method: 'POST', body: {} }),
+    // 撤回自己发出的、对方还没处理的请求
+    cancelRequest: (uuid) => request('/api/friends/requests/' + encodeURIComponent(uuid), { method: 'DELETE' }),
     decline: (uuid) => request('/api/friends/requests/' + encodeURIComponent(uuid) + '/decline', { method: 'POST', body: {} }),
     remove: (uuid) => request('/api/friends/' + encodeURIComponent(uuid), { method: 'DELETE' })
   },

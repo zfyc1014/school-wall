@@ -173,6 +173,23 @@ async function main() {
     const emailHint = await page.eval('document.querySelector("#view-overview").textContent.includes("未配置 CF_ACCOUNT_ID")');
     ok('未配置时卡片如实给出告警（而不是假装正常）', emailHint);
 
+    // 来源与设备（IP 粗粒度画像）
+    await page.eval('document.querySelector(\'[data-view="overview"]\').click(); true');
+    await page.waitFor('(document.querySelector("#view-overview") || {}).textContent.includes("来源与设备")', { timeout: 8000 });
+    ok('概览有「来源与设备」卡片', true);
+
+    // 用户详情：更多信息 + 更多操作
+    await page.eval('document.querySelector(\'[data-view="users"]\').click(); true');
+    await page.waitFor('document.querySelector("#view-users").textContent.includes("待审同学")', { timeout: 8000 });
+    await page.eval('document.querySelector(\'[data-act="user.open"]\').click(); true');
+    await page.waitFor('!!document.querySelector("#modalCard") && document.querySelector("#modalCard").textContent.includes("管理操作")', { timeout: 8000 });
+    const detailText = await page.eval('document.querySelector("#modalCard").textContent');
+    ok('用户详情显示手机号与 IP 来源', detailText.includes('手机号') && detailText.includes('IP 来源'));
+    ok('用户详情显示在线会话', detailText.includes('在线会话'));
+    ok('用户详情提供「强制下线 / 解绑手机号」操作',
+      detailText.includes('强制下线') && detailText.includes('解绑手机号'));
+    await page.eval('document.querySelector("#modalCard [data-close]").click(); true');
+
     const errors = await page.eval('window.__errors || []');
     ok('没有未捕获的 JS 异常', Array.isArray(errors) && errors.length === 0, errors);
 
