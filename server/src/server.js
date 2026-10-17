@@ -71,7 +71,21 @@ function parsePort(value) {
   return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : null;
 }
 
-const PORT_SOURCES = [["PORT", process.env.PORT], ["SERVER_PORT", process.env.SERVER_PORT]];
+/**
+ * 端口来源。⚠️ 面板部署（Pterodactyl / Wispbyte 等）必须**优先用 SERVER_PORT**：
+ * 那是面板分配、并且对外真正映射出去的端口；PORT 可能是面板或镜像顺手注入的其它值。
+ * 用错端口的表现是「服务起来了、本机 curl 通、外面连不上」——最难查的一类。
+ * 非面板环境只有 PORT 可读。
+ */
+const IS_PANEL_ENV = Boolean(process.env.SERVER_PORT || process.env.SERVER_IP);
+const PORT_SOURCES = IS_PANEL_ENV
+  ? [["SERVER_PORT", process.env.SERVER_PORT], ["PORT", process.env.PORT]]
+  : [["PORT", process.env.PORT]];
+if (IS_PANEL_ENV && process.env.SERVER_PORT && process.env.PORT
+    && String(process.env.SERVER_PORT).trim() !== String(process.env.PORT).trim()) {
+  console.warn(`[warn] 面板同时给出了 PORT=${process.env.PORT} 与 SERVER_PORT=${process.env.SERVER_PORT}，`
+    + "两者不一致：以**分配端口 SERVER_PORT** 为准（只有它会被映射到容器外）");
+}
 let PORT = null;
 let PORT_SOURCE = "";
 for (const [name, raw] of PORT_SOURCES) {
@@ -92,8 +106,8 @@ if (!PORT) {
     + "面板部署请到 Network/Allocation 页查看分配到的端口，并在 server/.env 写 PORT=那个数字（只写数字，不要写变量引用）");
 }
 
-/** 面板环境：由面板注入的两个变量判断，此时默认监听 0.0.0.0 才对容器外可达 */
-const IS_PANEL = Boolean(process.env.SERVER_PORT || process.env.SERVER_IP);
+/** 面板环境：此时默认监听 0.0.0.0 才对容器外可达 */
+const IS_PANEL = IS_PANEL_ENV;
 const HOST = process.env.HOST || process.env.SERVER_IP || (IS_PANEL ? "0.0.0.0" : "127.0.0.1");
 
 /** 默认静态根：优先用 Vite 构建产物 web/dist，退回仓库根（源码目录） */
