@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { loadTurnstile } from '../lib/turnstile.js';
+import { loadTurnstile, describeTurnstileError } from '../lib/turnstile.js';
 
 /**
  * Turnstile widget。
@@ -35,7 +35,8 @@ export function Turnstile({ siteKey, action, onToken, onError, resetSignal = 0, 
           'expired-callback': () => onTokenRef.current && onTokenRef.current(''),
           'error-callback': (code) => {
             onTokenRef.current && onTokenRef.current('');
-            onErrorRef.current && onErrorRef.current(code || 'widget_error');
+            // 把 110200 这类数字码翻成「该去哪改」，否则页面上只会显示一串数字
+            onErrorRef.current && onErrorRef.current(describeTurnstileError(code || 'widget_error'));
           }
         });
       })
