@@ -105,6 +105,36 @@ AFDIAN.webhookReady = Boolean(AFDIAN.token);
 AFDIAN.apiReady = Boolean(AFDIAN.userId && AFDIAN.token);
 AFDIAN.enabled = Boolean(AFDIAN.page || AFDIAN.webhookReady);
 
+/* ───────────────────────── Cloudflare Turnstile ─────────────────────────
+ *
+ * 保护「发送登录验证码」这个入口：全站唯一会对外发信、也是注册漏斗的第一道门。
+ * 被脚本刷起来的后果不是脏数据，而是发信额度烧光 + 域名信誉被打坏。
+ *
+ *   TURNSTILE_SITE_KEY     公开的 site key（前端渲染 widget 用，不敏感）
+ *   TURNSTILE_SECRET_KEY   服务端校验用的 secret（**只放 server/.env，绝不提交**）
+ *   TURNSTILE_HOSTNAMES    令牌来源的 hostname 白名单，逗号分隔，如 wall.example.com；
+ *                          生产别混 localhost，本地开发单独追加。
+ *   TURNSTILE_ACTION       widget 动作名，默认 login；服务端会比对 token 里的 action
+ *   TURNSTILE_VERIFY_URL   校验地址，默认 Cloudflare 官方；仅测试/自建代理时覆盖
+ *
+ * 两个 key 都在才启用；缺任何一个就完全不启用（不影响登录）。
+ * ------------------------------------------------------------------- */
+function parseTurnstileHostnames(raw) {
+  return String(raw == null ? "" : raw)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+const TURNSTILE = {
+  siteKey: String(process.env.TURNSTILE_SITE_KEY || "").trim(),
+  secretKey: String(process.env.TURNSTILE_SECRET_KEY || "").trim(),
+  hostnames: parseTurnstileHostnames(process.env.TURNSTILE_HOSTNAMES),
+  action: String(process.env.TURNSTILE_ACTION || "login").trim() || "login",
+  verifyUrl: String(process.env.TURNSTILE_VERIFY_URL || "https://challenges.cloudflare.com/turnstile/v0/siteverify").trim(),
+  timeoutMs: Math.max(1000, Number(process.env.TURNSTILE_TIMEOUT_MS || 8000))
+};
+TURNSTILE.enabled = Boolean(TURNSTILE.siteKey && TURNSTILE.secretKey);
+
 /** 功能开关：都开着，但允许运营按学校情况关掉论坛或私信 */
 const FEATURES = {
   forum: process.env.FEATURE_FORUM !== "0",
@@ -120,6 +150,8 @@ function publicConfig() {
     features: FEATURES,
     // 前端据此决定要不要显示「支持校园墙」入口；没配置就完全不提这件事。
     // 档位规则也一并下发：用户得先知道「发多少、写什么」才会去下单。
+    // site key 是公开的（前端要拿它渲染 widget）；secret 永远不下发
+    turnstile: TURNSTILE.enabled ? { siteKey: TURNSTILE.siteKey, action: TURNSTILE.action } : null,
     afdian: AFDIAN.page ? {
       page: AFDIAN.page,
       tiers: AFDIAN.tiers.map((t) => ({ amount: (t.cents / 100).toFixed(2), title: t.title })),
@@ -140,6 +172,7 @@ module.exports = {
   SESSION_COOKIE,
   FORUM_PREMOD,
   NICKNAME_COOLDOWN_H,
+  TURNSTILE,
   AFDIAN,
   parseTiers,
   FEATURES,

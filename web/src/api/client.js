@@ -137,7 +137,12 @@ export const api = {
   feedback: (data) => request('/api/feedback', { method: 'POST', body: data }),
 
   auth: {
-    requestCode: (email) => request('/api/auth/code', { method: 'POST', body: { email }, notifyLogin: false }),
+    // 配了 Turnstile 就必须带 token；服务端在发信前校验（前端不校验 token 本身）
+    requestCode: (email, turnstileToken) => request('/api/auth/code', {
+      method: 'POST',
+      body: turnstileToken ? { email, turnstileToken } : { email },
+      notifyLogin: false
+    }),
     verify: (email, code) => request('/api/auth/verify', { method: 'POST', body: { email, code }, notifyLogin: false }),
     register: (data) => request('/api/auth/register', { method: 'POST', body: data, notifyLogin: false }),
     logout: () => request('/api/auth/logout', { method: 'POST', body: {}, notifyLogin: false }),

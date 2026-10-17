@@ -118,7 +118,7 @@ function Shell() {
         onPublished={() => setWallVersion((v) => v + 1)}
       />
 
-      <AuthSheet />
+      <AuthSheet site={site} />
 
       <FeedbackSheet open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
     </div>

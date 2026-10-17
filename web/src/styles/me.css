@@ -70,3 +70,6 @@
   word-break: break-all;
   color: var(--fg-2);
 }
+/* ── 人机验证（Turnstile）── */
+.turnstile-block { display: flex; flex-direction: column; gap: var(--space-2); }
+.turnstile-slot { min-height: 65px; } /* widget 渲染前占位，避免按钮跳动 */

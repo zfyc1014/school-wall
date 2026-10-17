@@ -44,6 +44,7 @@ const forum = require("./forum");
 const social = require("./social");
 const announce = require("./announce");
 const afdian = require("./afdian");
+const turnstile = require("./turnstile");
 
 /* ────────────────────────────── 配置 ────────────────────────────── */
 
@@ -172,6 +173,19 @@ if (!users.schoolList().length) {
   console.warn("[warn] 学校名单为空：请到后台 /houtai/ 的「学校管理」添加学校，否则新用户无法完成注册");
 }
 
+// Turnstile 配置自检：开了但没配 hostname 白名单 = 所有发码请求都会被拒，
+// 必须在启动日志里说清楚，而不是等用户点「获取验证码」失败才发现。
+if (config.TURNSTILE.enabled) {
+  if (!config.TURNSTILE.hostnames.length) {
+    console.warn("[warn] Turnstile 已启用但未配置 TURNSTILE_HOSTNAMES：发码请求会全部被拒（无法校验 token 来源）。"
+      + "请在 server/.env 填站点正式域名，本地开发再追加 localhost,127.0.0.1");
+  } else if (IS_PROD && config.TURNSTILE.hostnames.some((h) => h === "localhost" || h === "127.0.0.1")) {
+    console.warn("[warn] 生产环境 TURNSTILE_HOSTNAMES 里出现了 localhost/127.0.0.1："
+      + "请只保留正式域名，本地开发请用单独的 .env");
+  }
+  console.log(`[up] Turnstile 已启用（action=${config.TURNSTILE.action}，hostname 白名单 ${config.TURNSTILE.hostnames.join(",") || "（空）"}）`);
+}
+
 /* ────────────────────────────── 工具 ────────────────────────────── */
 
 const SECURITY_HEADERS = {
@@ -183,15 +197,19 @@ const SECURITY_HEADERS = {
   "X-Robots-Tag": "noindex, nofollow",
   "Permissions-Policy": "geolocation=(), camera=(), microphone=()",
   "Cross-Origin-Opener-Policy": "same-origin",
-  // 全站没有任何第三方脚本：CSP 收紧到 'self'，不为外部来源开口子。
-  // 仍保留 'unsafe-inline'，因为 React 产物是内联注入的样式；进一步加固可换成 nonce。
+  // 全站只有一处第三方来源：Cloudflare Turnstile（人机验证）。
+  // 它需要三样东西，缺一样 widget 就渲染不出来：
+  //   script-src    加载 api.js
+  //   frame-src     把挑战渲染在 iframe 里
+  //   connect-src   widget 自己回传结果
+  // 其余仍然收紧到 'self'。'unsafe-inline' 保留是因为 React 产物是内联注入的样式。
   "Content-Security-Policy": [
     "default-src 'self'",
     "img-src 'self' data:",
     "style-src 'self' 'unsafe-inline'",
-    "script-src 'self' 'unsafe-inline'",
-    "frame-src 'none'",
-    "connect-src 'self'",
+    "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com",
+    "frame-src https://challenges.cloudflare.com",
+    "connect-src 'self' https://challenges.cloudflare.com",
     "base-uri 'none'",
     "form-action 'self'",
     "frame-ancestors 'none'"
@@ -666,9 +684,31 @@ route("POST", "/api/afdian/webhook", async (ctx) => {
  *   3. POST /api/auth/register 填昵称 + 学校，建号（学校写死后不可改）
  * ---------------------------------------------------------------- */
 
-// POST /api/auth/code  { email }
+// POST /api/auth/code  { email, turnstileToken }
 route("POST", "/api/auth/code", async (ctx) => {
   const payload = await readJson(ctx.req);
+
+  /**
+   * Turnstile 校验放在最前面：这是唯一会对外发信、也是注册漏斗第一道门的入口。
+   * 放在限流**之前**是有意的 —— 被脚本刷的时候，先挡在门外，不消耗限流额度，
+   * 也就不会把正常用户挤掉。
+   */
+  const human = await turnstile.verify({
+    token: payload.turnstileToken || payload["cf-turnstile-response"],
+    ip: ctx.ip
+  });
+  if (!human.ok) {
+    return sendJson(ctx.req, ctx.res, human.status || 403, {
+      error: human.code || "turnstile_failed",
+      message: human.code === "turnstile_required"
+        ? "请先完成人机验证"
+        : human.code === "turnstile_unavailable"
+          ? "人机验证服务暂时不可用，请稍后再试"
+          : "人机验证未通过，请重试",
+      reason: human.reason || ""
+    });
+  }
+
   const emailAddr = users.normalizeEmail(payload.email);
 
   if (!users.isValidEmail(emailAddr)) {

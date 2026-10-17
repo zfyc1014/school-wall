@@ -63,6 +63,25 @@
   并清理实名时代遗留对象；历史内容没有作者，留空即可（前台本来也不展示作者）。
 - 升级后请到后台补两件事：**添加学校名单**、配置 **Cloudflare 邮件通道**。
 
+### 追加 · Cloudflare Turnstile 人机验证（可选功能）
+<span id="turnstile"></span>
+
+> 同日追加，仍属于 v1.0.0 的交付范围（版本号不单独提升）。
+> 只保护「发送登录验证码」一个入口 —— 全站唯一会对外发信、也是注册漏斗第一道门；
+> 表白/论坛的写入已有「先审后发 + 限流」兜底，不需要每个动作都弹人机验证。
+> **不配置就完全不生效**，登录流程与之前完全一样。
+
+- **前端**（`web/src/lib/turnstile.js` + `components/Turnstile.jsx`）：按需加载 `api.js`（显式渲染），
+  只在登录弹层里出现，不拖累首屏；每次请求后 reset 换新 token（token 一次性）。
+- **服务端**（`server/src/turnstile.js`）：canonical siteverify，**同时校验 action 与 hostname 白名单** ——
+  只校验 `success` 等于允许别的站点签发的 token 来打我们的发码接口；失败 fail-closed，
+  Cloudflare 不可达返回 503 而不是放行。
+- **CSP** 只开三个口子（script / frame / connect 指向 `challenges.cloudflare.com`），其余仍收紧到 `'self'`。
+- 新增 `server/scripts/turnstile-test.js`（19 项，mock 掉 siteverify）：缺 token / 校验失败 /
+  action 不匹配 / hostname 不匹配 / siteverify 5xx / 白名单为空 / 正常发码 / 请求参数形状；
+  `scripts/turnstile-live-check.mjs` 是手动连通性诊断（需外网与真实 key）。
+- 部署注意：widget 的 **Hostname Management** 必须包含正式域名（本地开发再追加 `localhost`）。
+
 ### 追加 · 爱发电赞助接入（可选功能）
 <span id="afdian"></span>
 

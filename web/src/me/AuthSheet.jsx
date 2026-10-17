@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { Sheet } from '../components/Sheet.jsx';
 import { Avatar, AVATAR_KEYS } from '../components/Avatar.jsx';
+import { Turnstile } from '../components/Turnstile.jsx';
 import { IconLock, IconSchool } from '../components/icons.jsx';
 
 /**
@@ -17,8 +18,10 @@ import { IconLock, IconSchool } from '../components/icons.jsx';
  * 学校是必选且不可改的，所以第三步的按钮在没选学校时是禁用的 ——
  * 与其让服务端返回 400，不如一开始就不让点。
  */
-export function AuthSheet() {
+export function AuthSheet({ site }) {
   const { authOpen, closeAuth, completeAuth } = useAuth();
+  // 站点配置没有就不启用：后端没配 Turnstile 时前端也不该去加载第三方脚本
+  const turnstileCfg = (site && site.turnstile) || null;
   const toast = useToast();
 
   const [step, setStep] = useState('email');
@@ -32,6 +35,10 @@ export function AuthSheet() {
   const [schoolsLoaded, setSchoolsLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [cooldown, setCooldown] = useState(0);
+  // 人机验证：token 一次性，每次请求后必须重置 widget 换新的
+  const [tsToken, setTsToken] = useState('');
+  const [tsReset, setTsReset] = useState(0);
+  const [tsError, setTsError] = useState('');
 
   // 打开时重置：上次填到一半的邮箱/验证码不应该被下一个人看到
   useEffect(() => {
@@ -40,6 +47,9 @@ export function AuthSheet() {
     setCode('');
     setToken('');
     setBusy(false);
+    setTsToken('');
+    setTsError('');
+    setTsReset((n) => n + 1);
   }, [authOpen]);
 
   // 重发倒计时：服务端 60 秒内只允许发一次，前端跟着走，避免用户白点
@@ -64,9 +74,14 @@ export function AuthSheet() {
   const sendCode = async () => {
     const value = email.trim();
     if (!value) return;
+    // 配了 Turnstile 就必须拿到 token 才能发：token 是发给服务端的，前端拦一下只是省一次空请求
+    if (turnstileCfg && !tsToken) {
+      toast('请先完成下方的人机验证');
+      return;
+    }
     setBusy(true);
     try {
-      const result = await api.auth.requestCode(value);
+      const result = await api.auth.requestCode(value, tsToken || undefined);
       setStep('code');
       setCooldown(60);
       if (result && result.devCode) {
@@ -80,6 +95,9 @@ export function AuthSheet() {
       toast(err.message || '发送失败');
     } finally {
       setBusy(false);
+      // token 用一次就失效：无论成功失败都换一个新的 widget
+      setTsToken('');
+      setTsReset((n) => n + 1);
     }
   };
 
@@ -151,7 +169,26 @@ export function AuthSheet() {
             />
             <p className="meta">用邮箱验证码登录，没有密码，也不需要手机号。</p>
           </div>
-          <button className="btn btn-primary btn-block" type="button" disabled={busy || !email.trim()} onClick={sendCode}>
+          {turnstileCfg ? (
+            <div className="turnstile-block">
+              <Turnstile
+                siteKey={turnstileCfg.siteKey}
+                action={turnstileCfg.action || 'login'}
+                onToken={(token) => { setTsToken(token); if (token) setTsError(''); }}
+                onError={(msg) => setTsError(msg)}
+                resetSignal={tsReset}
+              />
+              {tsError ? (
+                <p className="auth-warn">人机验证加载失败：{tsError}。请检查网络后点下方按钮重试。</p>
+              ) : null}
+            </div>
+          ) : null}
+          <button
+            className="btn btn-primary btn-block"
+            type="button"
+            disabled={busy || !email.trim() || (turnstileCfg && !tsToken)}
+            onClick={sendCode}
+          >
             {busy ? '发送中…' : '获取验证码'}
           </button>
         </div>
