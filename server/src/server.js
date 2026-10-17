@@ -177,6 +177,18 @@ if (IS_PROD && config.BREVO.enabled && !config.BREVO.smsReady) {
   console.warn("[warn] 短信通道未就绪（缺 BREVO_SMS_SENDER）：手机号登录保持关闭。"
     + "Brevo 的短信 sender 需要先审核通过");
 }
+// 「配置写错文件」自检：.env.example 是被 git 跟踪的模板，服务端只读 .env。
+// 这个坑本站部署时真实踩过 —— 填了半天配置，日志里却一直显示「未配置」。
+if (process.env.OD_SKIP_ENV_FILE !== "1") {
+  const misplaced = require("./env").findMisplacedConfig();
+  if (misplaced.length) {
+    console.warn("[warn] 这些配置填在了 server/.env.example 里，服务端只读 server/.env —— 现在完全不生效："
+      + misplaced.join("、"));
+    console.warn("[warn] 把它们搬到 server/.env（.env 不在 git 里，pull 不会动它）；"
+      + ".env.example 改了还会挡住下一次 git pull。");
+  }
+}
+
 // 学校名单为空 = 没人能完成注册，属于必须让运维看见的配置缺失
 if (!users.schoolList().length) {
   console.warn("[warn] 学校名单为空：请到后台 /houtai/ 的「学校管理」添加学校，否则新用户无法完成注册");
