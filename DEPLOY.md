@@ -657,6 +657,60 @@ sudo systemctl restart confession-wall
 
 ---
 
+### ⑩ git pull 报错：本地修改会被覆盖（面板部署最常见）
+
+面板启动日志里 AUTO_UPDATE 那一步停在这里，说明**代码还停在旧版本**：
+
+```
+Updating c5df70e..ef97685
+error: Your local changes to the following files would be overwritten by merge:
+	server/.env.example
+Please commit your changes or stash them before you merge.
+Aborting
+```
+
+原因：`server/.env.example` 是**被 git 跟踪**的模板文件。只要在服务器上直接改过它
+（最常见的是把真实配置写进了模板），下一次 `git pull` 就会因为「要覆盖你的改动」而中止，
+于是新代码永远拉不下来 —— 而服务继续用旧代码跑，看上去一切正常。
+
+解法（保留现场 → 丢弃模板改动 → 拉取）：
+
+```bash
+cd /home/container          # 面板的文件根目录
+
+# 1) 先看改了什么。里面如果有真实配置，抄进 server/.env
+#    （.env 不在 git 里，git pull 永远不会动它）
+git diff -- server/.env.example
+
+# 2) 备份成 *.local —— .gitignore 里已忽略 *.local，不会挡住下一次 pull
+cp server/.env.example server/.env.example.local
+
+# 3) 丢弃模板上的本地改动
+git checkout -- server/.env.example
+
+# 4) 只做快进拉取，避免产生莫名其妙的合并提交
+git pull --ff-only
+```
+
+然后**停服 → 备份数据库 → 启动**（v1.0.0 这次更新会重建 users 表）：
+
+```bash
+mkdir -p /tmp/wall-db-backup
+cp server/data/wall.db* /tmp/wall-db-backup/
+```
+
+启动后在日志里确认迁移与通道这几行：
+
+```
+[db] 迁移：users.email 改为可空（邮箱/手机号自选注册）…
+[db] 迁移完成：users.email 已可空，数据与索引已保留
+[up] 邮件通道 Brevo（noreply@…）        # 配了 BREVO_API_KEY + BREVO_SENDER_EMAIL 才有
+[up] 短信通道 Brevo（sender …）         # 配了 BREVO_SMS_SENDER 才有
+[up] Turnstile 已启用（action=login…）  # 配了 TURNSTILE_SITE_KEY + SECRET 才有
+```
+
+**规则：服务器上永远只改 `server/.env`，不要改 `server/.env.example`。**
+
 ## 11. 常用运维命令
 
 ```bash
