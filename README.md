@@ -33,7 +33,7 @@ npm run server
 npm run dev            # http://127.0.0.1:5173，/api 代理到 8080
 ```
 
-生产部署看 [DEPLOY.md](DEPLOY.md)（反向代理、systemd、面板部署、HTTPS）。
+安全审计与加固记录见 [SECURITY.md](SECURITY.md)（含 SQL 注入专项结论与攻击面回归测试）。\n\n生产部署看 [DEPLOY.md](DEPLOY.md)（反向代理、systemd、面板部署、HTTPS）。
 
 **上线前必做三件事**：
 

@@ -598,7 +598,14 @@ function tokenFromCookie(header) {
     const idx = part.indexOf("=");
     if (idx < 0) continue;
     if (part.slice(0, idx).trim() !== config.SESSION_COOKIE) continue;
-    return decodeURIComponent(part.slice(idx + 1).trim());
+    // 畸形 cookie（"%" 之类）会让 decodeURIComponent 抛错：
+    // 那是客户端可控输入，绝不能变成 500。解不开就按原样用。
+    const rawValue = part.slice(idx + 1).trim();
+    try {
+      return decodeURIComponent(rawValue);
+    } catch {
+      return rawValue;
+    }
   }
   return "";
 }

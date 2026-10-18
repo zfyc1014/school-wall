@@ -48,6 +48,7 @@ const announce = require("./announce");
 const pages = require("./pages");
 const afdian = require("./afdian");
 const turnstile = require("./turnstile");
+const netutil = require("./net");
 
 /* ────────────────────────────── 配置 ────────────────────────────── */
 
@@ -135,7 +136,20 @@ const WEB_ROOT = path.resolve(process.env.WEB_ROOT || DEFAULT_WEB_ROOT);
 const SERVER_ROOT = path.resolve(__dirname, "..");
 
 const INDEX_FILE = process.env.INDEX_FILE || "index.html";
-const TRUST_PROXY = process.env.TRUST_PROXY === "1";
+/**
+ * 反代信任模式（安全审计后重写，原因见 net.js 顶部注释）。
+ *   ""    不信任任何转发头（默认，直连部署最安全）
+ *   "1"   只信任**可信代理**发来的转发头：默认回环 + 私有网段，可用 TRUST_PROXY_IPS 扩展
+ *   "any" 无条件信任 —— 仅在「绝对无法直连、请求只可能来自反代」时使用
+ * 注意：TRUST_PROXY=1 不再等于「无条件相信 X-Forwarded-For」，
+ * 否则直连 IP 的部署会被伪造 XFF 绕过全部按 IP 的限流。
+ */
+const TRUST_PROXY_RAW = String(process.env.TRUST_PROXY || "").trim().toLowerCase();
+const TRUST_PROXY_MODE = TRUST_PROXY_RAW === "any" ? "any"
+  : (TRUST_PROXY_RAW === "1" || TRUST_PROXY_RAW === "true") ? "1"
+  : "";
+const TRUST_PROXY = TRUST_PROXY_MODE !== "";
+const TRUST_PROXY_CIDRS = netutil.parseCidrs(process.env.TRUST_PROXY_IPS || netutil.DEFAULT_TRUSTED_PROXIES);
 const FORCE_HTTPS = process.env.FORCE_HTTPS === "1";
 const MAX_BODY = Number(process.env.MAX_BODY || 32768);
 const PAGE_MAX = Number(process.env.PAGE_MAX || 30);
@@ -272,27 +286,88 @@ const SECURITY_HEADERS = {
   //   frame-src     把挑战渲染在 iframe 里
   //   connect-src   widget 自己回传结果
   // 其余仍然收紧到 'self'。'unsafe-inline' 保留是因为 React 产物是内联注入的样式。
-  "Content-Security-Policy": [
+  // 新增：站点资源只允许同源引用（防止被别站当资源嵌走）
+  "Cross-Origin-Resource-Policy": "same-origin",
+  // 关掉浏览器有 bug 的旧 XSS 过滤器（它反而可能被利用来裁切页面）
+  "X-XSS-Protection": "0"
+};
+
+/*
+ * CSP 的 script-src 不再使用 'unsafe-inline'（审计修复）。
+ *
+ * 生产页面上唯一的内联脚本是 index.html 里那段「收起首屏加载页」的代码，
+ * 启动时从构建产物里算出它的 sha256 放进 CSP 即可 —— 于是即使某处出现
+ * 注入点，注入的 <script> 也不会被执行。后台页面（/houtai/）是单文件内联
+ * 控制台，单独给一份允许 inline 的 CSP。
+ *
+ * 构建产物不存在时（本地开发）退回 'unsafe-inline'，避免把加载页卡死。
+ */
+function collectInlineScriptHashes() {
+  const hashes = [];
+  let html = "";
+  try { html = fs.readFileSync(path.join(WEB_ROOT, INDEX_FILE), "utf8"); } catch { return hashes; }
+  const re = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi;
+  let m = re.exec(html);
+  while (m) {
+    if (m[1].trim()) hashes.push("'sha256-" + crypto.createHash("sha256").update(m[1]).digest("base64") + "'");
+    m = re.exec(html);
+  }
+  return hashes;
+}
+const INLINE_SCRIPT_HASHES = collectInlineScriptHashes();
+
+function buildCsp(allowInlineScript) {
+  const inline = allowInlineScript || INLINE_SCRIPT_HASHES.length === 0 ? ["'unsafe-inline'"] : INLINE_SCRIPT_HASHES;
+  return [
     "default-src 'self'",
     "img-src 'self' data:",
     "style-src 'self' 'unsafe-inline'",
-    "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com",
+    "script-src " + ["'self'", ...inline, "https://challenges.cloudflare.com"].join(" "),
     "frame-src https://challenges.cloudflare.com",
     "connect-src 'self' https://challenges.cloudflare.com",
+    "object-src 'none'",
     "base-uri 'none'",
     "form-action 'self'",
     "frame-ancestors 'none'"
-  ].join("; ")
-};
+  ].join("; ");
+}
+const CSP_SPA = buildCsp(false);
+const CSP_ADMIN = buildCsp(true);
 
-function clientIp(req) {
-  if (TRUST_PROXY) {
-    const xff = req.headers["x-forwarded-for"];
-    if (xff) return String(xff).split(",")[0].trim();
-    const real = req.headers["x-real-ip"];
-    if (real) return String(real).trim();
+/** socket 对端地址（不可伪造的那一个） */
+function peerIp(req) {
+  return netutil.normalizeIp((req.socket && req.socket.remoteAddress) || "") || "0.0.0.0";
+}
+
+/**
+ * 这个请求的转发头可不可信。
+ * 只有「对端是可信代理」时，X-Forwarded-* / CF-IPCountry 才有意义。
+ */
+function proxyInfo(req) {
+  const peer = peerIp(req);
+  const trusted = TRUST_PROXY
+    && (TRUST_PROXY_MODE === "any" || netutil.inAnyCidr(peer, TRUST_PROXY_CIDRS));
+  return { peer, trusted };
+}
+
+/**
+ * 真实客户端 IP。
+ *
+ * 两个安全要点（都是审计出来的）：
+ *   1. **只在对端可信时**才看转发头 —— 否则直连用户随手伪造 XFF 就能让
+ *      「按 IP 限流」全部失效（验证码轰炸、后台令牌爆破、举报刷单都会绕过）；
+ *   2. 取 XFF 的**最右一跳**，而不是最左：正规反代是把客户端地址追加在末尾，
+ *      最左边那项恰恰是客户端自己可以写的。
+ */
+function clientIp(req, info) {
+  const { peer, trusted } = info || proxyInfo(req);
+  if (!trusted) return peer;
+  const xff = String(req.headers["x-forwarded-for"] || "").slice(0, 512);
+  if (xff) {
+    const hops = xff.split(",").map(netutil.normalizeIp).filter(Boolean);
+    if (hops.length) return hops[hops.length - 1];
   }
-  return (req.socket && req.socket.remoteAddress) || "0.0.0.0";
+  return netutil.normalizeIp(req.headers["x-real-ip"]) || peer;
 }
 
 /**
@@ -338,8 +413,9 @@ function hashIp(ip) {
   return crypto.createHmac("sha256", IP_SECRET).update(String(ip)).digest("hex").slice(0, 24);
 }
 
-function baseHeaders(req) {
+function baseHeaders(req, opts) {
   const headers = Object.assign({}, SECURITY_HEADERS);
+  headers["Content-Security-Policy"] = opts && opts.admin ? CSP_ADMIN : CSP_SPA;
   if (FORCE_HTTPS || (TRUST_PROXY && req.headers["x-forwarded-proto"] === "https")) {
     headers["Strict-Transport-Security"] = "max-age=15552000; includeSubDomains";
   }
@@ -492,18 +568,31 @@ function httpError(code, message) {
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let size = 0;
+    let overflow = false;
     const chunks = [];
     req.on("data", (chunk) => {
       size += chunk.length;
+      if (overflow) {
+        // 已经超限：把剩余数据**读掉但不累积**，这样响应能正常送达（客户端看到 413 而不是连接重置）。
+        // 极端体积（>8 倍上限）时直接掐断，避免被超大请求拖住。
+        if (size > MAX_BODY * 8) {
+          try { req.destroy(); } catch { /* ignore */ }
+        }
+        return;
+      }
       if (size > MAX_BODY) {
-        reject(httpError(413, "payload too large"));
-        req.destroy();
+        overflow = true;
+        chunks.length = 0; // 释放已缓冲的内容
         return;
       }
       chunks.push(chunk);
     });
-    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("end", () => {
+      if (overflow) return reject(httpError(413, "payload too large"));
+      resolve(Buffer.concat(chunks));
+    });
     req.on("error", reject);
+    req.on("aborted", () => reject(httpError(400, "client aborted")));
   });
 }
 
@@ -2801,8 +2890,15 @@ const MIME = {
   ".webp": "image/webp",
   ".avif": "image/avif",
   ".ico": "image/x-icon",
-  ".woff2": "font/woff2"
+  ".woff2": "font/woff2",
+  ".txt": "text/plain; charset=utf-8"
 };
+
+/** 静态资源允许的扩展名：只放前端产物会用到的，其余一律 404 */
+const ALLOWED_STATIC_EXT = new Set(Object.keys(MIME));
+const WEB_ROOT_REAL = (() => {
+  try { return fs.realpathSync(WEB_ROOT); } catch { return WEB_ROOT; }
+})();
 
 /* ───────────────────────────── 假的 /admin ───────────────────────────── */
 
@@ -2846,7 +2942,16 @@ function serveDecoy(req, res) {
 
 async function serveStatic(ctx) {
   const { req, res } = ctx;
-  let rel = decodeURIComponent(ctx.pathname);
+
+  // 畸形百分号编码（例如 "/%"）会让 decodeURIComponent 抛 URIError。
+  // 不处理的话它会被顶层兜成 500 —— 既是无意义的错误日志，也给了刷日志的入口。
+  let rel;
+  try {
+    rel = decodeURIComponent(ctx.pathname);
+  } catch {
+    throw httpError(400, "bad path");
+  }
+  if (rel.includes("\0") || !rel.startsWith("/")) throw httpError(400, "bad path");
   if (rel === "/") rel = "/" + INDEX_FILE;
 
   // 后台的真实地址是 /houtai/（单文件、无构建依赖，固定从 server/public 提供，
@@ -2861,8 +2966,32 @@ async function serveStatic(ctx) {
   if (isAdminPage) {
     filePath = path.join(SERVER_ROOT, "public", "admin.html");
   } else {
-    filePath = path.join(WEB_ROOT, rel);
-    if (!filePath.startsWith(WEB_ROOT + path.sep)) throw httpError(403, "forbidden");
+    /**
+     * 静态资源白名单（审计修复）。
+     *
+     * 背景：WEB_ROOT 允许回退到**仓库根**（前端产物缺失时的兜底）。那样一来
+     * `/server/.env`、`/server/data/wall.db`、`/.git/config` 都会变成可下载文件。
+     * 所以这里不只看「是否在 WEB_ROOT 内」，还要求路径看起来就是前端产物：
+     *   1. 不允许任何以点开头的段（.env / .git / .DS_Store）；
+     *   2. 仓库里的服务端目录一率 404（server / scripts / docs / data / web / node_modules）；
+     *   3. 扩展名必须在 MIME 白名单里；
+     *   4. realpath 必须仍在 WEB_ROOT 内（防符号链接逃逸）。
+     */
+    const segments = rel.split("/").filter(Boolean);
+    if (segments.some((seg) => seg.startsWith("."))) throw httpError(404, "not found");
+    const BLOCKED_TOP = new Set(["server", "scripts", "docs", "data", "web", "node_modules"]);
+    if (segments.length && BLOCKED_TOP.has(segments[0].toLowerCase())) throw httpError(404, "not found");
+
+    const candidate = path.join(WEB_ROOT, rel);
+    let real;
+    try {
+      real = fs.realpathSync(candidate);
+    } catch {
+      throw httpError(404, "not found");
+    }
+    if (!(real === WEB_ROOT_REAL || real.startsWith(WEB_ROOT_REAL + path.sep))) throw httpError(403, "forbidden");
+    if (!ALLOWED_STATIC_EXT.has(path.extname(real).toLowerCase())) throw httpError(404, "not found");
+    filePath = real;
   }
 
   let stat;
@@ -2895,6 +3024,7 @@ async function serveStatic(ctx) {
     "Last-Modified": stat.mtime.toUTCString()
   };
 
+  if (isAdminPage) headers["Content-Security-Policy"] = CSP_ADMIN;
   const isText = /^(text\/|application\/(json|javascript)|image\/svg)/.test(type);
   if (isText && stat.size < 2 * 1024 * 1024) {
     // 文本产物按 etag 缓存压缩结果：同一份 JS/CSS 只压一次
@@ -2909,27 +3039,42 @@ async function serveStatic(ctx) {
 /* ───────────────────────────── 分发 ───────────────────────────── */
 
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, "http://localhost");
+  let url;
+  try {
+    url = new URL(req.url, "http://localhost");
+  } catch {
+    // 畸形请求行：回 400，而不是让 new URL 抛出去变成 500
+    return sendJson(req, res, 400, { error: "bad_request" });
+  }
+
+  const proxy = proxyInfo(req);
+  const ip = clientIp(req, proxy);
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim().toLowerCase();
   const ctx = {
     req,
     res,
     pathname: url.pathname,
     query: url.searchParams,
-    ip: clientIp(req),
-    ipHash: hashIp(clientIp(req)),
+    ip,
+    ipHash: hashIp(ip),
     uaHash: crypto.createHash("sha256").update(String(req.headers["user-agent"] || "")).digest("hex").slice(0, 16),
     /**
      * 本次请求是否走 HTTPS —— 决定门禁会话 cookie 要不要带 Secure。
      * 直接 TLS 看 socket；经过反代时看 X-Forwarded-Proto（仅在 TRUST_PROXY=1 时采信，
      * 与 clientIp 的信任边界保持一致）。
      */
+    /**
+     * 本次请求是否走 HTTPS：直接 TLS 看 socket；
+     * 经反代时看 X-Forwarded-Proto，**且只在转发头可信时采信**。
+     */
     secure: Boolean(req.socket && req.socket.encrypted)
-      || (TRUST_PROXY && String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() === "https"),
+      || (proxy.trusted && forwardedProto === "https"),
     params: {},
-    /** 粗粒度画像：概览页的「IP 来源 / 访问设备」直接用这几个字段 */
-    country: String(req.headers["cf-ipcountry"] || "").toUpperCase().slice(0, 8),
+    /** 粗粒度画像：概览页的「IP 来源 / 访问设备」直接用这几个字段。
+     *  CF-IPCountry 同样只在转发头可信时采信，否则后台会被伪造的国家码污染。 */
+    country: proxy.trusted ? String(req.headers["cf-ipcountry"] || "").toUpperCase().slice(0, 8) : "",
     device: describeDevice(req.headers["user-agent"]),
-    ipMasked: maskIp(clientIp(req))
+    ipMasked: maskIp(ip)
   };
 
   try {
@@ -2958,7 +3103,11 @@ const server = http.createServer(async (req, res) => {
         const match = r.regex.exec(ctx.pathname);
         if (!match) continue;
         r.keys.forEach((key, i) => {
+          try {
           ctx.params[key] = decodeURIComponent(match[i + 1]);
+        } catch {
+          throw httpError(400, "bad path");
+        }
         });
         return await r.handler(ctx);
       }
