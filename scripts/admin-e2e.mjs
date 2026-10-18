@@ -89,6 +89,16 @@ function afdianCallback(order) {
   return 'params=' + encodeURIComponent(envelope) + '&sign=' + encodeURIComponent(sign);
 }
 
+/** 给受控输入框赋值（走原生 setter + input 事件，否则 React 收不到） */
+const setInputLocal = (selector, value) => `(() => {
+  const el = document.querySelector(${JSON.stringify(selector)});
+  if (!el) return false;
+  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, ${JSON.stringify(value)});
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  return true;
+})()`;
+
 async function main() {
   await waitForServer();
 
@@ -162,6 +172,23 @@ async function main() {
     await page.metrics({ width: 1440, height: 900, mobile: false });
     await page.screenshot(join(SHOTS, '05-admin-afdian.png'));
     ok('产出后台赞助页截图', true);
+
+    // 后台「首页」视图：能打开、编辑器可见可输入（v1.0.1 新增；此前漏在 VIEW_IDS 白名单外导致空白）
+    await page.eval('document.querySelector(\'[data-view="home"]\').click(); true');
+    await page.waitFor('(() => { const v = document.querySelector("#view-home"); return !!v && !v.hidden && !!document.querySelector("#homeMd"); })()', { timeout: 8000 });
+    const homeViewState = await page.eval('(() => { const v = document.querySelector("#view-home"); const ta = document.querySelector("#homeMd"); return { hidden: v ? v.hidden : null, hasEditor: !!ta, display: ta ? getComputedStyle(ta).display : "", valueLen: ta ? ta.value.length : -1 }; })()');
+    ok('首页视图能打开且 Markdown 编辑器可见', homeViewState.hidden === false && homeViewState.hasEditor && homeViewState.display !== 'none', homeViewState);
+    await page.eval(setInputLocal('#homeMd', '## 后台测试首页\n\n- 第一行\n- 第二行'));
+    const typed = await page.eval('document.querySelector("#homeMd").value.includes("后台测试首页")');
+    ok('Markdown 编辑器可输入', typed);
+    await page.eval('document.querySelector(\'[data-act="home.save"]\').click(); true');
+    // 保存前会弹确认框（#modalCard 里的 [data-confirm]）
+    await page.waitFor('!!document.querySelector("#modalCard [data-confirm]")', { timeout: 6000 });
+    await page.eval('document.querySelector("#modalCard [data-confirm]").click(); true');
+    await page.waitFor('!document.querySelector("#modal") || document.querySelector("#modal").hidden', { timeout: 6000 }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 600));
+    const saved = await (await fetch(BASE + '/api/home')).json().catch(() => ({}));
+    ok('保存后前台接口能读到新内容', String(saved.markdown || '').includes('后台测试首页'), String(saved.markdown || '').slice(0, 40));
 
     // 邮件通道自检卡片（验证码是唯一登录入口，配置状态必须在后台一眼可见）
     // 注意用 textContent 而不是 innerText：innerText 对隐藏元素返回空串，
