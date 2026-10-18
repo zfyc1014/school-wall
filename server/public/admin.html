@@ -212,6 +212,16 @@ a { color: var(--accent); }
 
 .card { background: var(--bg); border: 1px solid var(--border-soft); border-radius: var(--radius-lg); }
   /* 「来源与设备」：两列弱化列表，手机上面板会自然折成一列 */
+  .md-input { width: 100%; min-height: 320px; resize: vertical; padding: 12px 14px;
+    border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface);
+    font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.7; color: var(--fg); }
+  .home-preview-wrap { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border-soft); }
+  .home-preview-wrap h3 { font-size: var(--text-sm); font-weight: 600; margin: 0 0 10px; }
+  .home-preview { padding: 14px 16px; border-radius: var(--radius-md); background: var(--surface-soft); }
+  .home-preview h1, .home-preview h2, .home-preview h3 { margin: 0.8em 0 0.4em; line-height: 1.3; }
+  .home-preview p { margin: 0.5em 0; }
+  .home-preview ul, .home-preview ol { margin: 0.5em 0; padding-left: 1.3em; }
+  .home-preview blockquote { margin: 0.6em 0; padding: 6px 12px; border-left: 3px solid var(--border); color: var(--muted); }
   .geo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-5); }
   .geo-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
   .geo-list li { display: flex; justify-content: space-between; gap: var(--space-3);
@@ -416,9 +426,13 @@ a { color: var(--accent); }
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l2.5 5.1 5.6.8-4.1 4 1 5.6L12 16.3 6.9 19l1-5.6-4-4 5.6-.8Z"/></svg>
         <span class="nav-label">头衔</span><span class="nav-count" data-count="titles"></span>
       </button>
+      <button class="nav-item" type="button" data-view="home">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16"/><path d="M4 10.5h11"/><path d="M4 15.5h16"/><path d="M4 20.5h8"/></svg>
+        <span class="nav-label">首页</span>
+      </button>
       <button class="nav-item" type="button" data-view="announcements">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5v3.5l11 4.5V6L4 10.5Z"/><path d="M15 9a3.2 3.2 0 0 1 0 6.4"/><path d="M6.8 13.6V18"/></svg>
-        <span class="nav-label">公告</span><span class="nav-count" data-count="announcements"></span>
+        <span class="nav-label">首页</span><span class="nav-count" data-count="announcements"></span>
       </button>
       <button class="nav-item" type="button" data-view="schools">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20V9.5l9-5 9 5V20"/><path d="M9.5 20v-6h5v6"/><path d="M3 20h18"/></svg>
@@ -479,7 +493,8 @@ a { color: var(--accent); }
       <section class="view" id="view-reports" data-od-id="view-reports" hidden></section>
       <section class="view" id="view-users" data-od-id="view-users" hidden></section>
       <section class="view" id="view-titles" data-od-id="view-titles" hidden></section>
-      <section class="view" id="view-announcements" data-od-id="view-announcements" hidden></section>
+      <section class="view" id="view-home" data-od-id="view-home" hidden></section>
+    <section class="view" id="view-announcements" data-od-id="view-announcements" hidden></section>
       <section class="view" id="view-schools" data-od-id="view-schools" hidden></section>
       <section class="view" id="view-afdian" data-od-id="view-afdian" hidden></section>
       <section class="view" id="view-audit" data-od-id="view-audit" hidden></section>
@@ -510,6 +525,7 @@ a { color: var(--accent); }
     reports: { title: '举报工单', sub: '通知—移除流程：可下架内容或驳回工单' },
     users: { title: '用户', sub: '账号全量信息、等级经验与封禁处置' },
     titles: { title: '头衔', sub: '达到等级自动授予，管理员手动指定优先' },
+    home: { title: '首页', sub: '首页是一整块 Markdown：整块编辑、保存后立即生效' },
     announcements: { title: '公告', sub: '首页公告栏内容，可排序与启停' },
     schools: { title: '学校', sub: '可注册学校名单，登录时强制选择且不可更改' },
     afdian: { title: '赞助', sub: '爱发电订单、手动补单、发奖与回调排查' },
@@ -790,6 +806,8 @@ a { color: var(--accent); }
     afdianIgnore: (id) => (api('/api/admin/afdian/orders/' + id + '/ignore', { method: 'POST' })
       ),
     emailTest: (to) => api('/api/admin/email/test', { method: 'POST', body: JSON.stringify({ to: to }) }),
+    home: () => (api('/api/admin/home')),
+    saveHome: (markdown) => (api('/api/admin/home', { method: 'POST', body: JSON.stringify({ markdown: markdown }) })),
     afdianSync: (pages) => (api('/api/admin/afdian/sync', { method: 'POST', body: JSON.stringify({ pages: pages }) })
       ),
     reports: (status) => (api('/api/admin/reports?status=' + encodeQ(status) + '&limit=200')
@@ -1782,6 +1800,87 @@ a { color: var(--accent); }
     return head + body;
   }
 
+  /* ───────── 首页：整块 Markdown（后台编辑）───────── */
+
+  /**
+   * 后台用的极简 Markdown → HTML（只够预览排版，不做完整实现）。
+   * 与前端 web/src/lib/markdown.js 保持同一套规则，避免「后台预览和用户看到的不一样」。
+   */
+  function mdPreview(src) {
+    const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const inline = (t) => t
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label, href) =>
+        /^(https?:\/\/|mailto:|\/|#)/i.test(href) ? '<a href="' + href + '" target="_blank" rel="noreferrer">' + label + '</a>' : label)
+      .replace(/`([^`]+)`/g, '<code>$1</code>');
+    const lines = esc(String(src || '')).replace(/\r\n?/g, '\n').split('\n');
+    const out = [];
+    let list = null;
+    const flushList = () => { if (list) { out.push('<' + list.tag + '>' + list.items.join('') + '</' + list.tag + '>'); list = null; } };
+    for (const line of lines) {
+      if (/^\s*$/.test(line)) { flushList(); continue; }
+      const h = /^(#{1,6})\s+(.*)$/.exec(line);
+      if (h) { flushList(); out.push('<h' + h[1].length + '>' + inline(h[2]) + '</h' + h[1].length + '>'); continue; }
+      if (/^&gt;\s?/.test(line)) { flushList(); out.push('<blockquote>' + inline(line.replace(/^&gt;\s?/, '')) + '</blockquote>'); continue; }
+      if (/^\s*(-{3,}|\*{3,})\s*$/.test(line)) { flushList(); out.push('<hr>'); continue; }
+      const ul = /^\s*[-*+]\s+(.*)$/.exec(line);
+      const ol = /^\s*\d+[.)]\s+(.*)$/.exec(line);
+      if (ul || ol) {
+        const tag = ul ? 'ul' : 'ol';
+        if (!list || list.tag !== tag) { flushList(); list = { tag: tag, items: [] }; }
+        list.items.push('<li>' + inline((ul || ol)[1]) + '</li>');
+        continue;
+      }
+      if (/^```/.test(line)) continue; // 预览里不渲染代码块围栏
+      flushList();
+      out.push('<p>' + inline(line) + '</p>');
+    }
+    flushList();
+    return out.join('');
+  }
+
+  async function renderHome() {
+    const el = $('#view-home');
+    el.innerHTML = skeleton(3);
+    try {
+      const res = await store.home();
+      state.cache.home = res;
+      el.innerHTML = homeEditorHtml(res);
+      const input = $('#homeMd');
+      if (input) {
+        const count = () => {
+          const n = input.value.length;
+          const node = $('#homeCount');
+          if (node) node.textContent = n + ' / ' + (res.maxLength || 200000) + ' 字';
+          const prev = $('#homePreview');
+          if (prev) prev.innerHTML = input.value.trim() ? mdPreview(input.value) : '<p class="meta">（空白）</p>';
+        };
+        input.addEventListener('input', count);
+        count();
+      }
+    } catch (e) {
+      if (handleApiError(e)) return;
+      el.innerHTML = errorState(errText(e));
+    }
+  }
+
+  function homeEditorHtml(res) {
+    const markdown = (res && res.markdown) || '';
+    const updated = res && res.updatedAt ? '最近更新：' + fmtDate(res.updatedAt) + '（' + timeAgo(res.updatedAt) + '）' : '还没有编辑过，前台显示默认欢迎语';
+    return '<div class="card"><div class="card-head"><h2>首页内容</h2><span class="sub">Markdown · 保存后立即生效</span></div>'
+      + '<div class="card-pad">'
+      + '<p class="meta" style="margin-bottom:10px">' + esc(updated) + '</p>'
+      + '<div class="field"><textarea id="homeMd" class="md-input" spellcheck="false" placeholder="## 欢迎\n\n在这里写首页内容，支持 Markdown：标题、列表、引用、链接、加粗。">' + esc(markdown) + '</textarea>'
+      + '<div class="row" style="justify-content:space-between;margin-top:8px">'
+      + '<span class="meta" id="homeCount"></span>'
+      + '<div class="od-row">'
+      + '<button class="btn btn-ghost" type="button" data-act="home.preview">刷新预览</button>'
+      + '<button class="btn btn-primary" type="button" data-act="home.save">保存首页</button>'
+      + '</div></div></div>'
+      + '<div class="home-preview-wrap"><h3>预览</h3><div id="homePreview" class="home-preview md-body"></div></div>'
+      + '</div></div>';
+  }
+
   async function renderAnnouncements() {
     const el = $('#view-announcements');
     el.innerHTML = skeleton(3);
@@ -2219,6 +2318,7 @@ a { color: var(--accent); }
     if (state.view === 'reports') return renderReports();
     if (state.view === 'users') return renderUsers();
     if (state.view === 'titles') return renderTitles();
+    if (state.view === 'home') return renderHome();
     if (state.view === 'announcements') return renderAnnouncements();
     if (state.view === 'schools') return renderSchools();
     if (state.view === 'afdian') return renderAfdian();
@@ -2420,7 +2520,32 @@ a { color: var(--accent); }
         await refreshAfterAction();
         return;
       }
-      if (act === 'email.test') {
+      if (act === 'home.preview') {
+      const input = $('#homeMd');
+      const prev = $('#homePreview');
+      if (input && prev) prev.innerHTML = input.value.trim() ? mdPreview(input.value) : '<p class="meta">（空白）</p>';
+      return;
+    }
+    if (act === 'home.save') {
+      const input = $('#homeMd');
+      if (!input) return;
+      const yes = await confirmDialog({
+        title: '保存首页？',
+        body: '保存后所有访问首页的人都会立刻看到新内容。',
+        confirmText: '保存',
+        danger: false
+      });
+      if (!yes) return;
+      try {
+        await store.saveHome(input.value);
+        toast('首页已保存', 'ok');
+        await renderHome();
+      } catch (e) {
+        if (!handleApiError(e)) toast('保存失败：' + errText(e), 'danger');
+      }
+      return;
+    }
+    if (act === 'email.test') {
       const input = $('#emailTestTo');
       const box = $('#emailTestResult');
       const to = input ? String(input.value || '').trim() : '';

@@ -129,7 +129,7 @@ const EXPECTED_TABLES = [
   "posts", "comments", "likes", "reports", "feedback", "audit_log", "stats",
   "forum_threads", "forum_replies", "thread_likes",
   "friendships", "dm_messages",
-  "afdian_orders"
+  "afdian_orders", "site_pages"
 ];
 
 /**
@@ -163,13 +163,13 @@ function checkSchema() {
   check("索引齐全（" + EXPECTED_INDEXES.length + " 条）", missingIdx.length === 0, missingIdx);
   check("没有多余的索引（写入放大）", extraIdx.length === 0, extraIdx);
 
-  // UNIQUE 约束会自动建索引：users.email、users.uuid、user_titles.name、schools.name、
-  // afdian_orders.out_trade_no（幂等发奖就靠它）。
+  // UNIQUE / TEXT PRIMARY KEY 会自动建索引：users.email、users.uuid、user_titles.name、
+  // schools.name、afdian_orders.out_trade_no（幂等发奖就靠它）、site_pages.key（首页整块内容）。
   // WITHOUT ROWID 的表把主键当聚簇键，不会额外生成 sqlite_autoindex_*
   const autoIdx = db.prepare(
     "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name LIKE 'sqlite_autoindex_%'"
   ).pluck().get();
-  check("唯一约束自带索引存在（邮箱 / uuid / 头衔名 / 校名 / 订单号）", autoIdx === 5, { autoIdx });
+  check("唯一约束自带索引存在（邮箱 / uuid / 头衔名 / 校名 / 订单号 / 首页 key）", autoIdx === 6, { autoIdx });
 
   check("已删除实名时代的遗留表",
     !tableExists("identities") && !tableExists("identity_codes"));

@@ -1,6 +1,6 @@
 {
   "name": "confession-wall-server",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "校园墙后端：Node 内置 http + SQLite(WAL)，邮箱验证码登录、匿名表白墙、署名论坛、好友与私信，面向最低配置 VPS",
   "type": "commonjs",
@@ -11,7 +11,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node scripts/api-test.js && node scripts/run-suite.js scripts/upgrade-test.js && node scripts/afdian-test.js && node scripts/turnstile-test.js && node scripts/brevo-test.js && node scripts/route-sweep.js && node scripts/db-check.js",
+    "test": "node scripts/api-test.js && node scripts/run-suite.js scripts/upgrade-test.js && node scripts/afdian-test.js && node scripts/run-suite.js scripts/turnstile-test.js && node scripts/run-suite.js scripts/brevo-test.js && node scripts/route-sweep.js && node scripts/db-check.js",
     "test:api": "node scripts/api-test.js",
     "test:upgrade": "node scripts/upgrade-test.js",
     "test:afdian": "node scripts/afdian-test.js",

@@ -3,7 +3,7 @@ import { api } from '../api/client.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { Sheet } from './Sheet.jsx';
-import { CATS } from '../pages/Home.jsx';
+import { CATS } from '../pages/Wall.jsx';
 
 /**
  * 发布表白。

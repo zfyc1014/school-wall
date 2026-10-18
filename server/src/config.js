@@ -10,7 +10,7 @@
  * 都从 server/.env 读（见 src/env.js），环境变量优先。
  */
 
-const VERSION = "1.0.0";
+const VERSION = "1.0.1";
 
 const SITE_NAME = String(process.env.SITE_NAME || "校园墙").trim() || "校园墙";
 
@@ -186,6 +186,15 @@ const TURNSTILE = {
 };
 TURNSTILE.enabled = Boolean(TURNSTILE.siteKey && TURNSTILE.secretKey);
 
+/* ───────────────────────── 开发者 / 感谢名单 ─────────────────────────
+ * 「我的」页会展示开发者与赞助者名单。
+ *   CREDITS_DEVELOPERS  开发者名单（逗号分隔），默认站方
+ * 感谢名单不写死：直接取爱发电已支付订单对应的用户昵称（见 /api/credits）。
+ * ------------------------------------------------------------------- */
+const CREDITS = {
+  developers: String(process.env.CREDITS_DEVELOPERS || "huanzhe").split(",").map((s) => s.trim()).filter(Boolean)
+};
+
 /** 功能开关：都开着，但允许运营按学校情况关掉论坛或私信 */
 const FEATURES = {
   forum: process.env.FEATURE_FORUM !== "0",
@@ -230,6 +239,7 @@ module.exports = {
   CONTENT_PREMOD,
   NICKNAME_COOLDOWN_H,
   BREVO,
+  CREDITS,
   TURNSTILE,
   AFDIAN,
   parseTiers,

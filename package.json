@@ -1,6 +1,6 @@
 {
   "name": "confession-wall",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "校园墙：React 前端（Vite）+ 纯 Node 后端（node:http + SQLite），邮箱验证码登录、匿名表白墙、署名论坛、好友与私信",
   "type": "module",

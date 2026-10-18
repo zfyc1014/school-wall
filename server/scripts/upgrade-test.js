@@ -210,7 +210,7 @@ async function waitForServer() {
   eq("旧评论还在", comments.items.length, 1);
 
   const health = await (await fetch(BASE + "/api/health")).json();
-  eq("新版本号已生效", health.version, "1.0.0");
+  eq("新版本号已生效", health.version, "1.0.1");
 
   const stats = await (await fetch(BASE + "/api/admin/stats", { headers: { authorization: "Bearer " + ADMIN_TOKEN } })).json();
   eq("旧的未处理反馈仍可统计", stats.openFeedback, 1);

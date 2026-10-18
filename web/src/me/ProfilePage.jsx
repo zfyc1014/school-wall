@@ -8,6 +8,7 @@ import { UserBadge } from '../components/UserBadge.jsx';
 import { Empty, Loading } from '../components/Empty.jsx';
 import { IconChat, IconSettings, IconUserPlus, IconInfo, IconLock, IconHeart } from '../components/icons.jsx';
 import { SupportSheet } from './SupportSheet.jsx';
+import { IconMail, IconUsers } from '../components/icons.jsx';
 import { timeAgo } from '../lib/format.js';
 
 /**
@@ -22,9 +23,19 @@ export function ProfilePage({ site, onOpenFeedback }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [supportOpen, setSupportOpen] = useState(false);
+  // 开发者与感谢名单：公开接口，登录前也能看（页面本身要求登录，这里只拉一次）
+  const [credits, setCredits] = useState({ developers: [], thanks: [] });
   // 只有站点配置了爱发电主页才显示入口：没配置就完全不提这件事
   const afdian = (site && site.afdian) || null;
   const afdianPage = afdian && afdian.page ? afdian.page : '';
+
+  useEffect(() => {
+    let alive = true;
+    api.credits()
+      .then((data) => { if (alive && data) setCredits({ developers: data.developers || [], thanks: data.thanks || [] }); })
+      .catch(() => { /* 名单拉不到就不显示，不影响主流程 */ });
+    return () => { alive = false; };
+  }, []);
 
   useEffect(() => {
     if (ready && user) refresh();
@@ -142,6 +153,45 @@ export function ProfilePage({ site, onOpenFeedback }) {
           <span className="meta">{timeAgo(user.createdAt)}</span>
         </div>
       </div>
+
+      {/* 联系作者 + 名单：都放在「我的」，不打扰主界面 */}
+      <section className="card card-pad" style={{ marginTop: 16 }}>
+        <h2 className="card-title">关于</h2>
+        <p className="meta" style={{ marginBottom: 12 }}>
+          校园墙由学生自建自维护，服务器与域名都是自费的。
+        </p>
+
+        <a className="list-item" href="mailto:huan_zhe@outlook.com" style={{ paddingInline: 0 }}>
+          <IconMail size={20} />
+          <span className="grow">联系作者</span>
+          <span className="meta">huan_zhe@outlook.com</span>
+        </a>
+
+        <div className="credits-block">
+          <div className="credits-head">
+            <IconUsers size={16} />
+            <strong>开发者</strong>
+          </div>
+          <div className="credits-tags">
+            {(credits.developers || []).map((name) => <span key={name} className="chip">{name}</span>)}
+          </div>
+        </div>
+
+        <div className="credits-block">
+          <div className="credits-head">
+            <IconHeart size={16} />
+            <strong>感谢名单</strong>
+            <span className="meta">不分先后</span>
+          </div>
+          {credits.thanks && credits.thanks.length ? (
+            <div className="credits-tags">
+              {credits.thanks.map((name) => <span key={name} className="chip chip-soft">{name}</span>)}
+            </div>
+          ) : (
+            <p className="meta">还没有赞助记录。想支持的话，入口在上面「支持校园墙」。</p>
+          )}
+        </div>
+      </section>
 
       <div style={{ margin: '20px 0 32px' }}>
         <button className="btn btn-danger btn-block" type="button" disabled={busy} onClick={doLogout}>

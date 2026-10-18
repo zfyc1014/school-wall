@@ -132,6 +132,10 @@ const qs = (params) => {
 
 export const api = {
   site: () => request('/api/site'),
+  /** 首页 Markdown（整块，后台可编辑） */
+  home: () => request('/api/home', { notifyLogin: false }),
+  /** 开发者与感谢名单（感谢名单来自爱发电已支付订单） */
+  credits: () => request('/api/credits', { notifyLogin: false }),
   health: () => request('/api/health'),
   schools: () => request('/api/schools'),
   feedback: (data) => request('/api/feedback', { method: 'POST', body: data }),

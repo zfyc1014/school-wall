@@ -46,4 +46,6 @@ export const IconUserPlus = (p) => <Svg {...p}><circle cx="10" cy="8.5" r="3.4" 
 export const IconSchool = (p) => <Svg {...p}><path d="M12 4 2.5 8.5 12 13l9.5-4.5z" /><path d="M6 11v5.2c0 1.3 2.7 2.8 6 2.8s6-1.5 6-2.8V11" /></Svg>;
 export const IconInfo = (p) => <Svg {...p}><circle cx="12" cy="12" r="8.5" /><path d="M12 11v5.5M12 7.8v.4" /></Svg>;
 export const IconFlag = (p) => <Svg {...p}><path d="M5 21V4h13l-2 4 2 4H5" /></Svg>;
+export const IconMail = (p) => <Svg {...p}><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="m4.5 7 7.5 6 7.5-6" /></Svg>;
+export const IconUsers = (p) => <Svg {...p}><circle cx="9" cy="8" r="3.2" /><path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5" /><path d="M16 6.2a3 3 0 0 1 0 5.6" /><path d="M17.5 14.2c2 .5 3.2 2.2 3.5 4.8" /></Svg>;
 export const IconBubble = IconComment;

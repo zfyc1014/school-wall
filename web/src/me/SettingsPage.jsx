@@ -9,6 +9,7 @@ import { Empty, Loading } from '../components/Empty.jsx';
 import { IconBack, IconSchool } from '../components/icons.jsx';
 import { PhoneBind } from './PhoneBind.jsx';
 import { timeAgo } from '../lib/format.js';
+import { InfoTip } from '../components/InfoTip.jsx';
 
 /**
  * 账号个性化。
@@ -113,11 +114,17 @@ export function SettingsPage() {
             value={nickname}
             onChange={(event) => setNickname(event.target.value)}
           />
-          <p className="meta">
-            {nicknameLocked
-              ? `昵称修改有冷却时间，${timeAgo(Date.now() - cooldownLeft)}后可再改`
-              : '2–16 个字，会经过违禁词检查'}
-          </p>
+          <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+            <span className="meta">
+              {nicknameLocked
+                ? `${timeAgo(Date.now() - cooldownLeft)}后可再改`
+                : `${nickname.length}/16`}
+            </span>
+            <InfoTip>
+              2–16 个字，会经过违禁词与冒名官方检查。改名有冷却时间
+              （默认 7 天），冷却中只能等。
+            </InfoTip>
+          </div>
         </div>
 
         <div className="field" style={{ marginTop: 16 }}>
@@ -150,7 +157,12 @@ export function SettingsPage() {
           <IconSchool size={20} />
           <div className="grow">
             <div>学校</div>
-            <div className="meta">注册时选定，不可更改</div>
+            <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+            <span className="chip">{user.school}</span>
+            <InfoTip>
+              学校在注册时选定，不能修改（防止有人冒用别的学校）。它会显示在你主页的最前面。
+            </InfoTip>
+          </div>
           </div>
           <strong>{user.school}</strong>
         </div>

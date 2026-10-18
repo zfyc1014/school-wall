@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { navigate, useRoute } from '../router.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { api } from '../api/client.js';
-import { IconChat, IconForum, IconHome, IconPlus, IconUser } from './icons.jsx';
+import { IconChat, IconForum, IconHeart, IconHome, IconPlus, IconUser } from './icons.jsx';
 
 /**
  * 底部 dock。
@@ -16,6 +16,7 @@ import { IconChat, IconForum, IconHome, IconPlus, IconUser } from './icons.jsx';
 
 const TABS = [
   { key: 'home', label: '首页', icon: IconHome, to: '/' },
+  { key: 'wall', label: '表白墙', icon: IconHeart, to: '/wall' },
   { key: 'forum', label: '论坛', icon: IconForum, to: '/forum' },
   { key: 'messages', label: '消息', icon: IconChat, to: '/messages' },
   { key: 'me', label: '我的', icon: IconUser, to: '/me' }
@@ -23,6 +24,7 @@ const TABS = [
 
 function activeKey(path) {
   if (path === '/' || path === '') return 'home';
+  if (path.startsWith('/wall')) return 'wall';
   if (path.startsWith('/forum')) return 'forum';
   if (path.startsWith('/messages') || path.startsWith('/friends')) return 'messages';
   if (path.startsWith('/me') || path.startsWith('/u/') || path.startsWith('/settings')) return 'me';

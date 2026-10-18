@@ -45,6 +45,7 @@ const brevo = require("./brevo");
 const forum = require("./forum");
 const social = require("./social");
 const announce = require("./announce");
+const pages = require("./pages");
 const afdian = require("./afdian");
 const turnstile = require("./turnstile");
 
@@ -720,6 +721,34 @@ route("GET", "/api/site", (ctx) => {
   sendJson(ctx.req, ctx.res, 200, Object.assign(config.publicConfig(), {
     announcements: announce.listActive()
   }));
+});
+
+// GET /api/home —— 首页（后台编辑的整块 Markdown，公开只读）
+route("GET", "/api/home", (ctx) => {
+  const page = pages.getPage("home");
+  sendJson(ctx.req, ctx.res, 200, {
+    markdown: pages.homeMarkdown(),
+    updatedAt: page.updatedAt || 0,
+    isDefault: !(page.body && page.body.trim())
+  }, { "Cache-Control": "public, max-age=30" });
+});
+
+// GET /api/credits —— 开发者与感谢名单
+// 感谢名单不写死：直接取「爱发电已支付订单」对应的用户昵称，**不分先后**（按昵称排序只为稳定输出）。
+// 未匹配到本站账号的订单只显示「匿名赞助者」——不在公开页面暴露爱发电侧 id。
+route("GET", "/api/credits", (ctx) => {
+  const thanks = db.prepare(
+    `SELECT DISTINCT COALESCE(u.nickname, '匿名赞助者') AS name
+       FROM afdian_orders o
+       LEFT JOIN users u ON u.id = o.user_id
+      WHERE o.status = 2
+      ORDER BY name ASC`
+  ).all().map((r) => r.name);
+  sendJson(ctx.req, ctx.res, 200, {
+    developers: config.CREDITS.developers,
+    thanks,
+    note: "名单不分先后，感谢每一份支持"
+  }, { "Cache-Control": "public, max-age=60" });
 });
 
 // GET /api/schools —— 注册时可选的学校（后台维护的启用名单）
@@ -2518,6 +2547,35 @@ route("POST", "/api/admin/schools/:id/delete", (ctx) => {
 });
 
 /* ───────────────────────── 公告管理 ───────────────────────── */
+
+// GET /api/admin/home —— 读首页 Markdown（含原始内容，用于编辑）
+route("GET", "/api/admin/home", (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  const page = pages.getPage("home");
+  sendJson(ctx.req, ctx.res, 200, {
+    markdown: page.body || "",
+    preview: pages.homeMarkdown(),
+    updatedAt: page.updatedAt || 0,
+    isDefault: !(page.body && page.body.trim()),
+    maxLength: pages.MAX_MD
+  });
+});
+
+// POST /api/admin/home { markdown } —— 整块替换首页
+route("POST", "/api/admin/home", async (ctx) => {
+  if (!requireAdmin(ctx)) return;
+  const payload = await readJson(ctx.req);
+  const result = pages.setPage("home", payload.markdown);
+  if (!result.ok) {
+    return sendJson(ctx.req, ctx.res, 400, { error: result.error, message: "内容过长（上限 200KB）" });
+  }
+  audit("home.update", "home", String(payload.markdown || "").length + " chars", ctx.ip);
+  sendJson(ctx.req, ctx.res, 200, {
+    ok: true,
+    updatedAt: result.updatedAt,
+    preview: pages.homeMarkdown()
+  });
+});
 
 // GET /api/admin/announcements
 route("GET", "/api/admin/announcements", (ctx) => {

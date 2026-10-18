@@ -126,3 +126,62 @@
   background: var(--surface);
   box-shadow: var(--shadow-card);
 }
+
+/* ── 首页：整块 Markdown ── */
+.home-page { padding-top: 0; }
+.home-head-inner { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.home-md {
+  margin-top: var(--space-4);
+  padding: 18px 16px 24px;
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+  min-height: 220px;
+}
+
+/* Markdown 排版：只覆盖必要元素，跟随全局 token（深色模式自动生效） */
+.md-body { font-size: var(--text-sm); line-height: 1.75; color: var(--fg-2); }
+.md-body > *:first-child { margin-top: 0; }
+.md-body > *:last-child { margin-bottom: 0; }
+.md-body h1, .md-body h2, .md-body h3, .md-body h4 { color: var(--fg); line-height: 1.3; margin: 1.4em 0 0.6em; }
+.md-body h1 { font-size: var(--text-xl); }
+.md-body h2 { font-size: var(--text-lg); }
+.md-body h3 { font-size: var(--text-md); }
+.md-body p { margin: 0.7em 0; }
+.md-body a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.md-body strong { color: var(--fg); font-weight: 600; }
+.md-body code { font-family: var(--font-mono); font-size: 0.92em; padding: 1px 5px; border-radius: 5px; background: var(--surface-2); }
+.md-body pre.md-pre {
+  margin: 0.9em 0; padding: 12px 14px; overflow-x: auto;
+  background: var(--surface-2); border-radius: var(--radius-md);
+  font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.6;
+}
+.md-body blockquote {
+  margin: 0.9em 0; padding: 8px 14px;
+  border-left: 3px solid var(--border); color: var(--muted);
+  background: var(--surface-2); border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.md-body ul, .md-body ol { margin: 0.7em 0; padding-left: 1.4em; }
+.md-body li { margin: 0.3em 0; }
+.md-body hr { margin: 1.6em 0; border: 0; border-top: 1px solid var(--border-soft); }
+.md-skeleton {
+  height: 14px; margin: 10px 0; border-radius: 6px;
+  background: var(--surface-2);
+  animation: mdPulse 1.2s ease-in-out infinite;
+}
+@keyframes mdPulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+
+/* ── 高刷屏（60–185Hz）流畅度：只让合成层动，长列表按需渲染 ── */
+:root { --motion-fast: 120ms; }
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+}
+/* 长列表：屏幕外的卡片跳过布局与绘制（滚动时尤其明显） */
+.post, .thread-item, .q-row, .msg-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
+}
+/* 按钮/链接关掉双击缩放等待，触摸反馈更即时 */
+button, .list-item, .dock-tab, a { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+/* 底部 dock 常驻玻璃：提前分层，滚动时不反复计算 */
+.dock-inner, .home-head, .page-head { will-change: transform; contain: layout style paint; }

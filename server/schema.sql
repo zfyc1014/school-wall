@@ -379,3 +379,13 @@ CREATE TABLE IF NOT EXISTS stats (
   value      TEXT NOT NULL,
   updated_at INTEGER NOT NULL
 ) WITHOUT ROWID;
+
+-- ── 站点页面（v1.0.1）──────────────────────────────────────────────────────
+-- 首页是一整块 Markdown，由后台编辑。用 key 区分页面，目前只有 'home'。
+-- 单独一张表而不是往 stats 里塞：页面内容是运营资产，需要独立的时间戳与整块替换语义。
+CREATE TABLE IF NOT EXISTS site_pages (
+  key        TEXT    PRIMARY KEY,
+  body       TEXT    NOT NULL DEFAULT '',
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT
+);

@@ -131,6 +131,12 @@ function cleanup() {
 (async function main() {
   await new Promise((r) => mock.listen(MOCK_PORT, "127.0.0.1", r));
   if (!(await waitForServer())) throw new Error("被测服务未启动\n" + log);
+  // 双重就绪确认：health 过了但 /api/site 还没起好时就开始打请求，慢机器上会偶发 ECONNRESET
+  for (let i = 0; i < 20; i += 1) {
+    try { const probe = await fetch(BASE + "/api/site"); if (probe.ok) break; } catch { /* 再等一轮 */ }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  await new Promise((r) => setTimeout(r, 200));
 
   console.log("\n站点配置下发");
   const site = await (await fetch(BASE + "/api/site")).json();
@@ -182,15 +188,20 @@ function cleanup() {
     try { if ((await fetch("http://127.0.0.1:" + app2Port + "/api/health")).ok) { up2 = true; break; } } catch { /* wait */ }
     await new Promise((r) => setTimeout(r, 200));
   }
-  ok("白名单为空的实例也能起来（不会崩）", up2, log2);
+  ok("白名单为空的实例也能起来（不会崩）", up2, up2 ? undefined : log2.split("\n").slice(-6).join(" | "));
   if (up2) {
-    const res = await fetch("http://127.0.0.1:" + app2Port + "/api/auth/code", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: "b@example.com", turnstileToken: "good" })
-    });
-    const body = await res.json();
-    eq("白名单为空 → 503（配置没配完，不能放行）", res.status, 503);
-    eq("错误码是 turnstile_misconfigured", body.error, "turnstile_misconfigured");
+    // 子进程刚起好时偶发连接被重置：这里失败也只记一条断言，不让整个套件崩掉
+    try {
+      const res = await fetch("http://127.0.0.1:" + app2Port + "/api/auth/code", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "b@example.com", turnstileToken: "good" })
+      });
+      const body = await res.json();
+      eq("白名单为空 → 503（配置没配完，不能放行）", res.status, 503);
+      eq("错误码是 turnstile_misconfigured", body.error, "turnstile_misconfigured");
+    } catch (e) {
+      ok("第二个实例的断言执行完成", false, e.message + " / " + log2.split("\n").slice(-4).join(" | "));
+    }
   }
   try { app2.kill(); } catch { /* ignore */ }
 

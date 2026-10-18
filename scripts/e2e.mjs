@@ -109,6 +109,18 @@ async function api(path, { method = 'GET', body, admin = false, cookie } = {}) {
 
 /* ── 页面操作小工具 ───────────────────────────────────────────────────── */
 
+/** 等的「就绪」条件：内联加载页已经收起（index.html 那个 splash） */
+const SPLASH_GONE = '!document.getElementById("splash")';
+
+/** 首次访问新版本会弹更新说明：点掉它，否则后面的点击会被弹层挡住 */
+async function dismissWhatsNew(page) {
+  const shown = await page.eval('!!document.querySelector(".sheet-panel") && document.body.innerText.includes("更新到 v")');
+  if (!shown) return false;
+  await page.eval('(() => { const b = Array.from(document.querySelectorAll(".sheet-panel .btn")).find((x) => x.textContent.includes("知道了")); if (b) b.click(); return true; })()');
+  await page.waitFor('!document.querySelector(".sheet-panel")', { timeout: 5000 });
+  return true;
+}
+
 /** 给受控输入框赋值：必须走原生 setter + input 事件，直接改 value 不会触发 React */
 const setInput = (selector, value) => `(() => {
   const el = document.querySelector(${JSON.stringify(selector)});
@@ -164,7 +176,14 @@ async function main() {
 
   try {
     console.log('\n首页与底部 dock');
-    await page.goto(BASE + '/', { waitMs: 900 });
+    // 首屏加载页：断言它内联在服务端返回的 HTML 里（不依赖 JS 包，弱网也能先看到）
+    const firstHtml = await (await fetch(BASE + '/')).text();
+    ok('首屏加载页内联在 HTML 里（不依赖 JS 打包）',
+      firstHtml.includes('id="splash"') && firstHtml.includes('splash-ch') && firstHtml.includes('splash-bar'));
+    await page.goto(BASE + '/', { waitMs: 300 });
+    await page.waitFor(SPLASH_GONE, { timeout: 8000 });
+    await new Promise((r) => setTimeout(r, 400));
+    await dismissWhatsNew(page);
     await page.waitFor('!!document.querySelector(".dock-inner")');
 
     const dock = await page.eval(`(() => {
@@ -179,7 +198,8 @@ async function main() {
       };
     })()`);
 
-    ok('底部 dock 渲染出 4 个 tab', dock.tabs.length === 4, dock.tabs);
+    ok('底部 dock 渲染出 5 个 tab（首页/表白墙/论坛/消息/我的）', dock.tabs.length === 5, dock.tabs);
+    ok('dock 里有表白墙入口', dock.tabs.some((t) => t.includes('表白墙')), dock.tabs);
     ok('dock 有主行动按钮', dock.hasCompose);
     ok('dock 是液态玻璃（backdrop blur + 半透明底）',
       /blur/.test(dock.backdrop || '') && /rgba|color/.test(dock.bg), dock);
@@ -191,6 +211,15 @@ async function main() {
     ok('首页公告栏显示后台配置的公告', true);
     ok('首页没有任何「内测」字样', !(await page.eval(hasText('内测'))));
     ok('首页没有 hero 大标语（保持简洁）', !(await page.eval('!!document.querySelector(".hero")')));
+    await page.waitFor('!!document.querySelector(".home-md")', { timeout: 8000 });
+    const mdText = await page.eval('document.querySelector(".home-md").innerText');
+    ok('首页渲染出后台编辑的 Markdown 内容', mdText.trim().length > 0, mdText.slice(0, 60));
+    // 表白墙要能从 dock 进去
+    await page.eval('(() => { const t = Array.from(document.querySelectorAll(".dock-tab")).find((x) => x.innerText.includes("表白墙")); if (t) t.click(); return true; })()');
+    await page.waitFor('location.hash.indexOf("/wall") >= 0', { timeout: 5000 });
+    ok('表白墙页可进入', true);
+    await page.eval('(() => { const t = Array.from(document.querySelectorAll(".dock-tab")).find((x) => x.innerText.includes("首页")); if (t) t.click(); return true; })()');
+    await page.waitFor('location.hash === "#/" || location.hash === ""', { timeout: 5000 });
 
     console.log('\n注册：邮箱验证码 + 强制选学校');
     await page.eval(click('.dock-compose'));
@@ -243,7 +272,7 @@ async function main() {
 
     console.log('\n发布：取消字数限制');
     const longText = '这是一段很长的表白。'.repeat(40); // 400 字，超过旧版 500 字限制的一半以上
-    await page.goto(BASE + '/', { waitMs: 700 });
+    await page.goto(BASE + '/#/wall', { waitMs: 700 });
     await page.eval(click('.dock-compose'));
     await page.waitFor('!!document.querySelector("#composer-body")');
     await page.eval(setInput('#composer-body', longText));
@@ -260,7 +289,7 @@ async function main() {
       feed.body.items[0].body.length === longText.length,
       { got: feed.body.items[0].body.length, want: longText.length });
 
-    await page.goto(BASE + '/', { waitMs: 900 });
+    await page.goto(BASE + '/#/wall', { waitMs: 900 });
     await page.waitFor('!!document.querySelector(".post")', { timeout: 8000 });
     ok('发布后直接出现在墙上', await page.eval(hasText('这是一段很长的表白')));
     const postBody = await page.eval('document.querySelector(".post-body").innerText');
@@ -294,7 +323,7 @@ async function main() {
     console.log('\n移动端适配与截图');
     mkdirSync(SHOTS, { recursive: true });
     await page.metrics({ width: 390, height: 844, mobile: true });
-    await page.goto(BASE + '/', { waitMs: 900 });
+    await page.goto(BASE + '/#/wall', { waitMs: 900 });
     await page.waitFor('!!document.querySelector(".dock-inner")');
     const mobile = await page.eval(`(() => {
       const dock = document.querySelector('.dock-inner').getBoundingClientRect();
@@ -313,7 +342,7 @@ async function main() {
     await page.screenshot(join(SHOTS, '01-home-mobile.png'));
 
     await page.metrics({ width: 1440, height: 900, mobile: false });
-    await page.goto(BASE + '/', { waitMs: 800 });
+    await page.goto(BASE + '/#/wall', { waitMs: 800 });
     await page.screenshot(join(SHOTS, '02-home-desktop.png'));
 
     await page.metrics({ width: 390, height: 844, mobile: true });

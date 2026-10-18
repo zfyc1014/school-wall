@@ -170,7 +170,7 @@ async function main() {
   {
     const health = await anon.get("/api/health");
     eq("GET /api/health 返回 200", health.status, 200);
-    eq("版本号是 1.0.0", health.body.version, "1.0.0");
+    eq("版本号是 1.0.1", health.body.version, "1.0.1");
 
     const site = await anon.get("/api/site");
     eq("GET /api/site 返回 200", site.status, 200);
@@ -497,7 +497,7 @@ async function main() {
 
     const stats = await anon.get("/api/admin/stats", { admin: true });
     eq("统计里的用户数", stats.body.users, 4);
-    eq("统计里的版本号", stats.body.version, "1.0.0");
+    eq("统计里的版本号", stats.body.version, "1.0.1");
     ok("统计含活跃/论坛/私信指标",
       typeof stats.body.activeToday === "number" && typeof stats.body.threads === "number" && typeof stats.body.dmsToday === "number");
 
@@ -555,6 +555,28 @@ async function main() {
     eq("下架的回复不出现在详情里",
       (await anon.get("/api/forum/threads/" + threadId)).body.replies.every((r) => r.id !== flaggedReply.body.id),
       true);
+  }
+
+  section("首页 Markdown 与名单（v1.0.1）");
+  {
+    const home = await anon.get("/api/home");
+    eq("首页可读（默认内容非空）", home.status, 200);
+    ok("默认首页带欢迎语", String(home.body.markdown).includes("欢迎"), home.body.markdown.slice(0, 40));
+
+    const saved = await anon.post("/api/admin/home", {
+      markdown: "# 测试首页\n\n- 第一行\n- 第二行\n\n**加粗** 和 [链接](/forum)"
+    }, { admin: true });
+    eq("后台可保存首页", saved.status, 200);
+    const after = await anon.get("/api/home");
+    ok("保存后前台立刻可见", String(after.body.markdown).includes("测试首页"), after.body.markdown.slice(0, 30));
+
+    const blocked = await anon.post("/api/admin/home", { markdown: "x" }, {});
+    eq("未带令牌不能改首页", blocked.status, 401);
+
+    const credits = await anon.get("/api/credits");
+    eq("名单接口可读", credits.status, 200);
+    ok("带开发者名单", Array.isArray(credits.body.developers) && credits.body.developers.length >= 1, credits.body.developers);
+    ok("带感谢名单（赞助为空时是空数组）", Array.isArray(credits.body.thanks), credits.body.thanks);
   }
 
   section("后台：邮件通道自检");

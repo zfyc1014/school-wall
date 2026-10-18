@@ -5,6 +5,7 @@ import { useToast } from '../context/ToastContext.jsx';
 import { Sheet } from '../components/Sheet.jsx';
 import { Avatar, AVATAR_KEYS } from '../components/Avatar.jsx';
 import { Turnstile } from '../components/Turnstile.jsx';
+import { InfoTip } from '../components/InfoTip.jsx';
 import { IconLock, IconSchool } from '../components/icons.jsx';
 
 /**
@@ -214,11 +215,11 @@ export function AuthSheet({ site }) {
                 onKeyDown={(event) => { if (event.key === 'Enter') sendCode(); }}
               />
             )}
-            <p className="meta">
+            <InfoTip>
               {channel === 'phone'
-                ? '手机号可直接注册或登录；已用邮箱注册的账号，也可以在「我的 → 设置」里绑定。'
-                : '用邮箱验证码登录，没有密码，不需要手机号。'}
-            </p>
+                ? '手机号可以直接注册或登录；已用邮箱注册的账号，先去「我的 → 设置」绑定手机号，之后就能用短信码登录。'
+                : '用邮箱验证码登录，不需要密码。同一个邮箱第一次登录会自动进入注册（填昵称、选学校）。'}
+            </InfoTip>
           </div>
           {turnstileCfg ? (
             <div className="turnstile-block">
@@ -307,7 +308,9 @@ export function AuthSheet({ site }) {
                 {schools.map((item) => <option key={item} value={item}>{item}</option>)}
               </select>
             )}
-            <p className="meta">学校会显示在你的主页最前面，并且不能修改，请如实选择。</p>
+            <p className="meta" style={{ marginTop: 6 }}>
+              会显示在你主页最前面，选定后不可修改。
+            </p>
           </div>
 
           <div className="field">

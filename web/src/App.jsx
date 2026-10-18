@@ -6,6 +6,8 @@ import { api } from './api/client.js';
 import { Dock } from './components/Dock.jsx';
 import { ComposerSheet } from './components/ComposerSheet.jsx';
 import { HomePage } from './pages/Home.jsx';
+import { WallPage } from './pages/Wall.jsx';
+import { WhatsNew } from './components/WhatsNew.jsx';
 import { AuthSheet } from './me/AuthSheet.jsx';
 import { ProfilePage } from './me/ProfilePage.jsx';
 import { UserPage } from './me/UserPage.jsx';
@@ -25,6 +27,11 @@ import { FriendsPage } from './social/FriendsPage.jsx';
  * 挂全局弹层（发帖 / 登录 / 反馈）。业务状态都在各页面自己手里 ——
  * 外壳越薄，页面越敢自己改。
  */
+
+/** 收起 HTML 内联的首屏加载页（定义见 index.html） */
+function hideSplash() {
+  if (typeof window !== 'undefined' && typeof window.__hideSplash === 'function') window.__hideSplash();
+}
 
 const FALLBACK_SITE = {
   version: '',
@@ -46,33 +53,43 @@ function Shell() {
     let alive = true;
     api.site()
       .then((data) => { if (alive && data) setSite({ ...FALLBACK_SITE, ...data }); })
-      .catch(() => { /* 配置拉不到就用兜底，不阻塞页面 */ });
+      .catch(() => { /* 配置拉不到就用兜底，不阻塞页面 */ })
+      .finally(() => { if (alive) hideSplash(); });
     return () => { alive = false; };
+  }, []);
+
+  // 加载页兜底：接口慢时也别让用户盯着加载页超过 1.5 秒
+  useEffect(() => {
+    const timer = setTimeout(hideSplash, 1500);
+    return () => clearTimeout(timer);
   }, []);
 
   useScrollTopOnRouteChange(path, false);
 
-  // dock 中间的主行动是上下文相关的：首页发告白、论坛里发主题、其它页面回首页
+  // dock 中间的主行动是上下文相关的：表白墙发帖、论坛发主题、其它页面跳到表白墙再发
   const onCompose = useCallback(() => {
     if (segments[0] === 'forum') {
       navigate('/forum/new');
       return;
     }
-    if (segments.length === 0) {
+    if (segments[0] === 'wall') {
       setComposerOpen(true);
       return;
     }
-    navigate('/');
+    navigate('/wall');
+    setComposerOpen(true);
   }, [segments]);
 
   const composeLabel = segments[0] === 'forum'
     ? '发帖'
-    : segments.length === 0 ? '发布表白' : '回到首页发布';
+    : segments[0] === 'wall' ? '发布表白' : '去表白墙发布';
 
   let page = null;
   if (segments.length === 0) {
+    page = <HomePage site={site} />;
+  } else if (segments[0] === 'wall') {
     page = (
-      <HomePage
+      <WallPage
         site={site}
         onCompose={() => setComposerOpen(true)}
         refreshToken={wallVersion}
@@ -121,6 +138,9 @@ function Shell() {
       <AuthSheet site={site} />
 
       <FeedbackSheet open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
+
+      {/* 版本更新提示：首次访问新版本时弹一次（文案刻意口语化） */}
+      <WhatsNew version={site.version} />
     </div>
   );
 }

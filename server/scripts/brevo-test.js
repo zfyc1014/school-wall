@@ -107,7 +107,7 @@ app.stderr.on("data", (c) => { log += String(c); });
 async function waitFor(base, timeoutMs = 15000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    try { if ((await fetch(base + "/api/health")).ok) return true; } catch { /* wait */ }
+    try { if ((await getJson(base + "/api/health")).ok) return true; } catch { /* wait */ }
     await new Promise((r) => setTimeout(r, 200));
   }
   return false;
@@ -144,6 +144,18 @@ async function call(method, url, { body, admin } = {}) {
   try { json = text ? JSON.parse(text) : null; } catch { json = { raw: text }; }
   return { status: res.status, body: json };
 }
+/** 裸 fetch 的统一入口：子进程刚起好时偶发 ECONNRESET，重试一次再抛 */
+async function getJson(url, init) {
+  const go = () => fetch(url, init);
+  try {
+    return await go();
+  } catch (err) {
+    console.warn("[brevo-test] 连接失败，重试一次：" + err.message);
+    await new Promise((r) => setTimeout(r, 400));
+    return go();
+  }
+}
+
 const lastCall = (p) => [...calls].reverse().find((c) => c.path === p);
 const callsTo = (p) => calls.filter((c) => c.path === p);
 
@@ -168,7 +180,7 @@ function cleanup() {
   await new Promise((r) => setTimeout(r, 250));
 
   console.log("\n站点信息");
-  const site = await (await fetch(BASE + "/api/site")).json();
+  const site = await (await getJson(BASE + "/api/site")).json();
   ok("手机登录随短信通道就绪而开放", site.features && site.features.phoneLogin === true, site.features);
   ok("站点信息里不出现 API key", !JSON.stringify(site).includes(API_KEY));
 
@@ -270,9 +282,9 @@ function cleanup() {
   ok("缺短信 sender 时服务仍能启动", up2, up2 ? undefined : log2.split("\n").slice(-6).join(" | "));
   if (up2) {
     try {
-      const site2 = await (await fetch("http://127.0.0.1:" + app2Port + "/api/site")).json();
+      const site2 = await (await getJson("http://127.0.0.1:" + app2Port + "/api/site")).json();
       eq("手机登录关闭", site2.features.phoneLogin, false);
-      const r = await fetch("http://127.0.0.1:" + app2Port + "/api/auth/code", {
+      const r = await getJson("http://127.0.0.1:" + app2Port + "/api/auth/code", {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ phone: "13800138000" })
       });
       eq("手机发码返回 503", r.status, 503);
